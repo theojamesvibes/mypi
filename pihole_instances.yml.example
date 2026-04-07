@@ -1,0 +1,24 @@
+# Pi-hole instance configuration for MyPi
+# Copy this file to pihole_instances.yml and fill in your instance details.
+# Instances are loaded at startup and synced to the database.
+# Restart the container to pick up configuration changes.
+
+instances:
+  - name: "Living Room"
+    url: "http://192.168.1.100"
+    password: "your-pihole-password"
+    color: "#00a65a"   # green
+
+  - name: "Office"
+    url: "http://192.168.1.101"
+    password: "your-pihole-password"
+    color: "#3c8dbc"   # blue
+
+  - name: "Bedroom"
+    url: "http://192.168.1.102"
+    password: "your-pihole-password"
+    color: "#f39c12"   # orange
+
+# Up to 10 instances supported.
+# Colors are used in charts to distinguish each Pi-hole.
+# The password field corresponds to the Pi-hole web interface password (v6 API).
