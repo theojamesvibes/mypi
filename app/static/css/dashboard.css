@@ -238,6 +238,11 @@ tr.drill-row:hover td { background: #f0f4f8; }
 .status-blocked   { background:#f8d7da; color:#721c24; }
 .status-other     { background:#e2e3e5; color:#383d41; }
 
+/* ─── Sync spinner ───────────────────────────────────────────────────────── */
+
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { display: inline-block; animation: spin 1s linear infinite; }
+
 /* ─── Login page ─────────────────────────────────────────────────────────── */
 
 body.login-body {

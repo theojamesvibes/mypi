@@ -460,11 +460,13 @@ async function loadSettingsInstances() {
   if (!tbody) return;
   const instances = await apiFetch('/api/instances');
   if (!instances) return;
+  updateStatusBadge(instances);
   tbody.innerHTML = instances.map(i => `
     <tr>
       <td>
         <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${i.color};margin-right:6px;"></span>
         ${escHtml(i.name)}
+        ${i.is_master ? '<span class="badge bg-primary ms-1" style="font-size:0.65rem;">master</span>' : ''}
       </td>
       <td class="small text-muted">${escHtml(i.url)}</td>
       <td>${instanceDot(i.status)}${i.status}</td>
@@ -643,6 +645,143 @@ function renderSearchPagination(total) {
     const active = p === current ? 'btn-secondary' : 'btn-outline-secondary';
     return `<button class="btn btn-sm ${active}" onclick="runSearch(${p})">${p}</button>`;
   }).join('');
+}
+
+// ─── Sync ────────────────────────────────────────────────────────────────────
+
+let _syncPollInterval = null;
+
+async function loadSyncStatus() {
+  const data = await apiFetch('/api/sync/status');
+  if (!data) return;
+  renderSyncStatus(data);
+}
+
+async function loadSyncSchedule() {
+  const data = await apiFetch('/api/sync/schedule');
+  if (!data) return;
+  const interval = document.getElementById('sync-interval');
+  if (interval) interval.value = String(data.interval_minutes);
+  const autoG = document.getElementById('sync-auto-gravity');
+  if (autoG) autoG.checked = data.auto_gravity;
+  const cfg = document.getElementById('sync-config');
+  if (cfg) cfg.checked = data.import_config;
+  const grav = document.getElementById('sync-gravity');
+  if (grav) grav.checked = data.import_gravity;
+  const dhcp = document.getElementById('sync-dhcp');
+  if (dhcp) dhcp.checked = data.import_dhcp_leases;
+  const rg = document.getElementById('sync-run-gravity');
+  if (rg) rg.checked = data.run_gravity;
+}
+
+async function saveSchedule() {
+  const body = {
+    interval_minutes: parseInt(document.getElementById('sync-interval')?.value || '0'),
+    auto_gravity: document.getElementById('sync-auto-gravity')?.checked ?? false,
+    import_config: document.getElementById('sync-config')?.checked ?? true,
+    import_gravity: document.getElementById('sync-gravity')?.checked ?? true,
+    import_dhcp_leases: document.getElementById('sync-dhcp')?.checked ?? false,
+    run_gravity: document.getElementById('sync-run-gravity')?.checked ?? true,
+  };
+  const res = await fetch('/api/sync/schedule', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  if (res.status === 401) { window.location.href = '/login'; return; }
+  const label = body.interval_minutes > 0
+    ? `Schedule saved — syncing every ${body.interval_minutes} min.`
+    : 'Schedule saved — manual sync only.';
+  const btn = document.querySelector('[onclick="saveSchedule()"]');
+  if (btn) {
+    const orig = btn.innerHTML;
+    btn.innerHTML = '<i class="bi bi-check me-1"></i>Saved';
+    btn.classList.replace('btn-outline-secondary', 'btn-success');
+    setTimeout(() => { btn.innerHTML = orig; btn.classList.replace('btn-success', 'btn-outline-secondary'); }, 2000);
+  }
+}
+
+function renderSyncStatus(data) {
+  const badge = document.getElementById('sync-badge');
+  const result = document.getElementById('sync-result');
+  const btn = document.getElementById('sync-btn');
+  if (!badge || !result) return;
+
+  const colours = { idle: 'secondary', running: 'warning', success: 'success', error: 'danger' };
+  badge.className = `badge bg-${colours[data.status] || 'secondary'}`;
+  badge.textContent = data.status;
+
+  if (btn) btn.disabled = data.status === 'running';
+
+  if (data.status === 'idle') {
+    result.innerHTML = '<span class="text-muted">No sync has been run yet.</span>';
+    return;
+  }
+
+  const started = data.started_at ? fmtTime(data.started_at) : '—';
+  const finished = data.completed_at ? fmtTime(data.completed_at) : '—';
+
+  if (data.status === 'running') {
+    result.innerHTML = `<span class="text-warning"><i class="bi bi-arrow-repeat spin me-1"></i>Running… (started ${started})</span>`;
+    return;
+  }
+
+  if (data.error) {
+    result.innerHTML = `<div class="text-danger"><i class="bi bi-x-circle me-1"></i>${escHtml(data.error)}</div>
+      <div class="text-muted mt-1">Started: ${started}</div>`;
+    return;
+  }
+
+  const rows = (data.results || []).map(r => {
+    const icon = r.status === 'success'
+      ? '<i class="bi bi-check-circle text-success me-1"></i>'
+      : '<i class="bi bi-x-circle text-danger me-1"></i>';
+    const err = r.error ? ` — <span class="text-danger">${escHtml(r.error)}</span>` : '';
+    return `<div>${icon}<strong>${escHtml(r.name)}</strong>${err}</div>`;
+  }).join('');
+
+  const masterLine = data.master ? `<div class="text-muted mb-1">Master: <strong>${escHtml(data.master)}</strong></div>` : '';
+  result.innerHTML = `${masterLine}${rows}<div class="text-muted mt-1">Completed: ${finished}</div>`;
+}
+
+async function triggerSync() {
+  const btn = document.getElementById('sync-btn');
+  if (btn) btn.disabled = true;
+
+  const body = {
+    import_config: document.getElementById('sync-config')?.checked ?? true,
+    import_gravity: document.getElementById('sync-gravity')?.checked ?? true,
+    import_dhcp_leases: document.getElementById('sync-dhcp')?.checked ?? false,
+    run_gravity: document.getElementById('sync-run-gravity')?.checked ?? true,
+  };
+
+  try {
+    const res = await fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(body),
+    });
+    if (res.status === 401) { window.location.href = '/login'; return; }
+    const data = await res.json();
+    renderSyncStatus(data);
+  } catch (err) {
+    console.error('Sync trigger failed:', err);
+    if (btn) btn.disabled = false;
+    return;
+  }
+
+  // Poll for completion
+  _syncPollInterval = setInterval(async () => {
+    const data = await apiFetch('/api/sync/status');
+    if (!data) return;
+    renderSyncStatus(data);
+    if (data.status !== 'running') {
+      clearInterval(_syncPollInterval);
+      _syncPollInterval = null;
+    }
+  }, 2000);
 }
 
 // ─── Security helper ──────────────────────────────────────────────────────────

@@ -38,11 +38,12 @@ class Settings(BaseSettings):
 
 
 class PiholeInstanceConfig:
-    def __init__(self, name: str, url: str, password: str, color: str):
+    def __init__(self, name: str, url: str, password: str, color: str, master: bool = False):
         self.name = name
         self.url = url.rstrip("/")
         self.password = password
         self.color = color
+        self.master = master
 
 
 def load_instance_configs(path: str | None = None) -> list[PiholeInstanceConfig]:
@@ -69,6 +70,7 @@ def load_instance_configs(path: str | None = None) -> list[PiholeInstanceConfig]
                 url=item["url"],
                 password=item.get("password", ""),
                 color=item.get("color", "#3c8dbc"),
+                master=bool(item.get("master", False)),
             )
         )
     return instances

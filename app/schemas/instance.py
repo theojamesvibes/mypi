@@ -12,6 +12,7 @@ class InstanceStatus(BaseModel):
     url: str
     color: str
     is_active: bool
+    is_master: bool = False
     last_seen_at: datetime | None = None
     status: str = "unknown"  # online / offline / unknown
 

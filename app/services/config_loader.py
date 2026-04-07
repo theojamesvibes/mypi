@@ -31,6 +31,7 @@ async def sync_instances(db: AsyncSession) -> None:
                 api_password=cfg.password,
                 color=cfg.color,
                 is_active=True,
+                is_master=cfg.master,
             )
             db.add(instance)
             logger.info("Added new Pi-hole instance: %s", cfg.name)
@@ -39,6 +40,7 @@ async def sync_instances(db: AsyncSession) -> None:
             instance.api_password = cfg.password
             instance.color = cfg.color
             instance.is_active = True
+            instance.is_master = cfg.master
             logger.debug("Updated Pi-hole instance: %s", cfg.name)
 
     # Deactivate instances that were removed from config

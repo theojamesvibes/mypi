@@ -10,6 +10,7 @@ from sqlalchemy import delete, select
 from app.config import settings
 from app.database import AsyncSessionLocal
 from app.models.pihole import PiholeInstance, QueryLog, StatsSnapshot
+from app.services import sync_service
 from app.services.pihole_client import PiholeClient
 
 logger = logging.getLogger(__name__)
@@ -92,6 +93,10 @@ async def _poll_stats_for(instance: PiholeInstance) -> None:
             if inst:
                 inst.last_seen_at = snapshot.collected_at
         await db.commit()
+
+    # Notify sync service if this is the master (enables auto-gravity detection)
+    if instance.is_master and snapshot.status == "online":
+        await sync_service.notify_blocklist_count(snapshot.domains_on_blocklist)
 
 
 async def poll_stats() -> None:

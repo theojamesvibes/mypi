@@ -15,6 +15,7 @@ from app.api import auth as auth_router
 from app.api import instances as instances_router
 from app.api import queries as queries_router
 from app.api import stats as stats_router
+from app.api import sync as sync_router
 from app.auth import get_current_user, get_current_user_optional, hash_password
 from app.config import SESSION_COOKIE_MAX_AGE, SESSION_COOKIE_NAME, settings
 from app.database import AsyncSessionLocal, get_db
@@ -77,6 +78,7 @@ app.include_router(auth_router.router)
 app.include_router(instances_router.router)
 app.include_router(stats_router.router)
 app.include_router(queries_router.router)
+app.include_router(sync_router.router)
 
 
 # ── Web UI routes ─────────────────────────────────────────────────────────────
