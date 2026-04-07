@@ -2,15 +2,18 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.database import AsyncSessionLocal
 from app.models.pihole import PiholeInstance
+from app.models.settings import AppSetting
 from app.services.pihole_client import PiholeClient
 
 logger = logging.getLogger(__name__)
@@ -63,6 +66,59 @@ def get_schedule() -> dict:
     }
 
 
+async def load_schedule() -> None:
+    """Load persisted schedule from the database (called at startup)."""
+    global _schedule_minutes, _auto_gravity, _sync_opts
+    try:
+        async with AsyncSessionLocal() as db:
+            row = await db.get(AppSetting, "sync_schedule")
+        if row and row.value:
+            data = json.loads(row.value)
+            _schedule_minutes = data.get("interval_minutes", 0)
+            _auto_gravity = data.get("auto_gravity", False)
+            _sync_opts = {
+                "import_config": data.get("import_config", True),
+                "import_gravity": data.get("import_gravity", True),
+                "import_dhcp_leases": data.get("import_dhcp_leases", False),
+                "run_gravity": data.get("run_gravity", True),
+            }
+            if _schedule_minutes > 0:
+                import asyncio as _a
+                loop = _a.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(_start_schedule_task(_schedule_minutes))
+            logger.info(
+                "Loaded sync schedule from DB: interval=%d min, auto_gravity=%s",
+                _schedule_minutes, _auto_gravity,
+            )
+    except Exception as exc:
+        logger.warning("Could not load sync schedule from DB: %s", exc)
+
+
+async def _persist_schedule() -> None:
+    """Save current schedule to the database."""
+    data = json.dumps({
+        "interval_minutes": _schedule_minutes,
+        "auto_gravity": _auto_gravity,
+        **_sync_opts,
+    })
+    try:
+        async with AsyncSessionLocal() as db:
+            stmt = pg_insert(AppSetting).values(key="sync_schedule", value=data)
+            stmt = stmt.on_conflict_do_update(index_elements=["key"], set_={"value": data})
+            await db.execute(stmt)
+            await db.commit()
+    except Exception as exc:
+        logger.warning("Could not persist sync schedule: %s", exc)
+
+
+async def _start_schedule_task(minutes: int) -> None:
+    global _schedule_task
+    if _schedule_task and not _schedule_task.done():
+        _schedule_task.cancel()
+    _schedule_task = asyncio.get_event_loop().create_task(_scheduled_loop(minutes))
+
+
 async def _scheduled_loop(minutes: int) -> None:
     """Background task that runs sync every `minutes` minutes."""
     import asyncio as _asyncio
@@ -103,6 +159,8 @@ def set_schedule(
         logger.info("Sync scheduled every %d minutes.", interval_minutes)
     else:
         logger.info("Sync schedule disabled.")
+
+    asyncio.get_event_loop().create_task(_persist_schedule())
 
 
 async def notify_blocklist_count(count: int) -> None:
