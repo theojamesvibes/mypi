@@ -4,6 +4,14 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.2.7] - 2026-04-07
+
+### Changed
+- Dashboard sync indicator now only fetches `/api/sync/status` (dropped the coupled `Promise.all` with `/api/sync/schedule` that was silently swallowing errors); shows whenever a sync has ever completed
+- "Run gravity update after sync" option removed from Settings UI — gravity is always run (on master before export, on replicas after import) and is no longer configurable
+
+---
+
 ## [1.2.6] - 2026-04-07
 
 ### Changed
