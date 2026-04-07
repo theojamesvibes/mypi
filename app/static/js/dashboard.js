@@ -673,7 +673,7 @@ async function loadSyncIndicator() {
   }
 
   const completedAt = new Date(status.completed_at);
-  const ageHours = (Date.now() - completedAt.getTime()) / 3_600_000;
+  const ageHours = (Date.now() - completedAt.getTime()) / 3600000;
   const isStale = ageHours > 24;
   const timeStr = completedAt.toLocaleString();
   const timeCls = isStale ? 'text-danger fw-semibold' : '';
