@@ -39,13 +39,12 @@ class SyncState:
 _state = SyncState()
 _lock = asyncio.Lock()
 
-# Schedule config (in-memory; resets on restart)
-_schedule_minutes: int = 0        # 0 = disabled
-_auto_gravity: bool = False       # auto-sync when master blocklist count changes
+# Schedule config — persisted to DB, restored on startup
+_schedule_minutes: int = 0
+_auto_gravity: bool = False
 _schedule_task: asyncio.Task | None = None
 _last_blocklist_count: int | None = None
 
-# Saved sync options reused for scheduled/auto runs
 _sync_opts: dict = {
     "import_config": True,
     "import_gravity": True,
@@ -66,14 +65,55 @@ def get_schedule() -> dict:
     }
 
 
-async def load_schedule() -> None:
-    """Load persisted schedule from the database (called at startup)."""
-    global _schedule_minutes, _auto_gravity, _sync_opts
+# ── DB persistence ────────────────────────────────────────────────────────────
+
+async def _db_upsert(key: str, value: str) -> None:
+    async with AsyncSessionLocal() as db:
+        stmt = pg_insert(AppSetting).values(key=key, value=value)
+        stmt = stmt.on_conflict_do_update(index_elements=["key"], set_={"value": value})
+        await db.execute(stmt)
+        await db.commit()
+
+
+async def _persist_schedule() -> None:
     try:
-        async with AsyncSessionLocal() as db:
-            row = await db.get(AppSetting, "sync_schedule")
-        if row and row.value:
-            data = json.loads(row.value)
+        await _db_upsert("sync_schedule", json.dumps({
+            "interval_minutes": _schedule_minutes,
+            "auto_gravity": _auto_gravity,
+            **_sync_opts,
+        }))
+    except Exception as exc:
+        logger.warning("Could not persist sync schedule: %s", exc)
+
+
+async def _persist_sync_state(state: SyncState) -> None:
+    """Store the last completed sync result so it survives restarts."""
+    try:
+        payload = {
+            "status": state.status,
+            "completed_at": state.completed_at.isoformat() if state.completed_at else None,
+            "started_at": state.started_at.isoformat() if state.started_at else None,
+            "master": state.master,
+            "error": state.error,
+            "results": [{"name": r.name, "status": r.status, "error": r.error} for r in state.results],
+        }
+        await _db_upsert("sync_last_result", json.dumps(payload))
+    except Exception as exc:
+        logger.warning("Could not persist sync state: %s", exc)
+
+
+async def load_schedule() -> None:
+    """Load persisted schedule and last sync result from DB (called at startup)."""
+    global _schedule_minutes, _auto_gravity, _sync_opts, _state
+
+    async with AsyncSessionLocal() as db:
+        schedule_row = await db.get(AppSetting, "sync_schedule")
+        result_row = await db.get(AppSetting, "sync_last_result")
+
+    # Restore schedule
+    if schedule_row and schedule_row.value:
+        try:
+            data = json.loads(schedule_row.value)
             _schedule_minutes = data.get("interval_minutes", 0)
             _auto_gravity = data.get("auto_gravity", False)
             _sync_opts = {
@@ -82,50 +122,45 @@ async def load_schedule() -> None:
                 "import_dhcp_leases": data.get("import_dhcp_leases", False),
                 "run_gravity": data.get("run_gravity", True),
             }
-            if _schedule_minutes > 0:
-                import asyncio as _a
-                loop = _a.get_event_loop()
-                if loop.is_running():
-                    loop.create_task(_start_schedule_task(_schedule_minutes))
             logger.info(
-                "Loaded sync schedule from DB: interval=%d min, auto_gravity=%s",
+                "Loaded sync schedule: interval=%d min, auto_gravity=%s",
                 _schedule_minutes, _auto_gravity,
             )
-    except Exception as exc:
-        logger.warning("Could not load sync schedule from DB: %s", exc)
+        except Exception as exc:
+            logger.warning("Could not parse sync schedule: %s", exc)
+
+    # Restore last sync result
+    if result_row and result_row.value:
+        try:
+            data = json.loads(result_row.value)
+            _state = SyncState(
+                status=data.get("status", "idle"),
+                started_at=datetime.fromisoformat(data["started_at"]) if data.get("started_at") else None,
+                completed_at=datetime.fromisoformat(data["completed_at"]) if data.get("completed_at") else None,
+                master=data.get("master"),
+                error=data.get("error"),
+                results=[
+                    InstanceSyncResult(name=r["name"], status=r["status"], error=r.get("error"))
+                    for r in data.get("results", [])
+                ],
+            )
+            logger.info("Restored last sync state: %s at %s", _state.status, _state.completed_at)
+        except Exception as exc:
+            logger.warning("Could not parse last sync result: %s", exc)
+
+    # Re-arm interval task if schedule was active
+    if _schedule_minutes > 0:
+        asyncio.get_event_loop().create_task(_scheduled_loop(_schedule_minutes))
+        logger.info("Re-armed sync schedule: every %d minutes.", _schedule_minutes)
 
 
-async def _persist_schedule() -> None:
-    """Save current schedule to the database."""
-    data = json.dumps({
-        "interval_minutes": _schedule_minutes,
-        "auto_gravity": _auto_gravity,
-        **_sync_opts,
-    })
-    try:
-        async with AsyncSessionLocal() as db:
-            stmt = pg_insert(AppSetting).values(key="sync_schedule", value=data)
-            stmt = stmt.on_conflict_do_update(index_elements=["key"], set_={"value": data})
-            await db.execute(stmt)
-            await db.commit()
-    except Exception as exc:
-        logger.warning("Could not persist sync schedule: %s", exc)
-
-
-async def _start_schedule_task(minutes: int) -> None:
-    global _schedule_task
-    if _schedule_task and not _schedule_task.done():
-        _schedule_task.cancel()
-    _schedule_task = asyncio.get_event_loop().create_task(_scheduled_loop(minutes))
-
+# ── Schedule management ───────────────────────────────────────────────────────
 
 async def _scheduled_loop(minutes: int) -> None:
-    """Background task that runs sync every `minutes` minutes."""
-    import asyncio as _asyncio
     while True:
-        await _asyncio.sleep(minutes * 60)
+        await asyncio.sleep(minutes * 60)
         if _lock.locked():
-            continue  # skip if a manual sync is already running
+            continue
         logger.info("Scheduled sync triggered (every %d min)", minutes)
         await run_sync(**_sync_opts)
 
@@ -164,8 +199,6 @@ def set_schedule(
 
 
 async def notify_blocklist_count(count: int) -> None:
-    """Called by the stats collector after each master snapshot.
-    Triggers an auto-sync if the blocklist count changed and auto_gravity is on."""
     global _last_blocklist_count
     if not _auto_gravity:
         _last_blocklist_count = count
@@ -181,6 +214,8 @@ async def notify_blocklist_count(count: int) -> None:
     else:
         _last_blocklist_count = count
 
+
+# ── Sync execution ────────────────────────────────────────────────────────────
 
 async def run_sync(
     import_config: bool = True,
@@ -221,16 +256,24 @@ async def run_sync(
                 import_config, import_gravity, import_dhcp_leases, run_gravity,
             )
 
-            # Teleporter import can be slow on low-powered Pi hardware — use a
-            # generous timeout so we don't abort mid-transfer.
+            # Teleporter import can be slow on low-powered Pi hardware
             SYNC_TIMEOUT = 300.0  # 5 minutes
 
-            # Export from master using a fresh (non-persistent) client
+            # Step 1: Run gravity on master first so the export contains fresh blocklists
+            if run_gravity:
+                try:
+                    async with PiholeClient(master.url, master.api_password, timeout=SYNC_TIMEOUT) as client:
+                        await client.run_gravity()
+                    logger.info("Gravity update completed on master %s before export", master.name)
+                except Exception as exc:
+                    logger.warning("Gravity on master failed (non-fatal, continuing with export): %s", exc)
+
+            # Step 2: Export teleporter zip from master (now contains fresh gravity)
             async with PiholeClient(master.url, master.api_password, timeout=SYNC_TIMEOUT) as client:
                 zip_data = await client.get_teleporter()
             logger.info("Exported teleporter from master %s (%d bytes)", master.name, len(zip_data))
 
-            # Push to each replica concurrently
+            # Step 3: Push to each replica concurrently
             async def _sync_replica(replica: PiholeInstance) -> InstanceSyncResult:
                 try:
                     async with PiholeClient(replica.url, replica.api_password, timeout=SYNC_TIMEOUT) as client:
@@ -249,15 +292,6 @@ async def run_sync(
                     return InstanceSyncResult(name=replica.name, status="error", error=str(exc))
 
             results = list(await asyncio.gather(*[_sync_replica(r) for r in replicas]))
-
-            # Optionally run gravity on master too
-            if run_gravity:
-                try:
-                    async with PiholeClient(master.url, master.api_password, timeout=SYNC_TIMEOUT) as client:
-                        await client.run_gravity()
-                    logger.info("Gravity update triggered on master %s", master.name)
-                except Exception as exc:
-                    logger.warning("Gravity on master failed (non-fatal): %s", exc)
 
             overall: Literal["success", "error"] = (
                 "error" if any(r.status == "error" for r in results) else "success"
@@ -280,4 +314,5 @@ async def run_sync(
                 results=results,
             )
 
+        asyncio.get_event_loop().create_task(_persist_sync_state(_state))
         return _state
