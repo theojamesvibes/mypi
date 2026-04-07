@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import Depends, FastAPI, Request, Response
@@ -18,7 +19,7 @@ from app.auth import get_current_user, get_current_user_optional, hash_password
 from app.config import SESSION_COOKIE_MAX_AGE, SESSION_COOKIE_NAME, settings
 from app.database import AsyncSessionLocal, get_db
 from app.models.user import User
-from app.services.collector import cleanup_old_data, poll_queries, poll_stats
+from app.services.collector import cleanup_old_data, close_all_clients, poll_queries, poll_stats
 from app.services.config_loader import sync_instances
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -54,6 +55,7 @@ async def lifespan(app: FastAPI):
                 settings.stats_poll_interval, settings.queries_poll_interval)
     yield
     scheduler.shutdown(wait=False)
+    await close_all_clients()
 
 
 app = FastAPI(
@@ -65,6 +67,10 @@ app = FastAPI(
 
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
+
+_version_file = Path(__file__).parent.parent / "VERSION"
+APP_VERSION = _version_file.read_text().strip() if _version_file.exists() else "dev"
+templates.env.globals["app_version"] = APP_VERSION
 
 # API routers
 app.include_router(auth_router.router)

@@ -6,9 +6,17 @@
 
   <div class="d-flex align-items-center justify-content-between mb-3">
     <h5 class="fw-semibold mb-0"><i class="bi bi-list-ul me-2 text-primary"></i>Query Log</h5>
-    <button class="btn btn-sm btn-outline-secondary" onclick="loadQueries(1)">
-      <i class="bi bi-arrow-clockwise"></i> Refresh
-    </button>
+    <div class="d-flex gap-2 align-items-center">
+      <div class="form-check form-switch mb-0 d-flex align-items-center gap-2" title="Refresh every 2 seconds">
+        <input class="form-check-input" type="checkbox" id="live-toggle" onchange="toggleLiveView(this.checked)">
+        <label class="form-check-label small" for="live-toggle">
+          <i class="bi bi-broadcast text-danger" id="live-icon" style="display:none;"></i> Live
+        </label>
+      </div>
+      <button class="btn btn-sm btn-outline-secondary" onclick="loadQueries(1)" id="refresh-btn">
+        <i class="bi bi-arrow-clockwise"></i>
+      </button>
+    </div>
   </div>
 
   <!-- Filters -->
@@ -24,22 +32,19 @@
         <div class="col-sm-3">
           <label class="form-label form-label-sm mb-1">Domain</label>
           <input type="text" id="f-domain" class="form-control form-control-sm" placeholder="e.g. ads.example.com"
-                 onchange="loadQueries(1)">
+                 onkeydown="if(event.key==='Enter') loadQueries(1)">
         </div>
         <div class="col-sm-2">
           <label class="form-label form-label-sm mb-1">Client</label>
           <input type="text" id="f-client" class="form-control form-control-sm" placeholder="IP or name"
-                 onchange="loadQueries(1)">
+                 onkeydown="if(event.key==='Enter') loadQueries(1)">
         </div>
         <div class="col-sm-2">
-          <label class="form-label form-label-sm mb-1">Status</label>
-          <select id="f-status" class="form-select form-select-sm" onchange="loadQueries(1)">
-            <option value="">All</option>
-            <option value="forwarded">Forwarded</option>
-            <option value="cached">Cached</option>
-            <option value="blocked_gravity">Blocked (Gravity)</option>
-            <option value="blocked_regex">Blocked (Regex)</option>
-            <option value="blocked_denylist">Blocked (Denylist)</option>
+          <label class="form-label form-label-sm mb-1">Show</label>
+          <select id="f-blocked" class="form-select form-select-sm" onchange="loadQueries(1)">
+            <option value="">All queries</option>
+            <option value="true">Blocked only</option>
+            <option value="false">Permitted only</option>
           </select>
         </div>
         <div class="col-sm-2">
@@ -48,6 +53,7 @@
             <option value="24">Last 24h</option>
             <option value="48">Last 48h</option>
             <option value="168">Last 7 days</option>
+            <option value="720">Last 30 days</option>
           </select>
         </div>
       </div>
@@ -65,13 +71,13 @@
         <table class="table table-sm table-hover mb-0 query-log-table">
           <thead class="table-light">
             <tr>
-              <th>Time</th>
+              <th class="sort-col" data-col="timestamp">Time <span class="sort-icon" id="sort-timestamp">↓</span></th>
               <th>Instance</th>
-              <th>Domain</th>
-              <th>Type</th>
-              <th>Client</th>
-              <th>Status</th>
-              <th class="text-end">Reply (ms)</th>
+              <th class="sort-col" data-col="domain">Domain <span class="sort-icon" id="sort-domain"></span></th>
+              <th class="sort-col" data-col="query_type">Type <span class="sort-icon" id="sort-query_type"></span></th>
+              <th class="sort-col" data-col="client">Client <span class="sort-icon" id="sort-client"></span></th>
+              <th class="sort-col" data-col="status">Status <span class="sort-icon" id="sort-status"></span></th>
+              <th class="text-end sort-col" data-col="reply_time_ms">Reply (ms) <span class="sort-icon" id="sort-reply_time_ms"></span></th>
             </tr>
           </thead>
           <tbody id="queries-tbody">

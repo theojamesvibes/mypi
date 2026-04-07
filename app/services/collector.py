@@ -14,7 +14,12 @@ from app.services.pihole_client import PiholeClient
 
 logger = logging.getLogger(__name__)
 
-_query_cursors: dict[str, str | None] = {}
+# Persistent clients — one per instance, authenticated once and reused.
+_clients: dict[str, PiholeClient] = {}
+
+# Most recent query timestamp seen per instance (Unix float).
+# Used to fetch only queries newer than what we already have.
+_last_seen_ts: dict[str, float] = {}
 
 
 async def _get_active_instances() -> list[PiholeInstance]:
@@ -23,10 +28,43 @@ async def _get_active_instances() -> list[PiholeInstance]:
         return list(result.scalars().all())
 
 
+async def _get_client(instance: PiholeInstance) -> PiholeClient:
+    """Return a persistent, open PiholeClient for this instance.
+    Restores a previously saved SID from the database to avoid re-authenticating."""
+    key = str(instance.id)
+    if key not in _clients:
+        client = PiholeClient(instance.url, instance.api_password)
+        await client.open()
+        # Restore persisted SID so we don't need to re-authenticate.
+        if instance.session_sid:
+            client.sid = instance.session_sid
+            logger.info("Restored session SID for %s — skipping auth", instance.name)
+        else:
+            logger.info("Opened new client for %s", instance.name)
+        _clients[key] = client
+    return _clients[key]
+
+
+async def _save_sid(instance_id: object, sid: str | None) -> None:
+    """Persist the session SID so it survives container restarts."""
+    async with AsyncSessionLocal() as db:
+        inst = await db.get(PiholeInstance, instance_id)
+        if inst and inst.session_sid != sid:
+            inst.session_sid = sid
+            await db.commit()
+
+
+async def _close_client(instance_key: str) -> None:
+    client = _clients.pop(instance_key, None)
+    if client:
+        await client.close()
+
+
 async def _poll_stats_for(instance: PiholeInstance) -> None:
     try:
-        async with PiholeClient(instance.url, instance.api_password) as client:
-            summary = await client.get_summary()
+        client = await _get_client(instance)
+        summary = await client.get_summary()
+        await _save_sid(instance.id, client.sid)
         snapshot = StatsSnapshot(
             instance_id=instance.id,
             collected_at=datetime.now(timezone.utc),
@@ -63,14 +101,16 @@ async def poll_stats() -> None:
 
 async def _poll_queries_for(instance: PiholeInstance) -> None:
     instance_key = str(instance.id)
-    cursor = _query_cursors.get(instance_key)
+    from_ts = _last_seen_ts.get(instance_key)
+    logger.info("Polling queries for %s (from_ts=%s)", instance.name, from_ts)
     try:
-        async with PiholeClient(instance.url, instance.api_password) as client:
-            queries, next_cursor = await client.get_queries(cursor=cursor, length=500)
+        client = await _get_client(instance)
+        queries = await client.get_queries(from_ts=from_ts, length=500)
+
+        await _save_sid(instance.id, client.sid)
+        logger.info("Got %d queries from %s", len(queries), instance.name)
 
         if not queries:
-            if next_cursor:
-                _query_cursors[instance_key] = next_cursor
             return
 
         async with AsyncSessionLocal() as db:
@@ -104,10 +144,11 @@ async def _poll_queries_for(instance: PiholeInstance) -> None:
             if new_logs:
                 db.add_all(new_logs)
                 await db.commit()
-                logger.debug("Stored %d new queries for %s", len(new_logs), instance.name)
+                logger.info("Stored %d new queries for %s", len(new_logs), instance.name)
 
-        if next_cursor:
-            _query_cursors[instance_key] = next_cursor
+        # Advance the watermark to the most recent timestamp we've seen.
+        max_ts = max(q.timestamp.timestamp() for q in queries)
+        _last_seen_ts[instance_key] = max_ts
 
     except Exception as exc:
         logger.warning("Failed to poll queries for %s: %s", instance.name, exc)
@@ -117,9 +158,12 @@ async def poll_queries() -> None:
     instances = await _get_active_instances()
 
     active_keys = {str(inst.id) for inst in instances}
-    for key in list(_query_cursors):
+    for key in list(_last_seen_ts):
         if key not in active_keys:
-            del _query_cursors[key]
+            del _last_seen_ts[key]
+    for key in list(_clients):
+        if key not in active_keys:
+            await _close_client(key)
 
     await asyncio.gather(*[_poll_queries_for(inst) for inst in instances])
 
@@ -140,3 +184,10 @@ async def cleanup_old_data() -> None:
             query_result.rowcount,
             settings.data_retention_days,
         )
+
+
+async def close_all_clients() -> None:
+    """Call on shutdown to cleanly close all persistent HTTP clients."""
+    for key in list(_clients):
+        await _close_client(key)
+    _last_seen_ts.clear()
