@@ -120,6 +120,12 @@ class PiholeClient:
             return {"X-FTL-SID": self._sid}
         return {}
 
+    async def _ensure_authed(self) -> None:
+        if self._sid is None:
+            ok = await self._authenticate()
+            if not ok:
+                raise ConnectionError(f"Authentication failed for {self.base_url}")
+
     async def _get(self, path: str, params: dict | None = None, retry: bool = True) -> Any:
         if self._client is None:
             raise RuntimeError("PiholeClient must be used as an async context manager")
@@ -140,6 +146,102 @@ class PiholeClient:
 
         resp.raise_for_status()
         return resp.json()
+
+    async def _post(self, path: str, json_data: dict | None = None, retry: bool = True) -> Any:
+        if self._client is None:
+            raise RuntimeError("PiholeClient must be used as an async context manager")
+        await self._ensure_authed()
+        url = f"{self.base_url}{path}"
+        resp = await self._client.post(url, headers=self._headers(), json=json_data)
+        if resp.status_code == 401 and retry:
+            self._sid = None
+            ok = await self._authenticate()
+            if ok:
+                return await self._post(path, json_data=json_data, retry=False)
+            raise ConnectionError(f"Re-authentication failed for {self.base_url}")
+        resp.raise_for_status()
+        return resp.json() if resp.content else None
+
+    async def _get_bytes(self, path: str, retry: bool = True) -> bytes:
+        if self._client is None:
+            raise RuntimeError("PiholeClient must be used as an async context manager")
+        await self._ensure_authed()
+        url = f"{self.base_url}{path}"
+        resp = await self._client.get(url, headers=self._headers())
+        if resp.status_code == 401 and retry:
+            self._sid = None
+            ok = await self._authenticate()
+            if ok:
+                return await self._get_bytes(path, retry=False)
+            raise ConnectionError(f"Re-authentication failed for {self.base_url}")
+        resp.raise_for_status()
+        return resp.content
+
+    async def get_teleporter(self) -> bytes:
+        """Export full Pi-hole configuration as a zip archive."""
+        return await self._get_bytes("/api/teleporter")
+
+    async def post_teleporter(
+        self,
+        zip_data: bytes,
+        import_config: bool = True,
+        import_gravity: bool = True,
+        import_dhcp_leases: bool = False,
+    ) -> None:
+        """Import a Pi-hole configuration zip into this instance."""
+        if self._client is None:
+            raise RuntimeError("PiholeClient must be used as an async context manager")
+        await self._ensure_authed()
+
+        import json as _json
+        import_payload = _json.dumps({
+            "config": import_config,
+            "dhcp_leases": import_dhcp_leases,
+            "gravity": {
+                "group": import_gravity,
+                "adlist": import_gravity,
+                "adlist_by_group": import_gravity,
+                "domain_list": import_gravity,
+                "domain_list_by_group": import_gravity,
+                "client": import_gravity,
+                "client_by_group": import_gravity,
+            },
+        })
+
+        url = f"{self.base_url}/api/teleporter"
+        files = {"file": ("backup.zip", zip_data, "application/zip")}
+        data = {"import": import_payload}
+
+        try:
+            resp = await self._client.post(url, headers=self._headers(), files=files, data=data)
+            if resp.status_code == 401:
+                self._sid = None
+                ok = await self._authenticate()
+                if ok:
+                    resp = await self._client.post(url, headers=self._headers(), files=files, data=data)
+            resp.raise_for_status()
+        except httpx.RemoteProtocolError as exc:
+            # Pi-hole FTL restarts itself after importing configuration, which
+            # drops the HTTP connection before the response is fully sent.
+            # The import succeeded — the incomplete chunked response is expected.
+            if "incomplete chunked read" in str(exc).lower():
+                logger.info(
+                    "Teleporter import to %s: connection reset after import "
+                    "(FTL restarted — this is normal, import succeeded).",
+                    self.base_url,
+                )
+            else:
+                raise
+
+    async def run_gravity(self) -> None:
+        """Trigger a gravity database update on this instance."""
+        try:
+            await self._post("/api/action/gravity")
+        except httpx.RemoteProtocolError as exc:
+            if "incomplete chunked read" in str(exc).lower():
+                logger.info("Gravity on %s: connection reset (FTL restarted — normal).", self.base_url)
+            else:
+                raise
 
     async def get_summary(self) -> PiholeSummary:
         data = await self._get("/api/stats/summary")
