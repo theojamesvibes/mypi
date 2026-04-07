@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-3 py-3">
+
+  <!-- Page header -->
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <h5 class="fw-semibold mb-0"><i class="bi bi-speedometer2 me-2 text-success"></i>Dashboard</h5>
+    <div class="d-flex gap-2 align-items-center">
+      <select id="time-range" class="form-select form-select-sm" style="width:auto;">
+        <option value="24">Last 24 hours</option>
+        <option value="48">Last 48 hours</option>
+        <option value="168">Last 7 days</option>
+      </select>
+      <button class="btn btn-sm btn-outline-secondary" onclick="loadDashboard()">
+        <i class="bi bi-arrow-clockwise"></i>
+      </button>
+    </div>
+  </div>
+
+  <!-- Stat cards -->
+  <div class="row g-3 mb-3" id="stat-cards">
+    <div class="col-sm-6 col-xl-3">
+      <div class="stat-card stat-card-blue">
+        <div class="stat-icon"><i class="bi bi-bar-chart-fill"></i></div>
+        <div class="stat-body">
+          <div class="stat-value" id="total-queries">—</div>
+          <div class="stat-label">Total Queries Today</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-xl-3">
+      <div class="stat-card stat-card-red">
+        <div class="stat-icon"><i class="bi bi-shield-fill-x"></i></div>
+        <div class="stat-body">
+          <div class="stat-value" id="queries-blocked">—</div>
+          <div class="stat-label">Queries Blocked</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-xl-3">
+      <div class="stat-card stat-card-orange">
+        <div class="stat-icon"><i class="bi bi-percent"></i></div>
+        <div class="stat-body">
+          <div class="stat-value" id="percent-blocked">—</div>
+          <div class="stat-label">Percent Blocked</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-xl-3">
+      <div class="stat-card stat-card-green">
+        <div class="stat-icon"><i class="bi bi-list-check"></i></div>
+        <div class="stat-body">
+          <div class="stat-value" id="blocklist-size">—</div>
+          <div class="stat-label">Domains on Blocklist</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Charts row -->
+  <div class="row g-3 mb-3">
+    <div class="col-xl-8">
+      <div class="card h-100">
+        <div class="card-header d-flex align-items-center justify-content-between">
+          <span><i class="bi bi-graph-up me-1"></i>DNS Queries over Time</span>
+          <div id="chart-legend" class="d-flex gap-3 small"></div>
+        </div>
+        <div class="card-body p-2">
+          <canvas id="queriesChart" height="120"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="col-xl-4">
+      <div class="card h-100">
+        <div class="card-header"><i class="bi bi-pie-chart me-1"></i>Query Types</div>
+        <div class="card-body d-flex align-items-center justify-content-center p-2">
+          <canvas id="typeChart" style="max-height:220px;"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Per-system panel -->
+  <div class="row g-3 mb-3">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header"><i class="bi bi-hdd-network me-1"></i>Pi-hole Systems</div>
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0" id="instances-table">
+              <thead class="table-light">
+                <tr>
+                  <th>Name</th>
+                  <th>Status</th>
+                  <th class="text-end">Total Queries</th>
+                  <th class="text-end">Blocked</th>
+                  <th class="text-end">% Blocked</th>
+                  <th class="text-end">Blocklist</th>
+                  <th class="text-end">Clients</th>
+                  <th>Last Seen</th>
+                </tr>
+              </thead>
+              <tbody id="instances-tbody">
+                <tr><td colspan="8" class="text-center text-muted py-3">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Top tables -->
+  <div class="row g-3 mb-3">
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-header text-success"><i class="bi bi-check-circle me-1"></i>Top Permitted Domains</div>
+        <div class="card-body p-0">
+          <table class="table table-sm table-hover mb-0">
+            <thead class="table-light"><tr><th>Domain</th><th class="text-end">Hits</th></tr></thead>
+            <tbody id="top-permitted"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-header text-danger"><i class="bi bi-x-circle me-1"></i>Top Blocked Domains</div>
+        <div class="card-body p-0">
+          <table class="table table-sm table-hover mb-0">
+            <thead class="table-light"><tr><th>Domain</th><th class="text-end">Hits</th></tr></thead>
+            <tbody id="top-blocked"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-header text-primary"><i class="bi bi-person-fill me-1"></i>Top Clients</div>
+        <div class="card-body p-0">
+          <table class="table table-sm table-hover mb-0">
+            <thead class="table-light"><tr><th>Client</th><th class="text-end">Queries</th></tr></thead>
+            <tbody id="top-clients"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  loadDashboard();
+  setInterval(loadDashboard, 60000);
+</script>
+{% endblock %}

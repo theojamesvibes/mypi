@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Query Log{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-3 py-3">
+
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <h5 class="fw-semibold mb-0"><i class="bi bi-list-ul me-2 text-primary"></i>Query Log</h5>
+    <button class="btn btn-sm btn-outline-secondary" onclick="loadQueries(1)">
+      <i class="bi bi-arrow-clockwise"></i> Refresh
+    </button>
+  </div>
+
+  <!-- Filters -->
+  <div class="card mb-3">
+    <div class="card-body py-2">
+      <div class="row g-2 align-items-end">
+        <div class="col-sm-3">
+          <label class="form-label form-label-sm mb-1">Instance</label>
+          <select id="f-instance" class="form-select form-select-sm" onchange="loadQueries(1)">
+            <option value="">All instances</option>
+          </select>
+        </div>
+        <div class="col-sm-3">
+          <label class="form-label form-label-sm mb-1">Domain</label>
+          <input type="text" id="f-domain" class="form-control form-control-sm" placeholder="e.g. ads.example.com"
+                 onchange="loadQueries(1)">
+        </div>
+        <div class="col-sm-2">
+          <label class="form-label form-label-sm mb-1">Client</label>
+          <input type="text" id="f-client" class="form-control form-control-sm" placeholder="IP or name"
+                 onchange="loadQueries(1)">
+        </div>
+        <div class="col-sm-2">
+          <label class="form-label form-label-sm mb-1">Status</label>
+          <select id="f-status" class="form-select form-select-sm" onchange="loadQueries(1)">
+            <option value="">All</option>
+            <option value="forwarded">Forwarded</option>
+            <option value="cached">Cached</option>
+            <option value="blocked_gravity">Blocked (Gravity)</option>
+            <option value="blocked_regex">Blocked (Regex)</option>
+            <option value="blocked_denylist">Blocked (Denylist)</option>
+          </select>
+        </div>
+        <div class="col-sm-2">
+          <label class="form-label form-label-sm mb-1">Time range</label>
+          <select id="f-hours" class="form-select form-select-sm" onchange="loadQueries(1)">
+            <option value="24">Last 24h</option>
+            <option value="48">Last 48h</option>
+            <option value="168">Last 7 days</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Table -->
+  <div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <span id="query-count" class="small text-muted">Loading…</span>
+      <div id="pagination-top" class="d-flex gap-1"></div>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0 query-log-table">
+          <thead class="table-light">
+            <tr>
+              <th>Time</th>
+              <th>Instance</th>
+              <th>Domain</th>
+              <th>Type</th>
+              <th>Client</th>
+              <th>Status</th>
+              <th class="text-end">Reply (ms)</th>
+            </tr>
+          </thead>
+          <tbody id="queries-tbody">
+            <tr><td colspan="7" class="text-center text-muted py-4">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card-footer d-flex justify-content-end">
+      <div id="pagination-bottom" class="d-flex gap-1"></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  loadInstanceFilter();
+  loadQueries(1);
+</script>
+{% endblock %}

@@ -1,0 +1,129 @@
+from __future__ import annotations
+
+import logging
+from contextlib import asynccontextmanager
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from fastapi import Depends, FastAPI, Request, Response
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from sqlalchemy import select
+
+from app.api import auth as auth_router
+from app.api import instances as instances_router
+from app.api import queries as queries_router
+from app.api import stats as stats_router
+from app.auth import get_current_user, get_current_user_optional, hash_password
+from app.config import SESSION_COOKIE_MAX_AGE, SESSION_COOKIE_NAME, settings
+from app.database import AsyncSessionLocal, get_db
+from app.models.user import User
+from app.services.collector import cleanup_old_data, poll_queries, poll_stats
+from app.services.config_loader import sync_instances
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logger = logging.getLogger(__name__)
+
+scheduler = AsyncIOScheduler()
+
+
+async def _bootstrap() -> None:
+    """Sync instances and create initial admin user if needed."""
+    async with AsyncSessionLocal() as db:
+        await sync_instances(db)
+
+        result = await db.execute(select(User).limit(1))
+        if result.scalar_one_or_none() is None:
+            admin = User(
+                username=settings.initial_admin_user,
+                hashed_password=hash_password(settings.initial_admin_password),
+            )
+            db.add(admin)
+            await db.commit()
+            logger.info("Created initial admin user: %s", settings.initial_admin_user)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await _bootstrap()
+    scheduler.add_job(poll_stats, "interval", seconds=settings.stats_poll_interval, id="poll_stats")
+    scheduler.add_job(poll_queries, "interval", seconds=settings.queries_poll_interval, id="poll_queries")
+    scheduler.add_job(cleanup_old_data, "cron", hour=3, minute=0, id="cleanup")
+    scheduler.start()
+    logger.info("Scheduler started (stats every %ds, queries every %ds).",
+                settings.stats_poll_interval, settings.queries_poll_interval)
+    yield
+    scheduler.shutdown(wait=False)
+
+
+app = FastAPI(
+    title="MyPi",
+    description="Consolidated Pi-hole dashboard and API",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
+templates = Jinja2Templates(directory="app/templates")
+
+# API routers
+app.include_router(auth_router.router)
+app.include_router(instances_router.router)
+app.include_router(stats_router.router)
+app.include_router(queries_router.router)
+
+
+# ── Web UI routes ─────────────────────────────────────────────────────────────
+
+@app.get("/login", response_class=HTMLResponse, include_in_schema=False)
+async def login_page(request: Request):
+    return templates.TemplateResponse("login.html", {"request": request})
+
+
+@app.post("/login", include_in_schema=False)
+async def login_form(request: Request, response: Response, db=Depends(get_db)):
+    form = await request.form()
+    username = form.get("username", "")
+    password = form.get("password", "")
+
+    from app.auth import create_access_token, verify_password
+    result = await db.execute(select(User).where(User.username == username, User.is_active.is_(True)))
+    user = result.scalar_one_or_none()
+
+    if user is None or not verify_password(password, user.hashed_password):
+        return templates.TemplateResponse(
+            "login.html", {"request": request, "error": "Invalid username or password"}, status_code=401
+        )
+
+    token = create_access_token(user.username)
+    redirect = RedirectResponse(url="/", status_code=303)
+    redirect.set_cookie(SESSION_COOKIE_NAME, token, httponly=True, samesite="lax", max_age=SESSION_COOKIE_MAX_AGE)
+    return redirect
+
+
+@app.get("/logout", include_in_schema=False)
+async def logout_web():
+    response = RedirectResponse(url="/login", status_code=303)
+    response.delete_cookie(SESSION_COOKIE_NAME)
+    return response
+
+
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+async def dashboard(request: Request, current_user=Depends(get_current_user_optional)):
+    if current_user is None:
+        return RedirectResponse(url="/login", status_code=303)
+    return templates.TemplateResponse("dashboard.html", {"request": request, "user": current_user})
+
+
+@app.get("/queries", response_class=HTMLResponse, include_in_schema=False)
+async def queries_page(request: Request, current_user=Depends(get_current_user_optional)):
+    if current_user is None:
+        return RedirectResponse(url="/login", status_code=303)
+    return templates.TemplateResponse("queries.html", {"request": request, "user": current_user})
+
+
+@app.get("/settings", response_class=HTMLResponse, include_in_schema=False)
+async def settings_page(request: Request, current_user=Depends(get_current_user_optional)):
+    if current_user is None:
+        return RedirectResponse(url="/login", status_code=303)
+    return templates.TemplateResponse("settings.html", {"request": request, "user": current_user})
