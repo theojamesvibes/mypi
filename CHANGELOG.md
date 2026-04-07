@@ -4,6 +4,13 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.2.5] - 2026-04-07
+
+### Fixed
+- Sync schedule (interval, auto-gravity, import options) now persists across container restarts via a new `app_settings` DB table; previously all schedule state was in-memory and reset to "disabled" on every restart, causing the dashboard sync indicator to never appear
+
+---
+
 ## [1.2.4] - 2026-04-07
 
 ### Changed
