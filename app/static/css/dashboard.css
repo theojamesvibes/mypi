@@ -90,13 +90,12 @@ body {
   border-top: 1px solid rgba(255,255,255,0.06);
 }
 
-.sidebar-version {
-  text-align: center;
-  padding: 6px 0 10px;
-  font-size: 0.65rem;
-  color: #4a6572;
+.topbar-version {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #6c757d;
+  letter-spacing: .02em;
   white-space: nowrap;
-  overflow: hidden;
 }
 
 /* ─── Main content ────────────────────────────────────────────────────────── */
