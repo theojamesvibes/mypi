@@ -37,10 +37,19 @@ A self-hosted dashboard that consolidates up to 10 locally running [Pi-hole](htt
 - Schedule and last sync result persist across container restarts (stored in PostgreSQL)
 - Dashboard shows **"Pi synced: \<time\>"** whenever a sync has run; time turns red if last sync was more than 24 hours ago
 
+### Pushover Notifications
+- Push alerts to any device via [Pushover](https://pushover.net) (iOS, Android, desktop)
+- Configurable alerts: sync failure, instance offline/back online, no logs received, high block rate
+- **High block rate** alert requires ≥7 days of data to establish a baseline before firing
+- No-logs and block-rate thresholds are configurable in Settings
+- Credentials (App Token + User Key) stored encrypted in PostgreSQL, survive restarts
+- Validate credentials and send a test notification directly from the Settings page
+
 ### Settings
 - API key management (create / revoke) for iOS app authentication
 - Instance list with online/offline badge and master indicator
 - Sync panel: import options, schedule configuration, live sync result with per-replica status
+- Pushover panel: credentials, master enable toggle, per-alert toggles, thresholds
 
 ### API & Auth
 - Full REST API under `/api/` with auto-generated OpenAPI docs (Swagger UI at `/docs`, ReDoc at `/redoc`)
@@ -212,17 +221,21 @@ The full API is available under `/api/`. Interactive documentation is at **`/doc
 ### Key endpoints
 
 ```
-POST  /api/auth/login       # { "username": "...", "password": "..." } → token
-POST  /api/auth/api-key     # Create API key (requires JWT)
-GET   /api/stats/summary    # Aggregated + per-instance stats
-GET   /api/stats/history    # Over-time query data (?hours=24)
-GET   /api/stats/top        # Top domains and clients (?hours=24&limit=10)
-GET   /api/queries          # Paginated query log (filterable, sortable)
-GET   /api/instances        # Instance list with status
-GET   /api/sync/status      # Last sync state
-POST  /api/sync             # Trigger a sync
-GET   /api/sync/schedule    # Get sync schedule settings
-PUT   /api/sync/schedule    # Update sync schedule settings
+POST  /api/auth/login                # { "username": "...", "password": "..." } → token
+POST  /api/auth/api-key              # Create API key (requires JWT)
+GET   /api/stats/summary             # Aggregated + per-instance stats
+GET   /api/stats/history             # Over-time query data (?hours=24)
+GET   /api/stats/top                 # Top domains and clients (?hours=24&limit=10)
+GET   /api/queries                   # Paginated query log (filterable, sortable)
+GET   /api/instances                 # Instance list with status
+GET   /api/sync/status               # Last sync state
+POST  /api/sync                      # Trigger a sync
+GET   /api/sync/schedule             # Get sync schedule settings
+PUT   /api/sync/schedule             # Update sync schedule settings
+GET   /api/notifications/settings    # Get Pushover settings (credentials masked)
+PUT   /api/notifications/settings    # Save Pushover settings
+POST  /api/notifications/test        # Send a test notification
+POST  /api/notifications/validate    # Validate App Token + User Key
 ```
 
 ---
@@ -235,8 +248,10 @@ api_keys           — iOS app / API client keys
 pihole_instances   — Pi-hole instance registry (from YAML); is_master flag
 stats_snapshots    — Periodic stats snapshots (one per instance per poll)
 query_logs         — Consolidated DNS query log entries (30-day retention)
-app_settings       — Key/value store for persisted app config (sync schedule,
-                     last sync result)
+app_settings       — Key/value store for persisted app config:
+                       sync_schedule      sync interval + options
+                       sync_last_result   last sync outcome + per-replica status
+                       pushover_settings  Pushover credentials + alert config
 ```
 
 ---
@@ -268,13 +283,15 @@ mypi/
     ├── api/                  # FastAPI route handlers
     │   ├── auth.py
     │   ├── instances.py
+    │   ├── notifications.py  # Pushover settings + test/validate endpoints
     │   ├── queries.py
     │   ├── stats.py
     │   └── sync.py
     ├── services/
     │   ├── pihole_client.py  # Pi-hole v6 REST API client (teleporter support)
-    │   ├── collector.py      # APScheduler background jobs
+    │   ├── collector.py      # APScheduler background jobs + offline alerts
     │   ├── config_loader.py  # YAML → DB sync
+    │   ├── pushover.py       # Pushover notification service
     │   └── sync_service.py   # Pi-hole config sync (master → replicas)
     ├── static/               # CSS + JS
     └── templates/            # Jinja2 HTML templates
@@ -327,9 +344,10 @@ uvicorn app.main:app --reload --port 8080
 - [x] Pi-hole config sync (master → replicas via teleporter API)
 - [x] Configurable auto-sync schedule and gravity-change detection
 - [x] Drill-down modals on top blocked domains and top clients
+- [x] Pushover push notifications (sync failure, offline, no logs, high block rate)
+- [x] Topbar sync status badge (green/yellow/red) on every page
 - [ ] iOS app
 - [ ] Blocking / unblocking domains via the aggregated UI
-- [ ] Email / push notifications for instances going offline
 
 ---
 
