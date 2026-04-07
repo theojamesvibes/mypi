@@ -38,9 +38,12 @@ async def save_settings(
     req: PushoverSettingsRequest,
     _: User = Depends(get_current_user),
 ) -> dict:
+    existing = pushover_service.get_settings_raw()
+    # Only overwrite credentials if the client submitted non-empty values;
+    # this lets alert preferences be saved without blanking out saved tokens.
     await pushover_service.save_settings(
-        app_token=req.app_token,
-        user_key=req.user_key,
+        app_token=req.app_token if req.app_token else existing["app_token"],
+        user_key=req.user_key if req.user_key else existing["user_key"],
         enabled=req.enabled,
         alert_sync_failure=req.alert_sync_failure,
         alert_instance_offline=req.alert_instance_offline,
@@ -54,9 +57,12 @@ async def save_settings(
 
 @router.post("/test")
 async def send_test(_: User = Depends(get_current_user)) -> dict:
-    ok = await pushover_service.send("MyPi test notification")
+    ok = await pushover_service.send_test()
     if not ok:
-        raise HTTPException(status_code=400, detail="Failed to send test notification. Check settings.")
+        raise HTTPException(
+            status_code=400,
+            detail="Failed — no credentials saved, or Pushover rejected the request. Check App Token and User Key."
+        )
     return {"ok": True}
 
 
