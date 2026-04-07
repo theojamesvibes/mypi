@@ -13,6 +13,7 @@ from sqlalchemy import select
 
 from app.api import auth as auth_router
 from app.api import instances as instances_router
+from app.api import notifications as notifications_router
 from app.api import queries as queries_router
 from app.api import stats as stats_router
 from app.api import sync as sync_router
@@ -22,6 +23,7 @@ from app.database import AsyncSessionLocal, get_db
 from app.models.user import User
 from app.services.collector import cleanup_old_data, close_all_clients, poll_queries, poll_stats
 from app.services.config_loader import sync_instances
+from app.services import pushover as pushover_service
 from app.services import sync_service
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -50,6 +52,7 @@ async def _bootstrap() -> None:
 async def lifespan(app: FastAPI):
     await _bootstrap()
     await sync_service.load_schedule()
+    await pushover_service.load_settings()
     scheduler.add_job(poll_stats, "interval", seconds=settings.stats_poll_interval, id="poll_stats")
     scheduler.add_job(poll_queries, "interval", seconds=settings.queries_poll_interval, id="poll_queries")
     scheduler.add_job(cleanup_old_data, "cron", hour=3, minute=0, id="cleanup")
@@ -81,6 +84,7 @@ app.include_router(instances_router.router)
 app.include_router(stats_router.router)
 app.include_router(queries_router.router)
 app.include_router(sync_router.router)
+app.include_router(notifications_router.router)
 
 
 # ── Web UI routes ─────────────────────────────────────────────────────────────

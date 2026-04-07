@@ -10,6 +10,7 @@ from sqlalchemy import delete, select
 from app.config import settings
 from app.database import AsyncSessionLocal
 from app.models.pihole import PiholeInstance, QueryLog, StatsSnapshot
+from app.services import pushover as pushover_service
 from app.services import sync_service
 from app.services.pihole_client import PiholeClient
 
@@ -21,6 +22,9 @@ _clients: dict[str, PiholeClient] = {}
 # Most recent query timestamp seen per instance (Unix float).
 # Used to fetch only queries newer than what we already have.
 _last_seen_ts: dict[str, float] = {}
+
+# Previous poll status — used to detect online→offline transitions for alerts.
+_prev_status: dict[str, str] = {}
 
 
 async def _get_active_instances() -> list[PiholeInstance]:
@@ -93,6 +97,20 @@ async def _poll_stats_for(instance: PiholeInstance) -> None:
             if inst:
                 inst.last_seen_at = snapshot.collected_at
         await db.commit()
+
+    # Pushover alerts on status transitions
+    key = str(instance.id)
+    prev = _prev_status.get(key)
+    if prev is not None and prev != snapshot.status:
+        if snapshot.status == "offline":
+            asyncio.get_event_loop().create_task(
+                pushover_service.notify_instance_offline(instance.name)
+            )
+        elif snapshot.status == "online":
+            asyncio.get_event_loop().create_task(
+                pushover_service.notify_instance_back_online(instance.name)
+            )
+    _prev_status[key] = snapshot.status
 
     # Notify sync service if this is the master (enables auto-gravity detection)
     if instance.is_master and snapshot.status == "online":
