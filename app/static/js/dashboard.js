@@ -871,19 +871,19 @@ async function loadPushoverSettings() {
       badge.className = 'badge bg-success';
       badge.textContent = 'enabled';
     } else if (data.app_token) {
-      badge.className = 'badge bg-secondary';
-      badge.textContent = 'configured, disabled';
+      badge.className = 'badge bg-warning text-dark';
+      badge.textContent = 'disabled';
     } else {
       badge.className = 'badge bg-secondary';
       badge.textContent = 'not configured';
     }
   }
 
-  // Credentials — show placeholder if masked value present
-  const tok = document.getElementById('po-app-token');
-  if (tok) tok.placeholder = data.app_token ? 'saved (enter new value to change)' : '30-character app token';
-  const uk = document.getElementById('po-user-key');
-  if (uk) uk.placeholder = data.user_key ? 'saved (enter new value to change)' : '30-character user key';
+  // Show masked credential values as read-only text so user can see they're saved
+  const tokDisplay = document.getElementById('po-app-token-display');
+  if (tokDisplay) tokDisplay.textContent = data.app_token || '—';
+  const ukDisplay = document.getElementById('po-user-key-display');
+  if (ukDisplay) ukDisplay.textContent = data.user_key || '—';
 
   const set = (id, val) => { const el = document.getElementById(id); if (el) el[el.type === 'checkbox' ? 'checked' : 'value'] = val; };
   set('po-enabled', data.enabled);

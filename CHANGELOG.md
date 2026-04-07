@@ -4,6 +4,16 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.3.1] - 2026-04-07
+
+### Fixed
+- Pushover test now works regardless of the master enable toggle (uses `send_test()` which only requires saved credentials)
+- Saving alert preferences no longer wipes credentials — empty token/user_key fields are ignored on PUT, preserving existing saved values
+- Settings panel now shows masked saved credentials (`****xxxx`) below each field so it's clear they are stored
+- Master enable toggle now visually distinct with a highlighted box and explanatory sub-label; badge shows "disabled" (yellow) instead of "configured, disabled"
+
+---
+
 ## [1.3.0] - 2026-04-07
 
 ### Added

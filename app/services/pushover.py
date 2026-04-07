@@ -32,21 +32,12 @@ _block_rate_threshold_pct: float = 50.0
 _no_logs_minutes: int = 30
 
 
-async def send(message: str, title: str = "MyPi", priority: int = 0) -> bool:
-    """Send a Pushover notification. Returns True on success."""
-    if not _enabled or not _app_token or not _user_key:
-        return False
+async def _post(app_token: str, user_key: str, message: str, title: str, priority: int) -> bool:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(
                 _PUSHOVER_SEND_URL,
-                data={
-                    "token": _app_token,
-                    "user": _user_key,
-                    "message": message,
-                    "title": title,
-                    "priority": priority,
-                },
+                data={"token": app_token, "user": user_key, "message": message, "title": title, "priority": priority},
             )
             data = resp.json()
             if data.get("status") == 1:
@@ -56,6 +47,20 @@ async def send(message: str, title: str = "MyPi", priority: int = 0) -> bool:
     except Exception as exc:
         logger.warning("Pushover send error: %s", exc)
         return False
+
+
+async def send(message: str, title: str = "MyPi", priority: int = 0) -> bool:
+    """Send a notification. Respects the enabled flag."""
+    if not _enabled or not _app_token or not _user_key:
+        return False
+    return await _post(_app_token, _user_key, message, title, priority)
+
+
+async def send_test() -> bool:
+    """Send a test notification ignoring the enabled flag (needs credentials only)."""
+    if not _app_token or not _user_key:
+        return False
+    return await _post(_app_token, _user_key, "MyPi test notification — credentials are working!", "MyPi Test", 0)
 
 
 async def validate(app_token: str, user_key: str) -> tuple[bool, str]:
