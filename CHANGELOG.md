@@ -4,6 +4,14 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.2.4] - 2026-04-07
+
+### Changed
+- Version number moved from sidebar footer to topbar (right of the collapse button) — larger, always visible
+- Dashboard: "Pi synced at …" indicator appears below stat cards when automatic sync is enabled; time turns red if the last sync was more than 24 hours ago
+
+---
+
 ## [1.2.3] - 2026-04-07
 
 ### Added
