@@ -653,24 +653,25 @@ async function loadSyncIndicator() {
   const el = document.getElementById('sync-last-synced');
   if (!el) return;
 
-  let status;
+  let status = null;
   try {
-    status = await apiFetch('/api/sync/status');
+    const res = await fetch('/api/sync/status', { credentials: 'include', cache: 'no-store' });
+    if (res.ok) status = await res.json();
   } catch (err) {
-    console.error('Sync indicator: could not fetch status:', err);
-    return;
-  }
-  if (!status || !status.completed_at) {
-    el.classList.add('d-none');
+    el.innerHTML = '<i class="bi bi-arrow-repeat me-1 text-secondary"></i>Pi sync: <span class="text-muted">unavailable</span>';
     return;
   }
 
-  el.classList.remove('d-none');
+  if (!status || !status.completed_at) {
+    el.innerHTML = '<i class="bi bi-arrow-repeat me-1 text-secondary"></i>Pi sync: <span class="text-muted">never run</span>';
+    return;
+  }
+
   const completedAt = new Date(status.completed_at);
   const ageHours = (Date.now() - completedAt.getTime()) / 3600000;
   const isStale = ageHours > 24;
   const timeStr = completedAt.toLocaleString();
-  const timeCls = isStale ? 'text-danger fw-semibold' : 'text-muted';
+  const timeCls = isStale ? 'text-danger fw-semibold' : '';
   const icon = status.status === 'error'
     ? '<i class="bi bi-x-circle text-danger me-1"></i>'
     : '<i class="bi bi-arrow-repeat me-1 text-success"></i>';

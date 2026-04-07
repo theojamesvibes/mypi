@@ -259,21 +259,23 @@ async def run_sync(
             # Teleporter import can be slow on low-powered Pi hardware
             SYNC_TIMEOUT = 300.0  # 5 minutes
 
-            # Step 1: Run gravity on master first so the export contains fresh blocklists
-            if run_gravity:
-                try:
-                    async with PiholeClient(master.url, master.api_password, timeout=SYNC_TIMEOUT) as client:
-                        await client.run_gravity()
-                    logger.info("Gravity update completed on master %s before export", master.name)
-                except Exception as exc:
-                    logger.warning("Gravity on master failed (non-fatal, continuing with export): %s", exc)
+            # Step 1: Run gravity on master to get fresh blocklists before export
+            try:
+                async with PiholeClient(master.url, master.api_password, timeout=SYNC_TIMEOUT) as client:
+                    await client.run_gravity()
+                logger.info("Gravity update completed on master %s before export", master.name)
+            except Exception as exc:
+                logger.warning("Gravity on master failed (non-fatal, continuing with export): %s", exc)
 
-            # Step 2: Export teleporter zip from master (now contains fresh gravity)
+            # Step 2: Export teleporter zip from master (contains fresh gravity DB)
             async with PiholeClient(master.url, master.api_password, timeout=SYNC_TIMEOUT) as client:
                 zip_data = await client.get_teleporter()
             logger.info("Exported teleporter from master %s (%d bytes)", master.name, len(zip_data))
 
-            # Step 3: Push to each replica concurrently
+            # Step 3: Push to each replica concurrently.
+            # Do NOT run gravity on replicas — if import_gravity is enabled they already
+            # received the master's gravity DB via the teleporter import; running it again
+            # would just re-fetch the same lists and waste several minutes per Pi.
             async def _sync_replica(replica: PiholeInstance) -> InstanceSyncResult:
                 try:
                     async with PiholeClient(replica.url, replica.api_password, timeout=SYNC_TIMEOUT) as client:
@@ -283,8 +285,6 @@ async def run_sync(
                             import_gravity=import_gravity,
                             import_dhcp_leases=import_dhcp_leases,
                         )
-                        if run_gravity:
-                            await client.run_gravity()
                     logger.info("Sync to %s succeeded", replica.name)
                     return InstanceSyncResult(name=replica.name, status="success")
                 except Exception as exc:

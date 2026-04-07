@@ -4,6 +4,15 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.2.8] - 2026-04-07
+
+### Changed
+- Replicas no longer run gravity after teleporter import — when gravity sync is enabled the master's gravity DB is already embedded in the teleporter zip, so a second gravity run on replicas is redundant; master still runs gravity before export
+- Removed informational gravity note from Settings sync panel
+- Dashboard sync indicator is now always visible (never hidden); uses a raw `fetch` call instead of `apiFetch` so any non-200 or auth redirect is handled gracefully; shows "never run", "unavailable", or the last sync time with red highlight if >24 h old
+
+---
+
 ## [1.2.7] - 2026-04-07
 
 ### Changed
