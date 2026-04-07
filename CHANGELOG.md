@@ -4,6 +4,25 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.0.0] - 2026-04-07 — Public release
+
+First public release. Full feature set:
+
+- Unified dashboard aggregating stats from up to 10 Pi-hole v6 instances
+- DNS Queries over Time chart, Query Type breakdown, per-system status table
+- Drill-down modals on Top Blocked Domains and Top Clients
+- Consolidated query log with sorting, filtering, live view, and pagination
+- Pi-hole Sync: master → replicas via teleporter API with gravity-first order
+- Configurable auto-sync schedule (15 min – 24 hr) and gravity-change detection
+- Sync schedule and last result persisted across container restarts
+- Topbar sync badge (green / yellow / red) on every page
+- Pushover push notifications: sync failure, instance offline, no logs, high block rate
+- JWT session auth for web UI, API key auth for mobile/automation
+- Full REST API with OpenAPI docs at `/docs` and `/redoc`
+- Docker Compose setup with PostgreSQL 18 and optional Traefik integration
+
+---
+
 ## [1.3.1] - 2026-04-07
 
 ### Fixed
