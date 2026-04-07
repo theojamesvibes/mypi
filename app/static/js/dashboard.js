@@ -653,42 +653,31 @@ async function loadSyncIndicator() {
   const el = document.getElementById('sync-last-synced');
   if (!el) return;
 
+  let status;
   try {
-    const [schedule, status] = await Promise.all([
-      apiFetch('/api/sync/schedule'),
-      apiFetch('/api/sync/status'),
-    ]);
-    if (!schedule || !status) return;
-
-    const autoEnabled = schedule.interval_minutes > 0 || schedule.auto_gravity;
-    const everSynced = !!status.completed_at;
-
-    // Show if auto-sync is configured or a sync has ever completed
-    if (!autoEnabled && !everSynced) {
-      el.classList.add('d-none');
-      return;
-    }
-
-    el.classList.remove('d-none');
-
-    if (!everSynced) {
-      el.innerHTML = '<i class="bi bi-arrow-repeat me-1 text-success"></i>Pi sync: <span class="text-muted">never synced</span>';
-      return;
-    }
-
-    const completedAt = new Date(status.completed_at);
-    const ageHours = (Date.now() - completedAt.getTime()) / 3600000;
-    const isStale = ageHours > 24;
-    const timeStr = completedAt.toLocaleString();
-    const timeCls = isStale ? 'text-danger fw-semibold' : 'text-muted';
-    const statusIcon = status.status === 'error'
-      ? '<i class="bi bi-x-circle text-danger me-1"></i>'
-      : '<i class="bi bi-arrow-repeat me-1 text-success"></i>';
-    const staleIcon = isStale ? ' <i class="bi bi-exclamation-triangle-fill text-danger ms-1" title="Last sync was over 24 hours ago"></i>' : '';
-    el.innerHTML = `${statusIcon}Pi synced: <span class="${timeCls}">${timeStr}</span>${staleIcon}`;
+    status = await apiFetch('/api/sync/status');
   } catch (err) {
-    console.error('Sync indicator error:', err);
+    console.error('Sync indicator: could not fetch status:', err);
+    return;
   }
+  if (!status || !status.completed_at) {
+    el.classList.add('d-none');
+    return;
+  }
+
+  el.classList.remove('d-none');
+  const completedAt = new Date(status.completed_at);
+  const ageHours = (Date.now() - completedAt.getTime()) / 3600000;
+  const isStale = ageHours > 24;
+  const timeStr = completedAt.toLocaleString();
+  const timeCls = isStale ? 'text-danger fw-semibold' : 'text-muted';
+  const icon = status.status === 'error'
+    ? '<i class="bi bi-x-circle text-danger me-1"></i>'
+    : '<i class="bi bi-arrow-repeat me-1 text-success"></i>';
+  const staleIcon = isStale
+    ? ' <i class="bi bi-exclamation-triangle-fill text-danger ms-1" title="Last sync was over 24 hours ago"></i>'
+    : '';
+  el.innerHTML = `${icon}Pi synced: <span class="${timeCls}">${timeStr}</span>${staleIcon}`;
 }
 
 // ─── Sync ────────────────────────────────────────────────────────────────────
@@ -714,8 +703,6 @@ async function loadSyncSchedule() {
   if (grav) grav.checked = data.import_gravity;
   const dhcp = document.getElementById('sync-dhcp');
   if (dhcp) dhcp.checked = data.import_dhcp_leases;
-  const rg = document.getElementById('sync-run-gravity');
-  if (rg) rg.checked = data.run_gravity;
 }
 
 async function saveSchedule() {
@@ -725,7 +712,7 @@ async function saveSchedule() {
     import_config: document.getElementById('sync-config')?.checked ?? true,
     import_gravity: document.getElementById('sync-gravity')?.checked ?? true,
     import_dhcp_leases: document.getElementById('sync-dhcp')?.checked ?? false,
-    run_gravity: document.getElementById('sync-run-gravity')?.checked ?? true,
+    run_gravity: true,
   };
   const res = await fetch('/api/sync/schedule', {
     method: 'PUT',
@@ -797,7 +784,7 @@ async function triggerSync() {
     import_config: document.getElementById('sync-config')?.checked ?? true,
     import_gravity: document.getElementById('sync-gravity')?.checked ?? true,
     import_dhcp_leases: document.getElementById('sync-dhcp')?.checked ?? false,
-    run_gravity: document.getElementById('sync-run-gravity')?.checked ?? true,
+    run_gravity: true,
   };
 
   try {
