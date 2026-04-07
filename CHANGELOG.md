@@ -4,6 +4,17 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.2.6] - 2026-04-07
+
+### Changed
+- Sync now runs gravity on the **master first**, before exporting the teleporter zip, so replicas receive fresh blocklists in the import payload
+- Dashboard sync indicator now shows whenever a sync has ever completed (not only when auto-sync is configured); added try/catch so errors don't silently hide it
+
+### Fixed
+- Last sync result (time, status, per-replica outcomes) now persisted to the `app_settings` table and restored on startup — the dashboard sync indicator survives container restarts
+
+---
+
 ## [1.2.5] - 2026-04-07
 
 ### Fixed
