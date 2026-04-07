@@ -650,17 +650,17 @@ function renderSearchPagination(total) {
 // ─── Dashboard sync indicator ────────────────────────────────────────────────
 
 async function loadSyncIndicator() {
-  const el = document.getElementById('sync-last-synced');
-  if (!el) return;
-
   let status = null;
   try {
     const res = await fetch('/api/sync/status', { credentials: 'include', cache: 'no-store' });
     if (res.ok) status = await res.json();
-  } catch (err) {
-    el.innerHTML = '<i class="bi bi-arrow-repeat me-1 text-secondary"></i>Pi sync: <span class="text-muted">unavailable</span>';
-    return;
-  }
+  } catch (_) { /* network error — leave badge hidden */ }
+
+  renderSyncBadge(status);
+
+  // Also update the dashboard inline element if present
+  const el = document.getElementById('sync-last-synced');
+  if (!el) return;
 
   if (!status || !status.completed_at) {
     el.innerHTML = '<i class="bi bi-arrow-repeat me-1 text-secondary"></i>Pi sync: <span class="text-muted">never run</span>';
@@ -679,6 +679,49 @@ async function loadSyncIndicator() {
     ? ' <i class="bi bi-exclamation-triangle-fill text-danger ms-1" title="Last sync was over 24 hours ago"></i>'
     : '';
   el.innerHTML = `${icon}Pi synced: <span class="${timeCls}">${timeStr}</span>${staleIcon}`;
+}
+
+function renderSyncBadge(status) {
+  const badge = document.getElementById('sync-status-badge');
+  if (!badge) return;
+
+  if (!status || !status.completed_at) {
+    badge.style.setProperty('display', 'none', 'important');
+    return;
+  }
+
+  const completedAt = new Date(status.completed_at);
+  const ageHours = (Date.now() - completedAt.getTime()) / 3600000;
+  const results = status.results || [];
+
+  let label, cls;
+
+  if (status.status === 'running') {
+    label = '↻ Syncing…';
+    cls = 'bg-warning text-dark';
+  } else if (!results.length) {
+    // No per-replica results (error before sync started)
+    label = '⚠ Sync failed';
+    cls = 'bg-danger';
+  } else {
+    const ok = results.filter(r => r.status === 'success').length;
+    const total = results.length;
+    const timeStr = completedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if (ok === total) {
+      label = `✓ Synced ${timeStr}`;
+      cls = ageHours > 24 ? 'bg-danger' : 'bg-success';
+    } else if (ok === 0) {
+      label = `✗ Sync failed ${timeStr}`;
+      cls = 'bg-danger';
+    } else {
+      label = `⚠ Synced ${ok}/${total} ${timeStr}`;
+      cls = 'bg-warning text-dark';
+    }
+  }
+
+  badge.className = `badge ${cls}`;
+  badge.textContent = label;
+  badge.style.removeProperty('display');
 }
 
 // ─── Sync ────────────────────────────────────────────────────────────────────
@@ -814,6 +857,114 @@ async function triggerSync() {
       _syncPollInterval = null;
     }
   }, 2000);
+}
+
+// ─── Pushover settings ────────────────────────────────────────────────────────
+
+async function loadPushoverSettings() {
+  const data = await apiFetch('/api/notifications/settings');
+  if (!data) return;
+
+  const badge = document.getElementById('pushover-status-badge');
+  if (badge) {
+    if (data.enabled) {
+      badge.className = 'badge bg-success';
+      badge.textContent = 'enabled';
+    } else if (data.app_token) {
+      badge.className = 'badge bg-secondary';
+      badge.textContent = 'configured, disabled';
+    } else {
+      badge.className = 'badge bg-secondary';
+      badge.textContent = 'not configured';
+    }
+  }
+
+  // Credentials — show placeholder if masked value present
+  const tok = document.getElementById('po-app-token');
+  if (tok) tok.placeholder = data.app_token ? 'saved (enter new value to change)' : '30-character app token';
+  const uk = document.getElementById('po-user-key');
+  if (uk) uk.placeholder = data.user_key ? 'saved (enter new value to change)' : '30-character user key';
+
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el[el.type === 'checkbox' ? 'checked' : 'value'] = val; };
+  set('po-enabled', data.enabled);
+  set('po-alert-sync-failure', data.alert_sync_failure);
+  set('po-alert-offline', data.alert_instance_offline);
+  set('po-alert-no-logs', data.alert_no_logs);
+  set('po-alert-block-rate', data.alert_high_block_rate);
+  set('po-no-logs-minutes', data.no_logs_minutes);
+  set('po-block-rate-pct', data.block_rate_threshold_pct);
+}
+
+async function savePushoverSettings() {
+  const get = (id) => document.getElementById(id);
+  const body = {
+    app_token: get('po-app-token')?.value || '',
+    user_key: get('po-user-key')?.value || '',
+    enabled: get('po-enabled')?.checked ?? false,
+    alert_sync_failure: get('po-alert-sync-failure')?.checked ?? true,
+    alert_instance_offline: get('po-alert-offline')?.checked ?? true,
+    alert_no_logs: get('po-alert-no-logs')?.checked ?? true,
+    alert_high_block_rate: get('po-alert-block-rate')?.checked ?? false,
+    no_logs_minutes: parseInt(get('po-no-logs-minutes')?.value || '30'),
+    block_rate_threshold_pct: parseFloat(get('po-block-rate-pct')?.value || '50'),
+  };
+
+  const res = await fetch('/api/notifications/settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  if (res.status === 401) { window.location.href = '/login'; return; }
+
+  const btn = document.querySelector('[onclick="savePushoverSettings()"]');
+  if (btn) {
+    const orig = btn.innerHTML;
+    btn.innerHTML = '<i class="bi bi-check me-1"></i>Saved';
+    btn.classList.replace('btn-primary', 'btn-success');
+    setTimeout(() => { btn.innerHTML = orig; btn.classList.replace('btn-success', 'btn-primary'); }, 2000);
+  }
+  // Clear password fields and reload
+  if (get('po-app-token')) get('po-app-token').value = '';
+  if (get('po-user-key')) get('po-user-key').value = '';
+  loadPushoverSettings();
+}
+
+async function validatePushover() {
+  const result = document.getElementById('po-validate-result');
+  if (!result) return;
+  result.innerHTML = '<span class="text-muted">Validating…</span>';
+
+  const body = {
+    app_token: document.getElementById('po-app-token')?.value || '',
+    user_key: document.getElementById('po-user-key')?.value || '',
+  };
+  if (!body.app_token || !body.user_key) {
+    result.innerHTML = '<span class="text-danger">Enter App Token and User Key first.</span>';
+    return;
+  }
+
+  const res = await fetch('/api/notifications/validate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  result.innerHTML = data.ok
+    ? '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Credentials valid</span>'
+    : `<span class="text-danger"><i class="bi bi-x-circle me-1"></i>${escHtml(data.error || 'Invalid credentials')}</span>`;
+}
+
+async function testPushover() {
+  const result = document.getElementById('po-validate-result');
+  if (result) result.innerHTML = '<span class="text-muted">Sending test…</span>';
+  const res = await fetch('/api/notifications/test', { method: 'POST', credentials: 'include' });
+  if (result) {
+    result.innerHTML = res.ok
+      ? '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Test notification sent</span>'
+      : '<span class="text-danger"><i class="bi bi-x-circle me-1"></i>Failed — check that notifications are enabled and credentials are saved</span>';
+  }
 }
 
 // ─── Security helper ──────────────────────────────────────────────────────────

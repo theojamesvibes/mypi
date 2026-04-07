@@ -4,6 +4,22 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.3.0] - 2026-04-07
+
+### Added
+- **Pushover notifications** — Settings → Pushover panel with App Token / User Key, enable toggle, Validate and Test buttons
+  - Alert: sync failure (any replica fails)
+  - Alert: instance goes offline / comes back online (detects transition between polls)
+  - Alert: no logs received for configurable time (default 30 min)
+  - Alert: high block rate (configurable % above 7-day baseline; requires ≥7 days of data)
+  - All settings persisted in `app_settings` DB table, restored on restart
+- **Topbar sync badge** — sits between version and online count on every page; green (all replicas synced), yellow (partial), red (all failed / >24 h stale); hidden until first sync completes
+
+### Changed
+- Sync badge loads on every page via base.html inline script, not just the dashboard
+
+---
+
 ## [1.2.8] - 2026-04-07
 
 ### Changed

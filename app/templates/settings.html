@@ -123,6 +123,100 @@
       </div>
     </div>
 
+    <!-- Pushover Notifications -->
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header d-flex align-items-center justify-content-between">
+          <span><i class="bi bi-bell me-1"></i>Pushover Notifications</span>
+          <span id="pushover-status-badge" class="badge bg-secondary">not configured</span>
+        </div>
+        <div class="card-body">
+          <p class="text-muted small mb-3">
+            Send push notifications to your devices via <a href="https://pushover.net" target="_blank">Pushover</a>.
+            Create an application at pushover.net to get your App Token, then find your User Key on your dashboard.
+          </p>
+
+          <div class="row g-3">
+            <!-- Credentials -->
+            <div class="col-md-4">
+              <p class="fw-semibold small mb-2">Credentials</p>
+              <div class="mb-2">
+                <label class="form-label form-label-sm mb-1">App Token</label>
+                <input type="password" id="po-app-token" class="form-control form-control-sm" placeholder="30-character app token" autocomplete="off">
+              </div>
+              <div class="mb-2">
+                <label class="form-label form-label-sm mb-1">User Key</label>
+                <input type="password" id="po-user-key" class="form-control form-control-sm" placeholder="30-character user key" autocomplete="off">
+              </div>
+              <div class="form-check mb-2">
+                <input class="form-check-input" type="checkbox" id="po-enabled">
+                <label class="form-check-label small" for="po-enabled">Enable notifications</label>
+              </div>
+              <div class="d-flex gap-2 mt-2">
+                <button class="btn btn-sm btn-outline-secondary" onclick="validatePushover()">
+                  <i class="bi bi-check-circle me-1"></i>Validate
+                </button>
+                <button class="btn btn-sm btn-outline-primary" onclick="testPushover()">
+                  <i class="bi bi-send me-1"></i>Test
+                </button>
+              </div>
+              <div id="po-validate-result" class="small mt-2"></div>
+            </div>
+
+            <!-- Alert types -->
+            <div class="col-md-4">
+              <p class="fw-semibold small mb-2">Alert events</p>
+              <div class="form-check mb-1">
+                <input class="form-check-input" type="checkbox" id="po-alert-sync-failure">
+                <label class="form-check-label small" for="po-alert-sync-failure">Sync failure</label>
+              </div>
+              <div class="form-check mb-1">
+                <input class="form-check-input" type="checkbox" id="po-alert-offline">
+                <label class="form-check-label small" for="po-alert-offline">Instance goes offline / comes back</label>
+              </div>
+              <div class="form-check mb-1">
+                <input class="form-check-input" type="checkbox" id="po-alert-no-logs">
+                <label class="form-check-label small" for="po-alert-no-logs">
+                  No logs received
+                  <span class="text-muted d-block" style="font-size:0.7rem;">Alert if no new queries arrive for the configured time</span>
+                </label>
+              </div>
+              <div class="form-check mb-1">
+                <input class="form-check-input" type="checkbox" id="po-alert-block-rate">
+                <label class="form-check-label small" for="po-alert-block-rate">
+                  High block rate
+                  <span class="text-muted d-block" style="font-size:0.7rem;">Requires ≥7 days of data to establish a baseline</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Thresholds -->
+            <div class="col-md-4">
+              <p class="fw-semibold small mb-2">Thresholds</p>
+              <div class="mb-2">
+                <label class="form-label form-label-sm mb-1">No-logs alert after (minutes)</label>
+                <input type="number" id="po-no-logs-minutes" class="form-control form-control-sm" min="5" max="1440" value="30">
+              </div>
+              <div class="mb-2">
+                <label class="form-label form-label-sm mb-1">High block rate: alert if % above 7-day average</label>
+                <div class="input-group input-group-sm">
+                  <input type="number" id="po-block-rate-pct" class="form-control" min="10" max="500" value="50">
+                  <span class="input-group-text">%</span>
+                </div>
+                <div class="form-text" style="font-size:0.68rem;">e.g. 50 = alert when today's block rate is 50% higher than your weekly average</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-3">
+            <button class="btn btn-sm btn-primary" onclick="savePushoverSettings()">
+              <i class="bi bi-save me-1"></i>Save notification settings
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- API info -->
     <div class="col-12">
       <div class="card">
@@ -148,5 +242,6 @@
   loadSettingsInstances();
   loadSyncStatus();
   loadSyncSchedule();
+  loadPushoverSettings();
 </script>
 {% endblock %}

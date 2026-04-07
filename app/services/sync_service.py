@@ -14,6 +14,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.database import AsyncSessionLocal
 from app.models.pihole import PiholeInstance
 from app.models.settings import AppSetting
+from app.services import pushover as pushover_service
 from app.services.pihole_client import PiholeClient
 
 logger = logging.getLogger(__name__)
@@ -315,4 +316,8 @@ async def run_sync(
             )
 
         asyncio.get_event_loop().create_task(_persist_sync_state(_state))
+        if _state.status == "error":
+            asyncio.get_event_loop().create_task(
+                pushover_service.notify_sync_failure(_state.error or "One or more replicas failed to sync")
+            )
         return _state
