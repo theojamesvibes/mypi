@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     max_pihole_instances: int = 10
 
     stats_poll_interval: int = 60
-    queries_poll_interval: int = 300
+    queries_poll_interval: int = 10
     data_retention_days: int = 30
 
     @field_validator("database_url")

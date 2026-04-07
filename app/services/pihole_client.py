@@ -1,7 +1,9 @@
 """Async client for the Pi-hole v6 REST API."""
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -10,23 +12,6 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# Pi-hole v6 query status labels
-QUERY_STATUS = {
-    1: "blocked_gravity",
-    2: "forwarded",
-    3: "cached",
-    4: "blocked_regex",
-    5: "blocked_denylist",
-    6: "blocked_nxdomain",
-    7: "blocked_cname_gravity",
-    8: "blocked_cname_regex",
-    9: "blocked_cname_denylist",
-    10: "allowed_retried",
-    11: "allowed_retried_dnssec",
-    12: "allowed_special_domain",
-    13: "blocked_gravity_cname",
-    14: "allowed_unknown",
-}
 
 
 @dataclass
@@ -53,18 +38,15 @@ class PiholeQuery:
     reply_time_ms: float
 
 
-@dataclass
-class PiholeHistoryBucket:
-    timestamp: datetime
-    queries: int
-    blocked: int
-
 
 @dataclass
 class PiholeTopStats:
     top_permitted: list[dict[str, Any]] = field(default_factory=list)
     top_blocked: list[dict[str, Any]] = field(default_factory=list)
     top_clients: list[dict[str, Any]] = field(default_factory=list)
+
+
+AUTH_BACKOFF_SECONDS = 300  # don't retry auth for 5 minutes after a 429
 
 
 class PiholeClient:
@@ -74,32 +56,64 @@ class PiholeClient:
         self.timeout = timeout
         self._sid: str | None = None
         self._client: httpx.AsyncClient | None = None
+        self._auth_blocked_until: float = 0.0
+        self._auth_lock: asyncio.Lock = asyncio.Lock()
 
-    async def __aenter__(self) -> "PiholeClient":
+    async def open(self) -> None:
+        """Open the underlying HTTP client. Call once and reuse the instance."""
         self._client = httpx.AsyncClient(timeout=self.timeout, verify=False)
-        return self
 
-    async def __aexit__(self, *_: Any) -> None:
+    @property
+    def sid(self) -> str | None:
+        return self._sid
+
+    @sid.setter
+    def sid(self, value: str | None) -> None:
+        self._sid = value
+
+    async def close(self) -> None:
         if self._client:
             await self._client.aclose()
         self._client = None
         self._sid = None
 
+    async def __aenter__(self) -> "PiholeClient":
+        await self.open()
+        return self
+
+    async def __aexit__(self, *_: Any) -> None:
+        await self.close()
+
     async def _authenticate(self) -> bool:
         if self._client is None:
             raise RuntimeError("PiholeClient must be used as an async context manager")
-        try:
-            resp = await self._client.post(
-                f"{self.base_url}/api/auth",
-                json={"password": self.password},
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                self._sid = data.get("session", {}).get("sid")
-                return self._sid is not None
-        except httpx.HTTPError as exc:
-            logger.debug("Pi-hole auth failed for %s: %s", self.base_url, exc)
-        return False
+        async with self._auth_lock:
+            # Another coroutine may have authenticated while we waited for the lock.
+            if self._sid is not None:
+                return True
+            now = time.monotonic()
+            if now < self._auth_blocked_until:
+                remaining = int(self._auth_blocked_until - now)
+                logger.debug("Auth blocked for %s — %ds remaining", self.base_url, remaining)
+                return False
+            try:
+                resp = await self._client.post(
+                    f"{self.base_url}/api/auth",
+                    json={"password": self.password},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    self._sid = data.get("session", {}).get("sid")
+                    return self._sid is not None
+                if resp.status_code == 429:
+                    self._auth_blocked_until = time.monotonic() + AUTH_BACKOFF_SECONDS
+                    logger.warning(
+                        "Rate limited by %s — pausing auth for %ds",
+                        self.base_url, AUTH_BACKOFF_SECONDS,
+                    )
+            except httpx.HTTPError as exc:
+                logger.debug("Pi-hole auth failed for %s: %s", self.base_url, exc)
+            return False
 
     def _headers(self) -> dict[str, str]:
         if self._sid:
@@ -182,22 +196,19 @@ class PiholeClient:
             top_clients=sorted(top_clients, key=lambda x: x["count"], reverse=True),
         )
 
-    async def get_queries(self, cursor: str | None = None, length: int = 500) -> tuple[list[PiholeQuery], str | None]:
-        """Fetch a page of queries. Returns (queries, next_cursor)."""
+    async def get_queries(self, from_ts: float | None = None, length: int = 500) -> list[PiholeQuery]:
+        """Fetch queries newer than from_ts (Unix timestamp). Returns up to length results."""
         params: dict[str, Any] = {"length": length}
-        if cursor:
-            params["cursor"] = cursor
+        if from_ts is not None:
+            params["from"] = from_ts
 
         data = await self._get("/api/queries", params=params)
         queries_raw = data.get("queries", []) or []
-        next_cursor = data.get("cursor")
 
         queries = []
         for item in queries_raw:
             try:
                 ts = datetime.fromtimestamp(item.get("time", 0), tz=timezone.utc)
-                status_int = item.get("status", 0)
-                status_str = QUERY_STATUS.get(status_int, str(status_int))
                 reply = item.get("reply", {}) or {}
                 client = item.get("client", {}) or {}
                 queries.append(
@@ -208,7 +219,7 @@ class PiholeClient:
                         domain=item.get("domain", ""),
                         client_ip=client.get("ip", ""),
                         client_name=client.get("name", ""),
-                        status=status_str,
+                        status=str(item.get("status", "") or ""),
                         reply_type=reply.get("type", ""),
                         reply_time_ms=reply.get("time", 0.0),
                     )
@@ -216,4 +227,4 @@ class PiholeClient:
             except Exception:
                 continue
 
-        return queries, next_cursor
+        return queries

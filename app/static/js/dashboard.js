@@ -4,6 +4,21 @@
 
 let queriesChart = null;
 let typeChart = null;
+let _drillFilter = {};
+let _drillPage = 1;
+let _drillHours = 24;
+let _drillModal = null;
+let _searchPage = 1;
+let _searchModal = null;
+const _topTableDrillData = {};
+
+// Delegated click handler for drill-row entries in top tables
+document.addEventListener('click', e => {
+  const tr = e.target.closest('tr.drill-row');
+  if (!tr) return;
+  const configs = _topTableDrillData[tr.dataset.tbl];
+  if (configs) openDrillDown(configs[parseInt(tr.dataset.idx)]);
+});
 
 // ─── Utilities ───────────────────────────────────────────────────────────────
 
@@ -28,12 +43,17 @@ function fmtTimeShort(iso) {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+const BLOCKED_STATUSES = new Set([
+  'GRAVITY', 'REGEX', 'BLACKLIST',
+  'EXTERNAL_BLOCKED_IP', 'EXTERNAL_BLOCKED_NULL', 'EXTERNAL_BLOCKED_NXDOMAIN',
+  'GRAVITY_CNAME', 'REGEX_CNAME', 'BLACKLIST_CNAME',
+]);
+
 function statusPill(status) {
   if (!status) return '<span class="status-pill status-other">—</span>';
-  const s = status.toLowerCase();
-  if (s.startsWith('blocked')) return `<span class="status-pill status-blocked">${status}</span>`;
-  if (s === 'forwarded') return `<span class="status-pill status-forwarded">Forwarded</span>`;
-  if (s === 'cached') return `<span class="status-pill status-cached">Cached</span>`;
+  if (BLOCKED_STATUSES.has(status)) return `<span class="status-pill status-blocked">${status}</span>`;
+  if (status === 'FORWARDED') return `<span class="status-pill status-forwarded">FORWARDED</span>`;
+  if (status === 'CACHE' || status === 'CACHE_STALE') return `<span class="status-pill status-cached">${status}</span>`;
   return `<span class="status-pill status-other">${status}</span>`;
 }
 
@@ -43,7 +63,7 @@ function instanceDot(status) {
 }
 
 async function apiFetch(url) {
-  const res = await fetch(url, { credentials: 'include' });
+  const res = await fetch(url, { credentials: 'include', cache: 'no-store' });
   if (res.status === 401) { window.location.href = '/login'; return null; }
   if (!res.ok) throw new Error(`API error ${res.status}`);
   return res.json();
@@ -70,13 +90,26 @@ async function loadDashboard() {
     document.getElementById('percent-blocked').textContent = fmtPct(summary.totals.percent_blocked);
     document.getElementById('blocklist-size').textContent = fmtNum(summary.totals.domains_on_blocklist);
 
-    // Online count badge
-    const onlineCount = instances.filter(i => i.status === 'online').length;
-    const onlineBadge = document.getElementById('online-count');
-    if (onlineBadge) {
-      onlineBadge.textContent = `${onlineCount}/${instances.length} online`;
-      onlineBadge.className = onlineCount === instances.length ? 'badge bg-success' : 'badge bg-warning text-dark';
+    // Blocklist validation — check if all online instances agree
+    const onlineInsts = instances.filter(i => i.status === 'online' && i.domains_on_blocklist != null);
+    const blocklistValues = onlineInsts.map(i => i.domains_on_blocklist);
+    const allAgree = blocklistValues.length === 0 || blocklistValues.every(v => v === blocklistValues[0]);
+    const cardBlocklist = document.getElementById('card-blocklist');
+    const blWarning = document.getElementById('blocklist-warning');
+    if (!allAgree) {
+      cardBlocklist.classList.remove('stat-card-green');
+      cardBlocklist.classList.add('stat-card-red');
+      if (blWarning) blWarning.classList.remove('d-none');
+    } else {
+      cardBlocklist.classList.remove('stat-card-red');
+      cardBlocklist.classList.add('stat-card-green');
+      if (blWarning) blWarning.classList.add('d-none');
     }
+
+    _drillHours = hours;
+
+    // Online count badge
+    updateStatusBadge(instances);
     const lu = document.getElementById('last-updated');
     if (lu) lu.textContent = 'Updated ' + new Date().toLocaleTimeString();
 
@@ -89,10 +122,12 @@ async function loadDashboard() {
     // Per-instance table
     renderInstancesTable(instances);
 
-    // Top tables
+    // Top tables — blocked and clients are drillable
     renderTopTable('top-permitted', top.top_permitted, r => r.domain, r => fmtNum(r.count));
-    renderTopTable('top-blocked', top.top_blocked, r => r.domain, r => fmtNum(r.count));
-    renderTopTable('top-clients', top.top_clients, r => r.client, r => fmtNum(r.count));
+    renderTopTable('top-blocked', top.top_blocked, r => r.domain, r => fmtNum(r.count),
+      r => ({ label: `Blocked: ${r.domain}`, domain: r.domain, blocked: true }));
+    renderTopTable('top-clients', top.top_clients, r => r.client, r => fmtNum(r.count),
+      r => ({ label: `Client queries: ${r.client}`, client: r.client, blocked: true }));
 
   } catch (err) {
     console.error('Dashboard load error:', err);
@@ -206,15 +241,16 @@ function renderInstancesTable(instances) {
   `).join('');
 }
 
-function renderTopTable(tbodyId, rows, labelFn, countFn) {
+function renderTopTable(tbodyId, rows, labelFn, countFn, drillFn) {
   const tbody = document.getElementById(tbodyId);
   if (!tbody) return;
   if (!rows || !rows.length) {
     tbody.innerHTML = '<tr><td colspan="2" class="text-center text-muted py-2 small">No data yet</td></tr>';
     return;
   }
-  tbody.innerHTML = rows.map(r => `
-    <tr>
+  if (drillFn) _topTableDrillData[tbodyId] = rows.map(r => drillFn(r));
+  tbody.innerHTML = rows.map((r, i) => `
+    <tr ${drillFn ? `class="drill-row" data-tbl="${tbodyId}" data-idx="${i}"` : ''}>
       <td class="text-truncate" style="max-width:200px;" title="${escHtml(labelFn(r))}">${escHtml(labelFn(r))}</td>
       <td class="text-end">${countFn(r)}</td>
     </tr>
@@ -224,6 +260,9 @@ function renderTopTable(tbodyId, rows, labelFn, countFn) {
 // ─── Query Log ───────────────────────────────────────────────────────────────
 
 let currentPage = 1;
+let _sortBy = 'timestamp';
+let _sortDir = 'desc';
+let _liveInterval = null;
 
 async function loadInstanceFilter() {
   const sel = document.getElementById('f-instance');
@@ -236,6 +275,17 @@ async function loadInstanceFilter() {
     opt.textContent = i.name;
     sel.appendChild(opt);
   });
+  updateStatusBadge(instances);
+}
+
+function updateStatusBadge(instances) {
+  if (!instances) return;
+  const online = instances.filter(i => i.status === 'online').length;
+  const badge = document.getElementById('online-count');
+  if (badge) {
+    badge.textContent = `${online}/${instances.length} online`;
+    badge.className = online === instances.length ? 'badge bg-success' : 'badge bg-warning text-dark';
+  }
 }
 
 async function loadQueries(page) {
@@ -243,14 +293,17 @@ async function loadQueries(page) {
   const instance = document.getElementById('f-instance')?.value || '';
   const domain = document.getElementById('f-domain')?.value || '';
   const client = document.getElementById('f-client')?.value || '';
-  const status = document.getElementById('f-status')?.value || '';
+  const blocked = document.getElementById('f-blocked')?.value || '';
   const hours = document.getElementById('f-hours')?.value || 24;
 
-  const params = new URLSearchParams({ page: currentPage, page_size: 100, hours });
+  const params = new URLSearchParams({
+    page: currentPage, page_size: 100, hours,
+    sort_by: _sortBy, sort_dir: _sortDir,
+  });
   if (instance) params.set('instance_id', instance);
   if (domain) params.set('domain', domain);
   if (client) params.set('client', client);
-  if (status) params.set('status', status);
+  if (blocked !== '') params.set('blocked', blocked);
 
   try {
     const data = await apiFetch(`/api/queries?${params}`);
@@ -260,47 +313,89 @@ async function loadQueries(page) {
     if (!tbody) return;
 
     document.getElementById('query-count').textContent =
-      `${fmtNum(data.total)} total results — page ${data.page}`;
+      `${fmtNum(data.total)} results — page ${data.page} of ${Math.max(1, Math.ceil(data.total / data.page_size))}`;
 
-    if (!data.items.length) {
-      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">No queries found.</td></tr>';
-    } else {
-      tbody.innerHTML = data.items.map(q => `
-        <tr>
-          <td class="text-nowrap small">${fmtTime(q.timestamp)}</td>
-          <td><span class="badge rounded-pill" style="background:#6c757d;font-weight:500;">${escHtml(q.instance_name)}</span></td>
-          <td class="text-truncate" style="max-width:220px;" title="${escHtml(q.domain || '')}">${escHtml(q.domain || '—')}</td>
-          <td><code class="small">${q.query_type || '—'}</code></td>
-          <td class="small">${escHtml(q.client_name || q.client_ip || '—')}</td>
-          <td>${statusPill(q.status)}</td>
-          <td class="text-end small">${q.reply_time_ms != null ? Number(q.reply_time_ms).toFixed(1) : '—'}</td>
-        </tr>
-      `).join('');
-    }
+    tbody.innerHTML = data.items.length
+      ? data.items.map(q => `
+          <tr>
+            <td class="text-nowrap small">${fmtTime(q.timestamp)}</td>
+            <td><span class="badge rounded-pill" style="background:#6c757d;font-weight:500;">${escHtml(q.instance_name)}</span></td>
+            <td class="text-truncate" style="max-width:220px;" title="${escHtml(q.domain || '')}">${escHtml(q.domain || '—')}</td>
+            <td><code class="small">${escHtml(q.query_type || '—')}</code></td>
+            <td class="small">${escHtml(q.client_name || q.client_ip || '—')}</td>
+            <td>${statusPill(q.status)}</td>
+            <td class="text-end small">${q.reply_time_ms != null ? Number(q.reply_time_ms).toFixed(1) : '—'}</td>
+          </tr>
+        `).join('')
+      : '<tr><td colspan="7" class="text-center text-muted py-4">No queries found.</td></tr>';
 
-    // Pagination
     const totalPages = Math.ceil(data.total / data.page_size);
     renderPagination('pagination-top', currentPage, totalPages);
     renderPagination('pagination-bottom', currentPage, totalPages);
+
+    const lu = document.getElementById('last-updated');
+    if (lu) lu.textContent = 'Updated ' + new Date().toLocaleTimeString();
 
   } catch (err) {
     console.error('Query log error:', err);
   }
 }
 
+function setSort(col) {
+  if (_sortBy === col) {
+    _sortDir = _sortDir === 'desc' ? 'asc' : 'desc';
+  } else {
+    _sortBy = col;
+    _sortDir = col === 'timestamp' ? 'desc' : 'asc';
+  }
+  // Update header icons
+  document.querySelectorAll('.sort-icon').forEach(el => el.textContent = '');
+  const icon = document.getElementById(`sort-${col}`);
+  if (icon) icon.textContent = _sortDir === 'desc' ? '↓' : '↑';
+  loadQueries(1);
+}
+
+function toggleLiveView(on) {
+  const icon = document.getElementById('live-icon');
+  const refreshBtn = document.getElementById('refresh-btn');
+  if (on) {
+    if (icon) icon.style.display = '';
+    if (refreshBtn) refreshBtn.disabled = true;
+    _sortBy = 'timestamp';
+    _sortDir = 'desc';
+    document.querySelectorAll('.sort-icon').forEach(el => el.textContent = '');
+    const ts = document.getElementById('sort-timestamp');
+    if (ts) ts.textContent = '↓';
+    loadQueries(1);
+    _liveInterval = setInterval(() => loadQueries(1), 2000);
+  } else {
+    clearInterval(_liveInterval);
+    _liveInterval = null;
+    if (icon) icon.style.display = 'none';
+    if (refreshBtn) refreshBtn.disabled = false;
+  }
+}
+
+// Wire up sortable column headers after DOM ready
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.sort-col').forEach(th => {
+    th.style.cursor = 'pointer';
+    th.addEventListener('click', () => setSort(th.dataset.col));
+  });
+});
+
 function renderPagination(id, current, total) {
   const el = document.getElementById(id);
   if (!el) return;
   if (total <= 1) { el.innerHTML = ''; return; }
 
-  const maxPages = 7;
   let pages = [];
-  if (total <= maxPages) {
+  if (total <= 7) {
     pages = Array.from({ length: total }, (_, i) => i + 1);
   } else {
     pages = [1];
-    let start = Math.max(2, current - 2);
-    let end = Math.min(total - 1, current + 2);
+    const start = Math.max(2, current - 2);
+    const end = Math.min(total - 1, current + 2);
     if (start > 2) pages.push('…');
     for (let p = start; p <= end; p++) pages.push(p);
     if (end < total - 1) pages.push('…');
@@ -375,6 +470,179 @@ async function loadSettingsInstances() {
       <td>${instanceDot(i.status)}${i.status}</td>
     </tr>
   `).join('');
+}
+
+// ─── Drill-down modal ─────────────────────────────────────────────────────────
+
+function openDrillDown(filter) {
+  _drillFilter = filter || {};
+  _drillPage = 1;
+  document.getElementById('drillModalLabel').textContent = _drillFilter.label || 'Query Detail';
+
+  const viewAll = document.getElementById('drill-view-all');
+  if (viewAll) {
+    const qs = new URLSearchParams();
+    if (_drillFilter.domain) qs.set('domain', _drillFilter.domain);
+    if (_drillFilter.client) qs.set('client', _drillFilter.client);
+    if (_drillFilter.blocked) qs.set('blocked', 'true');
+    viewAll.href = `/queries${qs.size ? '?' + qs : ''}`;
+  }
+
+  if (!_drillModal) {
+    _drillModal = new bootstrap.Modal(document.getElementById('drillModal'));
+  }
+  _drillModal.show();
+  loadDrillPage(1);
+}
+
+async function loadDrillPage(page) {
+  _drillPage = page;
+  const params = new URLSearchParams({ page, page_size: 50, hours: _drillHours });
+  if (_drillFilter.blocked) params.set('blocked', 'true');
+  if (_drillFilter.domain) params.set('domain', _drillFilter.domain);
+  if (_drillFilter.client) params.set('client', _drillFilter.client);
+
+  document.getElementById('drill-count').textContent = 'Loading…';
+  document.getElementById('drill-tbody').innerHTML =
+    '<tr><td colspan="7" class="text-center text-muted py-3">Loading…</td></tr>';
+
+  try {
+    const data = await apiFetch(`/api/queries?${params}`);
+    if (!data) return;
+
+    const totalPages = Math.ceil(data.total / data.page_size);
+    document.getElementById('drill-count').textContent =
+      `${fmtNum(data.total)} results — page ${page} of ${totalPages}`;
+
+    document.getElementById('drill-tbody').innerHTML = data.items.length
+      ? data.items.map(q => `
+          <tr>
+            <td class="text-nowrap small">${fmtTime(q.timestamp)}</td>
+            <td><span class="badge rounded-pill" style="background:#6c757d;font-weight:500;">${escHtml(q.instance_name)}</span></td>
+            <td class="text-truncate" style="max-width:200px;" title="${escHtml(q.domain || '')}">${escHtml(q.domain || '—')}</td>
+            <td><code class="small">${escHtml(q.query_type || '—')}</code></td>
+            <td class="small">${escHtml(q.client_name || q.client_ip || '—')}</td>
+            <td>${statusPill(q.status)}</td>
+            <td class="text-end small">${q.reply_time_ms != null ? Number(q.reply_time_ms).toFixed(1) : '—'}</td>
+          </tr>
+        `).join('')
+      : '<tr><td colspan="7" class="text-center text-muted py-3">No results.</td></tr>';
+
+    renderDrillPagination(page, totalPages);
+  } catch (err) {
+    console.error('Drill-down error:', err);
+    document.getElementById('drill-count').textContent = 'Error loading data';
+  }
+}
+
+function renderDrillPagination(current, total) {
+  const el = document.getElementById('drill-pagination');
+  if (!el) return;
+  if (total <= 1) { el.innerHTML = ''; return; }
+
+  let pages = [];
+  if (total <= 7) {
+    pages = Array.from({ length: total }, (_, i) => i + 1);
+  } else {
+    pages = [1];
+    const start = Math.max(2, current - 2);
+    const end = Math.min(total - 1, current + 2);
+    if (start > 2) pages.push('…');
+    for (let p = start; p <= end; p++) pages.push(p);
+    if (end < total - 1) pages.push('…');
+    pages.push(total);
+  }
+
+  el.innerHTML = pages.map(p => {
+    if (p === '…') return `<span class="btn btn-sm btn-outline-secondary disabled">…</span>`;
+    const active = p === current ? 'btn-secondary' : 'btn-outline-secondary';
+    return `<button class="btn btn-sm ${active}" onclick="loadDrillPage(${p})">${p}</button>`;
+  }).join('');
+}
+
+// ─── Global search ────────────────────────────────────────────────────────────
+
+function openSearch() {
+  if (!_searchModal) {
+    _searchModal = new bootstrap.Modal(document.getElementById('searchModal'));
+  }
+  _searchModal.show();
+  // Focus the input after show
+  document.getElementById('searchModal').addEventListener('shown.bs.modal', () => {
+    document.getElementById('s-domain').focus();
+  }, { once: true });
+}
+
+async function runSearch(page) {
+  _searchPage = page || 1;
+  const domain = document.getElementById('s-domain')?.value.trim() || '';
+  const client = document.getElementById('s-client')?.value.trim() || '';
+  const filter = document.getElementById('s-filter')?.value || '';
+  const hours = document.getElementById('s-hours')?.value || 24;
+
+  const params = new URLSearchParams({ page: _searchPage, page_size: 50, hours });
+  if (domain) params.set('domain', domain);
+  if (client) params.set('client', client);
+  if (filter === 'blocked') params.set('blocked', 'true');
+  if (filter === 'permitted') params.set('blocked', 'false');
+
+  document.getElementById('s-count').textContent = 'Searching…';
+  document.getElementById('s-tbody').innerHTML =
+    '<tr><td colspan="7" class="text-center text-muted py-3">Searching…</td></tr>';
+
+  try {
+    const data = await apiFetch(`/api/queries?${params}`);
+    if (!data) return;
+
+    const totalPages = Math.ceil(data.total / data.page_size);
+    document.getElementById('s-count').textContent =
+      `${fmtNum(data.total)} results — page ${_searchPage} of ${Math.max(1, totalPages)}`;
+
+    document.getElementById('s-tbody').innerHTML = data.items.length
+      ? data.items.map(q => `
+          <tr>
+            <td class="text-nowrap small">${fmtTime(q.timestamp)}</td>
+            <td><span class="badge rounded-pill" style="background:#6c757d;font-weight:500;">${escHtml(q.instance_name)}</span></td>
+            <td class="text-truncate" style="max-width:180px;" title="${escHtml(q.domain || '')}">${escHtml(q.domain || '—')}</td>
+            <td><code class="small">${escHtml(q.query_type || '—')}</code></td>
+            <td class="small">${escHtml(q.client_name || q.client_ip || '—')}</td>
+            <td>${statusPill(q.status)}</td>
+            <td class="text-end small">${q.reply_time_ms != null ? Number(q.reply_time_ms).toFixed(1) : '—'}</td>
+          </tr>
+        `).join('')
+      : '<tr><td colspan="7" class="text-center text-muted py-3">No results found.</td></tr>';
+
+    renderSearchPagination(totalPages);
+  } catch (err) {
+    console.error('Search error:', err);
+    document.getElementById('s-count').textContent = 'Error — see console';
+  }
+}
+
+function renderSearchPagination(total) {
+  const el = document.getElementById('s-pagination');
+  if (!el) return;
+  if (total <= 1) { el.innerHTML = ''; return; }
+
+  const current = _searchPage;
+  let pages = [];
+  if (total <= 7) {
+    pages = Array.from({ length: total }, (_, i) => i + 1);
+  } else {
+    pages = [1];
+    const start = Math.max(2, current - 2);
+    const end = Math.min(total - 1, current + 2);
+    if (start > 2) pages.push('…');
+    for (let p = start; p <= end; p++) pages.push(p);
+    if (end < total - 1) pages.push('…');
+    pages.push(total);
+  }
+
+  el.innerHTML = pages.map(p => {
+    if (p === '…') return `<span class="btn btn-sm btn-outline-secondary disabled">…</span>`;
+    const active = p === current ? 'btn-secondary' : 'btn-outline-secondary';
+    return `<button class="btn btn-sm ${active}" onclick="runSearch(${p})">${p}</button>`;
+  }).join('');
 }
 
 // ─── Security helper ──────────────────────────────────────────────────────────

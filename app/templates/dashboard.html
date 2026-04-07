@@ -8,7 +8,7 @@
   <div class="d-flex align-items-center justify-content-between mb-3">
     <h5 class="fw-semibold mb-0"><i class="bi bi-speedometer2 me-2 text-success"></i>Dashboard</h5>
     <div class="d-flex gap-2 align-items-center">
-      <select id="time-range" class="form-select form-select-sm" style="width:auto;">
+      <select id="time-range" class="form-select form-select-sm" style="width:auto;" onchange="loadDashboard()">
         <option value="24">Last 24 hours</option>
         <option value="48">Last 48 hours</option>
         <option value="168">Last 7 days</option>
@@ -20,9 +20,9 @@
   </div>
 
   <!-- Stat cards -->
-  <div class="row g-3 mb-3" id="stat-cards">
+  <div class="row g-3 mb-3">
     <div class="col-sm-6 col-xl-3">
-      <div class="stat-card stat-card-blue">
+      <div class="stat-card stat-card-blue" id="card-total">
         <div class="stat-icon"><i class="bi bi-bar-chart-fill"></i></div>
         <div class="stat-body">
           <div class="stat-value" id="total-queries">—</div>
@@ -31,7 +31,7 @@
       </div>
     </div>
     <div class="col-sm-6 col-xl-3">
-      <div class="stat-card stat-card-red">
+      <div class="stat-card stat-card-red" id="card-blocked">
         <div class="stat-icon"><i class="bi bi-shield-fill-x"></i></div>
         <div class="stat-body">
           <div class="stat-value" id="queries-blocked">—</div>
@@ -40,7 +40,7 @@
       </div>
     </div>
     <div class="col-sm-6 col-xl-3">
-      <div class="stat-card stat-card-orange">
+      <div class="stat-card stat-card-orange" id="card-pct">
         <div class="stat-icon"><i class="bi bi-percent"></i></div>
         <div class="stat-body">
           <div class="stat-value" id="percent-blocked">—</div>
@@ -49,11 +49,14 @@
       </div>
     </div>
     <div class="col-sm-6 col-xl-3">
-      <div class="stat-card stat-card-green">
+      <div class="stat-card stat-card-green" id="card-blocklist">
         <div class="stat-icon"><i class="bi bi-list-check"></i></div>
         <div class="stat-body">
           <div class="stat-value" id="blocklist-size">—</div>
           <div class="stat-label">Domains on Blocklist</div>
+          <div id="blocklist-warning" class="stat-warning d-none">
+            <i class="bi bi-exclamation-triangle-fill"></i> Instances disagree
+          </div>
         </div>
       </div>
     </div>
@@ -150,6 +153,42 @@
   </div>
 
 </div>
+
+<!-- Drill-down modal -->
+<div class="modal fade" id="drillModal" tabindex="-1" aria-labelledby="drillModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title fw-semibold" id="drillModalLabel">Query Detail</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0">
+        <div class="p-2 border-bottom bg-light d-flex gap-2 align-items-center flex-wrap">
+          <span class="small text-muted" id="drill-count">Loading…</span>
+          <div class="ms-auto d-flex gap-1" id="drill-pagination"></div>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0 query-log-table">
+            <thead class="table-light">
+              <tr>
+                <th>Time</th><th>Instance</th><th>Domain</th>
+                <th>Type</th><th>Client</th><th>Status</th><th class="text-end">Reply (ms)</th>
+              </tr>
+            </thead>
+            <tbody id="drill-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer py-1 d-flex justify-content-between">
+        <a id="drill-view-all" href="/queries" class="btn btn-sm btn-outline-secondary">
+          <i class="bi bi-box-arrow-up-right me-1"></i>Open in Query Log
+        </a>
+        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block extra_js %}

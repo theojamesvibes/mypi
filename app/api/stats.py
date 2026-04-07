@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import and_, func, select
+from sqlalchemy import Integer, and_, case, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
@@ -23,10 +23,11 @@ from app.schemas.stats import (
 
 router = APIRouter(prefix="/api/stats", tags=["stats"])
 
+# Pi-hole v6 returns status as uppercase strings (e.g. "GRAVITY", "FORWARDED").
 BLOCKED_STATUSES = frozenset({
-    "blocked_gravity", "blocked_regex", "blocked_denylist", "blocked_nxdomain",
-    "blocked_cname_gravity", "blocked_cname_regex", "blocked_cname_denylist",
-    "blocked_gravity_cname",
+    "GRAVITY", "REGEX", "BLACKLIST",
+    "EXTERNAL_BLOCKED_IP", "EXTERNAL_BLOCKED_NULL", "EXTERNAL_BLOCKED_NXDOMAIN",
+    "GRAVITY_CNAME", "REGEX_CNAME", "BLACKLIST_CNAME",
 })
 
 
@@ -91,7 +92,9 @@ async def get_summary(
         if snap and snap.status == "online":
             totals.dns_queries_today += snap.dns_queries_today
             totals.queries_blocked += snap.queries_blocked
-            totals.domains_on_blocklist += snap.domains_on_blocklist
+            # Blocklist count is the same across instances — take one representative value.
+            if totals.domains_on_blocklist == 0:
+                totals.domains_on_blocklist = snap.domains_on_blocklist
             totals.unique_clients += snap.unique_clients
             totals.queries_cached += snap.queries_cached
             totals.queries_forwarded += snap.queries_forwarded
@@ -111,28 +114,39 @@ async def get_history(
 ):
     since = datetime.now(timezone.utc) - timedelta(hours=hours)
 
-    q = select(StatsSnapshot).where(StatsSnapshot.collected_at >= since)
+    # Count actual query_log rows per 10-minute bucket — avoids the cumulative
+    # counter problem (dns_queries_today resets at midnight and would be summed
+    # across instances and snapshots, producing wildly inflated numbers).
+    bucket_col = (
+        func.date_trunc("hour", QueryLog.timestamp) +
+        func.make_interval(
+            0, 0, 0, 0, 0,
+            func.floor(func.extract("minute", QueryLog.timestamp) / 10).cast(Integer) * 10,
+        )
+    ).label("bucket")
+
+    q = (
+        select(
+            bucket_col,
+            func.count(QueryLog.id).label("queries"),
+            func.count(
+                case((QueryLog.status.in_(list(BLOCKED_STATUSES)), QueryLog.id))
+            ).label("blocked"),
+        )
+        .where(QueryLog.timestamp >= since)
+        .group_by(text("1"))
+        .order_by(text("1"))
+    )
     if instance_id:
-        q = q.where(StatsSnapshot.instance_id == instance_id)
-    q = q.order_by(StatsSnapshot.collected_at)
+        q = q.where(QueryLog.instance_id == instance_id)
 
     result = await db.execute(q)
-    snapshots = result.scalars().all()
+    buckets = [
+        HistoryBucket(timestamp=row.bucket, queries=row.queries, blocked=row.blocked)
+        for row in result.fetchall()
+    ]
 
-    buckets: dict[int, HistoryBucket] = {}
-    for snap in snapshots:
-        bucket_ts = snap.collected_at.replace(second=0, microsecond=0)
-        bucket_ts = bucket_ts.replace(minute=bucket_ts.minute - (bucket_ts.minute % 10))
-        key = int(bucket_ts.timestamp())
-        if key not in buckets:
-            buckets[key] = HistoryBucket(timestamp=bucket_ts, queries=0, blocked=0)
-        buckets[key].queries += snap.dns_queries_today
-        buckets[key].blocked += snap.queries_blocked
-
-    return HistoryResponse(
-        buckets=sorted(buckets.values(), key=lambda b: b.timestamp),
-        instance_id=instance_id,
-    )
+    return HistoryResponse(buckets=buckets, instance_id=instance_id)
 
 
 @router.get("/top", response_model=TopStatsResponse)

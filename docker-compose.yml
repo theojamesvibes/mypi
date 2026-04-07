@@ -17,8 +17,9 @@ services:
   app:
     build: .
     restart: unless-stopped
-    ports:
-      - "${APP_PORT:-8080}:8080"
+    networks:
+      - default
+      - proxy
     volumes:
       - ./pihole_instances.yml:/app/pihole_instances.yml:ro
     environment:
@@ -28,11 +29,22 @@ services:
       INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:?INITIAL_ADMIN_PASSWORD is required}
       PIHOLE_CONFIG_PATH: /app/pihole_instances.yml
       STATS_POLL_INTERVAL: ${STATS_POLL_INTERVAL:-60}
-      QUERIES_POLL_INTERVAL: ${QUERIES_POLL_INTERVAL:-300}
+      QUERIES_POLL_INTERVAL: ${QUERIES_POLL_INTERVAL:-10}
       DATA_RETENTION_DAYS: ${DATA_RETENTION_DAYS:-30}
     depends_on:
       db:
         condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mypi.entrypoints=websecure"
+      - "traefik.http.routers.mypi.rule=Host(`mypi.myssdomain.net`)"
+      - "traefik.http.routers.mypi.tls=true"
+      - "traefik.http.routers.mypi.tls.certresolver=cloudflare"
+      - "traefik.http.services.mypi.loadbalancer.server.port=8080"
 
 volumes:
   pgdata:
+
+networks:
+  proxy:
+    external: true
