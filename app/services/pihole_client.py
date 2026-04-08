@@ -235,8 +235,19 @@ class PiholeClient:
 
     async def run_gravity(self) -> None:
         """Trigger a gravity database update on this instance."""
+        if self._client is None:
+            raise RuntimeError("PiholeClient must be used as an async context manager")
+        await self._ensure_authed()
+        url = f"{self.base_url}/api/action/gravity"
         try:
-            await self._post("/api/action/gravity")
+            resp = await self._client.post(url, headers=self._headers())
+            if resp.status_code == 401:
+                self._sid = None
+                ok = await self._authenticate()
+                if ok:
+                    resp = await self._client.post(url, headers=self._headers())
+            resp.raise_for_status()
+            # Response body is a plaintext gravity log, not JSON — intentionally ignored
         except httpx.RemoteProtocolError as exc:
             if "incomplete chunked read" in str(exc).lower():
                 logger.info("Gravity on %s: connection reset (FTL restarted — normal).", self.base_url)
