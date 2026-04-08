@@ -66,7 +66,7 @@ async def get_schedule(_: User = Depends(get_current_user)) -> dict:
 
 @router.put("/schedule")
 async def set_schedule(req: ScheduleRequest, _: User = Depends(get_current_user)) -> dict:
-    sync_service.set_schedule(
+    await sync_service.set_schedule(
         interval_minutes=req.interval_minutes,
         auto_gravity=req.auto_gravity,
         import_config=req.import_config,
