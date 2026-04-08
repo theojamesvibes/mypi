@@ -5,6 +5,7 @@ import json
 import logging
 
 import httpx
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.database import AsyncSessionLocal
 from app.models.settings import AppSetting
@@ -152,7 +153,12 @@ async def save_settings(
 
     try:
         async with AsyncSessionLocal() as db:
-            await db.merge(AppSetting(key=_SETTINGS_KEY, value=payload))
+            stmt = (
+                pg_insert(AppSetting)
+                .values(key=_SETTINGS_KEY, value=payload)
+                .on_conflict_do_update(index_elements=["key"], set_={"value": payload})
+            )
+            await db.execute(stmt)
             await db.commit()
         logger.info("Pushover settings persisted to DB.")
     except Exception as exc:
