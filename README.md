@@ -110,27 +110,34 @@ A self-hosted dashboard that consolidates up to 10 locally running [Pi-hole](htt
 - Docker + Docker Compose
 - Pi-hole v6 instances running on your local network
 
-### 1. Clone and configure
+No need to clone the repository. The app is published as a pre-built image on the GitHub Container Registry.
+
+### 1. Download the config files
 
 ```bash
-git clone <this-repo> mypi
-cd mypi
+mkdir mypi && cd mypi
 
-# Environment variables
-cp .env.example .env
-# Edit .env — at minimum set POSTGRES_PASSWORD, SECRET_KEY, INITIAL_ADMIN_PASSWORD
+# Docker Compose
+curl -fsSL https://raw.githubusercontent.com/theojamesvibes/mypi/main/docker-compose.yml -o docker-compose.yml
 
-# Pi-hole instances
-cp pihole_instances.yml.example pihole_instances.yml
-# Edit pihole_instances.yml with your Pi-hole URLs and passwords
+# Environment variables template
+curl -fsSL https://raw.githubusercontent.com/theojamesvibes/mypi/main/.env.example -o .env
+
+# Pi-hole instances template
+curl -fsSL https://raw.githubusercontent.com/theojamesvibes/mypi/main/pihole_instances.yml.example -o pihole_instances.yml
 ```
 
-### 2. Generate a secret key
+### 2. Configure
+
+Edit `.env` — at minimum set these three values:
 
 ```bash
-python3 -c "import secrets; print(secrets.token_hex(32))"
-# Paste the output into SECRET_KEY in .env
+POSTGRES_PASSWORD=change-me
+SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+INITIAL_ADMIN_PASSWORD=change-me
 ```
+
+Edit `pihole_instances.yml` with your Pi-hole URLs and passwords (see [Configuration](#configuration) below).
 
 ### 3. Run
 
@@ -138,9 +145,20 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 docker compose up -d
 ```
 
-The dashboard is available at **http://localhost:8080** (or whichever `APP_PORT` you set). If you have Traefik on a `proxy` network, uncomment the labels in `docker-compose.yml` and set your hostname.
+Docker pulls the pre-built image automatically. The dashboard is available at **http://localhost:8080** (or whichever `APP_PORT` you set in `.env`).
 
-Log in with the credentials from `INITIAL_ADMIN_USER` / `INITIAL_ADMIN_PASSWORD`.
+Log in with `INITIAL_ADMIN_USER` / `INITIAL_ADMIN_PASSWORD`.
+
+---
+
+### Building from source
+
+```bash
+git clone https://github.com/theojamesvibes/mypi.git && cd mypi
+cp .env.example .env && cp pihole_instances.yml.example pihole_instances.yml
+# edit both files, then:
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+```
 
 ---
 
