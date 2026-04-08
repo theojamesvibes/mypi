@@ -140,7 +140,7 @@ SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
 INITIAL_ADMIN_PASSWORD=change-me
 ```
 
-Edit `pihole_instances.yml` with your Pi-hole URLs and passwords (see [Configuration](#configuration) below).
+Edit `pihole_instances.yml` with your Pi-hole URLs and passwords (see [Configuration](#configuration) below). Instances with no password set are supported — leave `password` empty or omit it.
 
 ### 3. Run
 
@@ -199,11 +199,17 @@ instances:
     url: "http://192.168.1.102"
     password: "your-pihole-password"
     color: "#f39c12"
+
+  # Pi-hole with no password set — omit the field or leave it empty:
+  - name: "Garage"
+    url: "http://192.168.1.103"
+    password: ""
+    color: "#9b59b6"
 ```
 
 - Up to **10 instances** supported
 - Instances are loaded at startup and synced to the database; restart the container to pick up changes
-- The `password` is the Pi-hole web interface password (Pi-hole v6 API)
+- `password` is the Pi-hole web interface password (Pi-hole v6 API). Leave empty (`""`) or omit entirely for instances with no password configured — MyPi detects the passwordless state automatically and connects without authentication
 - `color` is used in charts to distinguish each instance visually
 - `master: true` designates the sync source for the Pi-hole Sync feature — exactly one instance should be marked master
 
