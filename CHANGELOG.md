@@ -4,6 +4,13 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.0.1] - 2026-04-07
+
+### Fixed
+- Sync schedule and Pushover settings now correctly persist across container restarts. `set_schedule()` was synchronous and used a fire-and-forget `asyncio.get_event_loop().create_task()` to write to the database — in some uvicorn/Python 3.12 contexts this task would silently fail, leaving settings un-persisted. Converted to a proper `async` function with an awaited DB write so persistence is guaranteed before the response is returned. All remaining `asyncio.get_event_loop().create_task()` calls replaced with `asyncio.create_task()`.
+
+---
+
 ## [1.0.0] - 2026-04-07 — Public release
 
 First public release. Full feature set:
