@@ -1,0 +1,20 @@
+# Development override — builds the image from source instead of pulling from ghcr.io
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+services:
+  app:
+    build: .
+    image: mypi-dev
+    networks:
+      - default
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mypi.entrypoints=websecure"
+      - "traefik.http.routers.mypi.rule=Host(`${MYPI_HOST:-mypi.localhost}`)"
+      - "traefik.http.routers.mypi.tls=true"
+      - "traefik.http.routers.mypi.tls.certresolver=cloudflare"
+      - "traefik.http.services.mypi.loadbalancer.server.port=8080"
+
+networks:
+  proxy:
+    external: true
