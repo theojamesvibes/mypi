@@ -4,6 +4,13 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.0.7] - 2026-04-08
+
+### Fixed
+- `run_gravity()` no longer raises a JSON parse error when Pi-hole returns a plaintext streaming log instead of JSON. The gravity endpoint streams progress text on instances where FTL does not restart after completion; the response body is now intentionally ignored.
+
+---
+
 ## [1.0.6] - 2026-04-08
 
 ### Fixed
