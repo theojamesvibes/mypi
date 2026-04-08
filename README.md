@@ -411,6 +411,8 @@ MIT
 
 ## Credits
 
+- **[Pi-hole](https://pi-hole.net/)** — the network-wide ad blocker that makes all of this possible. MyPi is a companion dashboard for Pi-hole v6 and would not exist without the Pi-hole project and its community. If you find Pi-hole useful, consider [donating to the project](https://pi-hole.net/donate/).
+
 - **[Nebula Sync](https://github.com/lovelaze/nebula-sync)** — inspired the Pi-hole sync design. Nebula Sync is a purpose-built tool for keeping multiple Pi-hole v6 instances in sync; MyPi's sync feature draws on the same approach of using the Pi-hole v6 teleporter API to push configuration from a master to replicas.
 
 ---
