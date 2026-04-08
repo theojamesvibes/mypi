@@ -152,6 +152,7 @@ async def save_settings(
             stmt = stmt.on_conflict_do_update(index_elements=["key"], set_={"value": payload})
             await db.execute(stmt)
             await db.commit()
+        logger.info("Pushover settings persisted to DB.")
     except Exception as exc:
         logger.warning("Could not persist Pushover settings: %s", exc)
 

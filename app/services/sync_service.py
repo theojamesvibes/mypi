@@ -83,6 +83,7 @@ async def _persist_schedule() -> None:
             "auto_gravity": _auto_gravity,
             **_sync_opts,
         }))
+        logger.info("Sync schedule persisted to DB.")
     except Exception as exc:
         logger.warning("Could not persist sync schedule: %s", exc)
 
@@ -151,7 +152,7 @@ async def load_schedule() -> None:
 
     # Re-arm interval task if schedule was active
     if _schedule_minutes > 0:
-        asyncio.get_event_loop().create_task(_scheduled_loop(_schedule_minutes))
+        asyncio.create_task(_scheduled_loop(_schedule_minutes))
         logger.info("Re-armed sync schedule: every %d minutes.", _schedule_minutes)
 
 
@@ -166,7 +167,7 @@ async def _scheduled_loop(minutes: int) -> None:
         await run_sync(**_sync_opts)
 
 
-def set_schedule(
+async def set_schedule(
     interval_minutes: int,
     auto_gravity: bool,
     import_config: bool,
@@ -189,14 +190,12 @@ def set_schedule(
         _schedule_task = None
 
     if interval_minutes > 0:
-        _schedule_task = asyncio.get_event_loop().create_task(
-            _scheduled_loop(interval_minutes)
-        )
+        _schedule_task = asyncio.create_task(_scheduled_loop(interval_minutes))
         logger.info("Sync scheduled every %d minutes.", interval_minutes)
     else:
         logger.info("Sync schedule disabled.")
 
-    asyncio.get_event_loop().create_task(_persist_schedule())
+    await _persist_schedule()
 
 
 async def notify_blocklist_count(count: int) -> None:
@@ -211,7 +210,7 @@ async def notify_blocklist_count(count: int) -> None:
         )
         _last_blocklist_count = count
         if not _lock.locked():
-            asyncio.get_event_loop().create_task(run_sync(**_sync_opts))
+            asyncio.create_task(run_sync(**_sync_opts))
     else:
         _last_blocklist_count = count
 
@@ -315,9 +314,9 @@ async def run_sync(
                 results=results,
             )
 
-        asyncio.get_event_loop().create_task(_persist_sync_state(_state))
+        asyncio.create_task(_persist_sync_state(_state))
         if _state.status == "error":
-            asyncio.get_event_loop().create_task(
+            asyncio.create_task(
                 pushover_service.notify_sync_failure(_state.error or "One or more replicas failed to sync")
             )
         return _state
