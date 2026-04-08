@@ -50,6 +50,30 @@
       </div>
     </div>
 
+    <!-- Orphaned instances (hidden until stale instances are detected) -->
+    <div class="col-12 d-none" id="stale-instances-card">
+      <div class="card border-warning">
+        <div class="card-header bg-warning bg-opacity-10 d-flex align-items-center justify-content-between">
+          <span><i class="bi bi-exclamation-triangle me-1 text-warning"></i>Orphaned Instances</span>
+          <span class="badge bg-warning text-dark" id="stale-count-badge">0</span>
+        </div>
+        <div class="card-body">
+          <p class="text-muted small mb-3">
+            These instances were present in <code>pihole_instances.yml</code> but are no longer configured
+            (e.g. renamed or removed). Their historical data is still in the database.
+            You can remove them permanently, including all associated stats and query logs.
+          </p>
+          <table class="table table-sm table-hover mb-3">
+            <thead class="table-light"><tr><th>Name</th><th>URL</th><th>Last seen</th><th></th></tr></thead>
+            <tbody id="stale-instances-tbody"></tbody>
+          </table>
+          <button class="btn btn-sm btn-outline-danger" onclick="deleteAllStale()">
+            <i class="bi bi-trash me-1"></i>Remove all orphaned instances
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Pi-hole Sync -->
     <div class="col-12">
       <div class="card">
@@ -249,6 +273,7 @@
 <script>
   loadApiKeys();
   loadSettingsInstances();
+  loadStaleInstances();
   loadSyncStatus();
   loadSyncSchedule();
   loadPushoverSettings();

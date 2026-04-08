@@ -329,10 +329,11 @@ async def run_sync(
                 zip_data = await client.get_teleporter()
             logger.info("Exported teleporter from master %s (%d bytes)", master.name, len(zip_data))
 
-            # Step 3: Push to each replica concurrently.
-            # Do NOT run gravity on replicas — if import_gravity is enabled they already
-            # received the master's gravity DB via the teleporter import; running it again
-            # would just re-fetch the same lists and waste several minutes per Pi.
+            # Step 3: Push to each replica concurrently, then run gravity on each.
+            # The teleporter ZIP carries the master's adlists and domain lists, but the
+            # compiled gravity table is rebuilt by Pi-hole FTL during a gravity run.
+            # Without running gravity on replicas after import, their domain counts stay
+            # stale and diverge from the master.
             async def _sync_replica(replica: PiholeInstance) -> InstanceSyncResult:
                 try:
                     async with PiholeClient(replica.url, replica.api_password, timeout=SYNC_TIMEOUT) as client:
@@ -342,6 +343,22 @@ async def run_sync(
                             import_gravity=import_gravity,
                             import_dhcp_leases=import_dhcp_leases,
                         )
+                    logger.info("Teleporter import to %s succeeded", replica.name)
+
+                    if import_gravity:
+                        # FTL restarts after the teleporter import; give it a moment
+                        # before connecting again to run gravity.
+                        await asyncio.sleep(5)
+                        try:
+                            async with PiholeClient(replica.url, replica.api_password, timeout=SYNC_TIMEOUT) as client:
+                                await client.run_gravity()
+                            logger.info("Gravity update completed on replica %s", replica.name)
+                        except Exception as g_exc:
+                            # Gravity failure is non-fatal: adlists are synced; the
+                            # domain count will catch up when Pi-hole runs gravity on
+                            # its own schedule.
+                            logger.warning("Gravity on replica %s failed (non-fatal): %s", replica.name, g_exc)
+
                     logger.info("Sync to %s succeeded", replica.name)
                     return InstanceSyncResult(name=replica.name, status="success")
                 except Exception as exc:
