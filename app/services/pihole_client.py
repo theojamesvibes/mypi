@@ -55,6 +55,7 @@ class PiholeClient:
         self.password = password
         self.timeout = timeout
         self._sid: str | None = None
+        self._no_auth: bool = False  # True when Pi-hole has no password set
         self._client: httpx.AsyncClient | None = None
         self._auth_blocked_until: float = 0.0
         self._auth_lock: asyncio.Lock = asyncio.Lock()
@@ -76,6 +77,7 @@ class PiholeClient:
             await self._client.aclose()
         self._client = None
         self._sid = None
+        self._no_auth = False
 
     async def __aenter__(self) -> "PiholeClient":
         await self.open()
@@ -89,7 +91,7 @@ class PiholeClient:
             raise RuntimeError("PiholeClient must be used as an async context manager")
         async with self._auth_lock:
             # Another coroutine may have authenticated while we waited for the lock.
-            if self._sid is not None:
+            if self._sid is not None or self._no_auth:
                 return True
             now = time.monotonic()
             if now < self._auth_blocked_until:
@@ -103,8 +105,14 @@ class PiholeClient:
                 )
                 if resp.status_code == 200:
                     data = resp.json()
-                    self._sid = data.get("session", {}).get("sid")
-                    return self._sid is not None
+                    sid = data.get("session", {}).get("sid")
+                    if sid:
+                        self._sid = sid
+                    else:
+                        # Pi-hole returned 200 with no SID — password auth is disabled
+                        self._no_auth = True
+                        logger.debug("No auth required for %s (no password set)", self.base_url)
+                    return True
                 if resp.status_code == 429:
                     self._auth_blocked_until = time.monotonic() + AUTH_BACKOFF_SECONDS
                     logger.warning(
@@ -121,7 +129,7 @@ class PiholeClient:
         return {}
 
     async def _ensure_authed(self) -> None:
-        if self._sid is None:
+        if self._sid is None and not self._no_auth:
             ok = await self._authenticate()
             if not ok:
                 raise ConnectionError(f"Authentication failed for {self.base_url}")
@@ -129,7 +137,7 @@ class PiholeClient:
     async def _get(self, path: str, params: dict | None = None, retry: bool = True) -> Any:
         if self._client is None:
             raise RuntimeError("PiholeClient must be used as an async context manager")
-        if self._sid is None:
+        if self._sid is None and not self._no_auth:
             ok = await self._authenticate()
             if not ok:
                 raise ConnectionError(f"Authentication failed for {self.base_url}")
