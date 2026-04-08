@@ -16,6 +16,7 @@ services:
 
   app:
     image: ghcr.io/theojamesvibes/mypi:latest
+    container_name: mypi
     restart: unless-stopped
     volumes:
       - ./pihole_instances.yml:/app/pihole_instances.yml:ro
