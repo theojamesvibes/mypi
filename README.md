@@ -417,5 +417,11 @@ MIT
 
 ---
 
+## Credits
+
+- **[Nebula Sync](https://github.com/lovelaze/nebula-sync)** — inspired the Pi-hole sync design. Nebula Sync is a purpose-built tool for keeping multiple Pi-hole v6 instances in sync; MyPi's sync feature draws on the same approach of using the Pi-hole v6 teleporter API to push configuration from a master to replicas.
+
+---
+
 > **Vibe coded with [Claude Code](https://claude.ai/code) by Anthropic.**
 > Use at your own risk. Review before trusting.
