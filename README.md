@@ -49,7 +49,8 @@ A self-hosted dashboard that consolidates up to 10 locally running [Pi-hole](htt
 
 ### Settings
 - API key management (create / revoke) for iOS app authentication
-- Instance list with online/offline badge and master indicator
+- Instance list showing all active Pi-hole instances with online/offline badge and master indicator
+- **Orphaned instance cleanup** — when an instance is renamed or removed from `pihole_instances.yml`, the old record is detected and shown with an option to permanently remove it along with all associated stats and query log data, individually or in bulk
 - Sync panel: import options, schedule configuration, live sync result with per-replica status
 - Pushover panel: credentials, master enable toggle, per-alert toggles, thresholds
 
@@ -241,21 +242,40 @@ The full API is available under `/api/`. Interactive documentation is at **`/doc
 ### Key endpoints
 
 ```
-POST  /api/auth/login                # { "username": "...", "password": "..." } → token
-POST  /api/auth/api-key              # Create API key (requires JWT)
-GET   /api/stats/summary             # Aggregated + per-instance stats
-GET   /api/stats/history             # Over-time query data (?hours=24)
-GET   /api/stats/top                 # Top domains and clients (?hours=24&limit=10)
-GET   /api/queries                   # Paginated query log (filterable, sortable)
-GET   /api/instances                 # Instance list with status
-GET   /api/sync/status               # Last sync state
-POST  /api/sync                      # Trigger a sync
-GET   /api/sync/schedule             # Get sync schedule settings
-PUT   /api/sync/schedule             # Update sync schedule settings
-GET   /api/notifications/settings    # Get Pushover settings (credentials masked)
-PUT   /api/notifications/settings    # Save Pushover settings
-POST  /api/notifications/test        # Send a test notification
-POST  /api/notifications/validate    # Validate App Token + User Key
+# Auth
+POST    /api/auth/login                  # { "username": "...", "password": "..." } → JWT token
+POST    /api/auth/logout                 # Clear session cookie
+GET     /api/auth/me                     # Current user info
+POST    /api/auth/api-key                # Create API key (requires JWT)
+GET     /api/auth/api-keys               # List active API keys
+DELETE  /api/auth/api-key/{id}           # Revoke an API key
+
+# Stats
+GET     /api/stats/summary               # Aggregated + per-instance stats
+GET     /api/stats/history               # Over-time query data (?hours=24)
+GET     /api/stats/top                   # Top domains and clients (?hours=24&limit=10)
+
+# Query log
+GET     /api/queries                     # Paginated, filterable, sortable query log
+                                         # ?page, page_size, instance_id, domain, client,
+                                         #  blocked, hours, sort_by, sort_dir
+
+# Instances
+GET     /api/instances                   # Active instance list with latest stats + status
+GET     /api/instances/stale             # Orphaned instances (removed from YAML, not yet deleted)
+DELETE  /api/instances/{id}              # Permanently delete an orphaned instance and its data
+
+# Sync
+GET     /api/sync/status                 # Last sync state (idle / running / success / error)
+POST    /api/sync                        # Trigger a sync (runs in background)
+GET     /api/sync/schedule               # Get sync schedule settings
+PUT     /api/sync/schedule               # Update sync schedule settings
+
+# Notifications
+GET     /api/notifications/settings      # Get Pushover settings (credentials masked)
+PUT     /api/notifications/settings      # Save Pushover settings
+POST    /api/notifications/test          # Send a test Pushover notification
+POST    /api/notifications/validate      # Validate App Token + User Key with Pushover API
 ```
 
 ---
@@ -269,9 +289,9 @@ pihole_instances   — Pi-hole instance registry (from YAML); is_master flag
 stats_snapshots    — Periodic stats snapshots (one per instance per poll)
 query_logs         — Consolidated DNS query log entries (30-day retention)
 app_settings       — Key/value store for persisted app config:
-                       sync_schedule      sync interval + options
-                       sync_last_result   last sync outcome + per-replica status
-                       pushover_settings  Pushover credentials + alert config
+                       sync_schedule        sync interval + import options
+                       sync_last_result     last sync outcome + per-replica status
+                       pushover_settings    Pushover credentials + alert toggles + thresholds
 ```
 
 ---
@@ -331,7 +351,7 @@ MyPi targets **Pi-hole v6** which introduced a new REST API. It uses the followi
 - `GET /api/queries` — paginated query log
 - `GET /api/teleporter` — export configuration ZIP (sync)
 - `POST /api/teleporter` — import configuration ZIP (sync)
-- `POST /api/gravity` — trigger gravity update (sync)
+- `POST /api/action/gravity` — trigger gravity update (sync)
 
 Pi-hole v5 (the `api.php` interface) is **not** supported.
 
