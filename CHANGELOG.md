@@ -4,6 +4,15 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.0.2] - 2026-04-07
+
+### Fixed
+- Settings persistence second attempt: replaced PostgreSQL-specific `pg_insert … ON CONFLICT DO UPDATE` upsert with SQLAlchemy's standard `session.merge()`, which is more reliable in async context and avoids any dialect-specific edge cases
+- Added try/except around DB queries in `load_schedule()` and `load_settings()` so a table error on startup is caught and logged rather than silently ignored
+- Added diagnostic logging on load: logs clearly whether persisted settings were found in DB or not, making it easier to diagnose persistence failures from container logs
+
+---
+
 ## [1.0.1] - 2026-04-07
 
 ### Fixed

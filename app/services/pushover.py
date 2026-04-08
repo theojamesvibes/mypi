@@ -8,7 +8,6 @@ import httpx
 
 from app.database import AsyncSessionLocal
 from app.models.settings import AppSetting
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 logger = logging.getLogger(__name__)
 
@@ -86,10 +85,15 @@ async def load_settings() -> None:
     global _alert_sync_failure, _alert_instance_offline, _alert_high_block_rate, _alert_no_logs
     global _block_rate_threshold_pct, _no_logs_minutes
 
-    async with AsyncSessionLocal() as db:
-        row = await db.get(AppSetting, _SETTINGS_KEY)
+    try:
+        async with AsyncSessionLocal() as db:
+            row = await db.get(AppSetting, _SETTINGS_KEY)
+    except Exception as exc:
+        logger.warning("Could not query Pushover settings on startup: %s", exc)
+        return
 
     if not row or not row.value:
+        logger.info("No persisted Pushover settings found in DB — using defaults.")
         return
 
     try:
@@ -103,7 +107,7 @@ async def load_settings() -> None:
         _alert_no_logs = data.get("alert_no_logs", True)
         _block_rate_threshold_pct = data.get("block_rate_threshold_pct", 50.0)
         _no_logs_minutes = data.get("no_logs_minutes", 30)
-        logger.info("Loaded Pushover settings (enabled=%s)", _enabled)
+        logger.info("Loaded Pushover settings from DB (enabled=%s, token_set=%s)", _enabled, bool(_app_token))
     except Exception as exc:
         logger.warning("Could not parse Pushover settings: %s", exc)
 
@@ -148,9 +152,7 @@ async def save_settings(
 
     try:
         async with AsyncSessionLocal() as db:
-            stmt = pg_insert(AppSetting).values(key=_SETTINGS_KEY, value=payload)
-            stmt = stmt.on_conflict_do_update(index_elements=["key"], set_={"value": payload})
-            await db.execute(stmt)
+            await db.merge(AppSetting(key=_SETTINGS_KEY, value=payload))
             await db.commit()
         logger.info("Pushover settings persisted to DB.")
     except Exception as exc:
