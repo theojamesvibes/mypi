@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Literal
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.database import AsyncSessionLocal
 from app.models.pihole import PiholeInstance
@@ -69,7 +70,12 @@ def get_schedule() -> dict:
 
 async def _db_upsert(key: str, value: str) -> None:
     async with AsyncSessionLocal() as db:
-        await db.merge(AppSetting(key=key, value=value))
+        stmt = (
+            pg_insert(AppSetting)
+            .values(key=key, value=value)
+            .on_conflict_do_update(index_elements=["key"], set_={"value": value})
+        )
+        await db.execute(stmt)
         await db.commit()
 
 
