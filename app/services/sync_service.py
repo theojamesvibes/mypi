@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 from typing import Literal
 
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.database import AsyncSessionLocal
 from app.models.pihole import PiholeInstance
@@ -70,9 +69,7 @@ def get_schedule() -> dict:
 
 async def _db_upsert(key: str, value: str) -> None:
     async with AsyncSessionLocal() as db:
-        stmt = pg_insert(AppSetting).values(key=key, value=value)
-        stmt = stmt.on_conflict_do_update(index_elements=["key"], set_={"value": value})
-        await db.execute(stmt)
+        await db.merge(AppSetting(key=key, value=value))
         await db.commit()
 
 
@@ -108,9 +105,13 @@ async def load_schedule() -> None:
     """Load persisted schedule and last sync result from DB (called at startup)."""
     global _schedule_minutes, _auto_gravity, _sync_opts, _state
 
-    async with AsyncSessionLocal() as db:
-        schedule_row = await db.get(AppSetting, "sync_schedule")
-        result_row = await db.get(AppSetting, "sync_last_result")
+    try:
+        async with AsyncSessionLocal() as db:
+            schedule_row = await db.get(AppSetting, "sync_schedule")
+            result_row = await db.get(AppSetting, "sync_last_result")
+    except Exception as exc:
+        logger.warning("Could not query app_settings on startup: %s", exc)
+        return
 
     # Restore schedule
     if schedule_row and schedule_row.value:
@@ -125,11 +126,13 @@ async def load_schedule() -> None:
                 "run_gravity": data.get("run_gravity", True),
             }
             logger.info(
-                "Loaded sync schedule: interval=%d min, auto_gravity=%s",
+                "Loaded sync schedule from DB: interval=%d min, auto_gravity=%s",
                 _schedule_minutes, _auto_gravity,
             )
         except Exception as exc:
             logger.warning("Could not parse sync schedule: %s", exc)
+    else:
+        logger.info("No persisted sync schedule found in DB — using defaults.")
 
     # Restore last sync result
     if result_row and result_row.value:
@@ -146,9 +149,11 @@ async def load_schedule() -> None:
                     for r in data.get("results", [])
                 ],
             )
-            logger.info("Restored last sync state: %s at %s", _state.status, _state.completed_at)
+            logger.info("Restored last sync state from DB: %s at %s", _state.status, _state.completed_at)
         except Exception as exc:
             logger.warning("Could not parse last sync result: %s", exc)
+    else:
+        logger.info("No persisted sync result found in DB.")
 
     # Re-arm interval task if schedule was active
     if _schedule_minutes > 0:
