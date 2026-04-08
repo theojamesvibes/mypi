@@ -23,7 +23,7 @@ First public release. Full feature set:
 
 ---
 
-## [1.3.1] - 2026-04-07
+## [0.4.1] - 2026-04-07
 
 ### Fixed
 - Pushover test now works regardless of the master enable toggle (uses `send_test()` which only requires saved credentials)
@@ -33,7 +33,7 @@ First public release. Full feature set:
 
 ---
 
-## [1.3.0] - 2026-04-07
+## [0.4.0] - 2026-04-07
 
 ### Added
 - **Pushover notifications** — Settings → Pushover panel with App Token / User Key, enable toggle, Validate and Test buttons
@@ -49,7 +49,7 @@ First public release. Full feature set:
 
 ---
 
-## [1.2.8] - 2026-04-07
+## [0.3.8] - 2026-04-07
 
 ### Changed
 - Replicas no longer run gravity after teleporter import — when gravity sync is enabled the master's gravity DB is already embedded in the teleporter zip, so a second gravity run on replicas is redundant; master still runs gravity before export
@@ -58,7 +58,7 @@ First public release. Full feature set:
 
 ---
 
-## [1.2.7] - 2026-04-07
+## [0.3.7] - 2026-04-07
 
 ### Changed
 - Dashboard sync indicator now only fetches `/api/sync/status` (dropped the coupled `Promise.all` with `/api/sync/schedule` that was silently swallowing errors); shows whenever a sync has ever completed
@@ -66,7 +66,7 @@ First public release. Full feature set:
 
 ---
 
-## [1.2.6] - 2026-04-07
+## [0.3.6] - 2026-04-07
 
 ### Changed
 - Sync now runs gravity on the **master first**, before exporting the teleporter zip, so replicas receive fresh blocklists in the import payload
@@ -77,14 +77,14 @@ First public release. Full feature set:
 
 ---
 
-## [1.2.5] - 2026-04-07
+## [0.3.5] - 2026-04-07
 
 ### Fixed
 - Sync schedule (interval, auto-gravity, import options) now persists across container restarts via a new `app_settings` DB table; previously all schedule state was in-memory and reset to "disabled" on every restart, causing the dashboard sync indicator to never appear
 
 ---
 
-## [1.2.4] - 2026-04-07
+## [0.3.4] - 2026-04-07
 
 ### Changed
 - Version number moved from sidebar footer to topbar (right of the collapse button) — larger, always visible
@@ -92,7 +92,7 @@ First public release. Full feature set:
 
 ---
 
-## [1.2.3] - 2026-04-07
+## [0.3.3] - 2026-04-07
 
 ### Added
 - Pi-hole sync: push configuration from a master instance to all replicas via the Pi-hole v6 teleporter API
@@ -106,21 +106,21 @@ First public release. Full feature set:
 
 ---
 
-## [1.2.2] - 2026-04-07
+## [0.3.2] - 2026-04-07
 
 ### Fixed
 - Pi-hole sync: `incomplete chunked read` error after teleporter import treated as success (FTL restart is expected behaviour)
 
 ---
 
-## [1.2.1] - 2026-04-07
+## [0.3.1] - 2026-04-07
 
 ### Fixed
 - Pi-hole sync: increased HTTP timeout to 5 minutes for teleporter operations (Raspberry Pi hardware can take 30–90 seconds to process a large gravity database import)
 
 ---
 
-## [1.2.0] - 2026-04-07
+## [0.3.0] - 2026-04-07
 
 ### Added
 - Pi-hole sync feature: export teleporter zip from master, import to all replicas in parallel
@@ -131,7 +131,7 @@ First public release. Full feature set:
 
 ---
 
-## [1.1.3] - 2026-04-07
+## [0.2.3] - 2026-04-07
 
 ### Added
 - SVG favicon using the Bootstrap shield-fill-check icon in green (`#00a65a`)
@@ -141,7 +141,7 @@ First public release. Full feature set:
 
 ---
 
-## [1.1.2] - 2026-04-07
+## [0.2.2] - 2026-04-07
 
 ### Added
 - Top Blocked Domains and Top Clients table rows are now clickable — opens a drill-down modal showing all blocked queries for that domain or client
@@ -150,7 +150,7 @@ First public release. Full feature set:
 
 ---
 
-## [1.1.1] - 2026-04-07
+## [0.2.1] - 2026-04-07
 
 ### Changed
 - Removed global search button from topbar (query log page has equivalent filtering)
@@ -158,7 +158,7 @@ First public release. Full feature set:
 
 ---
 
-## [1.1.0] - 2026-04-07
+## [0.2.0] - 2026-04-07
 
 ### Added
 - Traefik integration: app served at `https://mypi.myssdomain.net` via the existing `proxy` network with Cloudflare TLS
@@ -179,10 +179,10 @@ First public release. Full feature set:
 
 ---
 
-## [1.0.0] - 2026-04-07
+## [0.1.0] - 2026-04-07
 
 ### Added
-- Initial release
+- Initial build
 - Aggregated dashboard: total queries, blocked count, percent blocked, domains on blocklist across all Pi-hole instances
 - Blocklist validation: turns card red if instances report different blocklist counts
 - DNS queries over time chart (Chart.js bar)
