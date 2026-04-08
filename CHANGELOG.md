@@ -4,6 +4,13 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.0.8] - 2026-04-08
+
+### Fixed
+- Pi-hole instances with no password set are now handled correctly. Pi-hole v6 returns `200` with `"sid": null` when authentication is not required; MyPi previously treated the null SID as an auth failure and marked the instance offline. A `_no_auth` flag is now set in this case and no `X-FTL-SID` header is sent on subsequent requests.
+
+---
+
 ## [1.0.7] - 2026-04-08
 
 ### Fixed
