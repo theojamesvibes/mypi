@@ -373,43 +373,7 @@ uvicorn app.main:app --reload --port 8080
 
 ## Changelog
 
-### 1.0.0 — First public release
-- Published pre-built image to GitHub Container Registry (`ghcr.io/theojamesvibes/mypi:latest`)
-- Added GitHub Actions workflow for automated Docker image builds on push to main and version tags
-- Topbar sync status badge (green / yellow / red) visible on every page
-- Pushover push notifications: sync failure, instance offline/back online, no logs, high block rate
-- Pi-hole Sync: gravity runs on master before export; replicas receive fresh blocklists via teleporter (no redundant gravity run on replicas)
-- Last sync result persisted in PostgreSQL (survives container restarts)
-- Version number displayed in topbar
-
-### 0.4.0 — Settings & sync polish
-- Pi-hole Sync settings page: import options, schedule picker, live sync result with per-replica status
-- Auto-sync on gravity change (detects blocklist count change on master)
-- Configurable sync interval: 15 min / 30 min / 1 hr / 6 hr / 24 hr, or manual-only
-- Dashboard "Pi synced" indicator (red if last sync > 24 hours ago)
-
-### 0.3.0 — Pi-hole Sync
-- Full configuration sync from master Pi-hole to all replicas via teleporter API
-- Sync order: master gravity update → export ZIP → replicas import in parallel
-- API key management in Settings (create / revoke)
-
-### 0.2.0 — Query log & auth
-- Consolidated query log across all instances with instance badge per row
-- Column sorting, pagination, and Live View (auto-refresh every 2 seconds)
-- Filter by instance, domain, client, status, and time range
-- JWT session cookie auth for web UI; API key auth (`X-API-Key`) for mobile/automation
-- Drill-down modals on top blocked domains and top clients
-
-### 0.1.0 — Initial build
-- Aggregated dashboard: total queries, blocked count, % blocked, domains on blocklist
-- DNS Queries over Time bar chart (10-minute buckets from query log data)
-- Query type doughnut chart (Forwarded / Cached / Blocked / Other)
-- Per-system panel with individual stats and online/offline badge
-- Top Permitted Domains, Top Blocked Domains, Top Clients tables
-- Background polling via APScheduler (stats every 60 s, queries every 10 s)
-- 30-day data retention
-- PostgreSQL backend with Alembic migrations
-- Docker Compose setup
+See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
 ---
 
