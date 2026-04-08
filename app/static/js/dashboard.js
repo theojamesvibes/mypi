@@ -474,6 +474,63 @@ async function loadSettingsInstances() {
   `).join('');
 }
 
+// ─── Stale (orphaned) instances ──────────────────────────────────────────────
+
+async function loadStaleInstances() {
+  const card = document.getElementById('stale-instances-card');
+  const tbody = document.getElementById('stale-instances-tbody');
+  const badge = document.getElementById('stale-count-badge');
+  if (!card || !tbody) return;
+
+  const instances = await apiFetch('/api/instances/stale');
+  if (!instances || instances.length === 0) {
+    card.classList.add('d-none');
+    return;
+  }
+
+  card.classList.remove('d-none');
+  if (badge) badge.textContent = instances.length;
+
+  tbody.innerHTML = instances.map(i => `
+    <tr>
+      <td>${escHtml(i.name)}</td>
+      <td class="small text-muted">${escHtml(i.url)}</td>
+      <td class="small text-muted">${i.last_seen_at ? new Date(i.last_seen_at).toLocaleString() : '—'}</td>
+      <td>
+        <button class="btn btn-xs btn-outline-danger py-0 px-1" style="font-size:0.75rem;"
+                onclick="deleteStaleInstance('${i.id}', '${escHtml(i.name)}')">
+          <i class="bi bi-trash"></i> Remove
+        </button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function deleteStaleInstance(id, name) {
+  if (!confirm(`Remove orphaned instance "${name}" and all its historical data? This cannot be undone.`)) return;
+  try {
+    const res = await fetch(`/api/instances/${id}`, { method: 'DELETE', credentials: 'include' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(`Failed to remove instance: ${data.detail || res.status}`);
+      return;
+    }
+    await loadStaleInstances();
+  } catch (err) {
+    alert(`Error: ${err.message}`);
+  }
+}
+
+async function deleteAllStale() {
+  const instances = await apiFetch('/api/instances/stale');
+  if (!instances || instances.length === 0) return;
+  if (!confirm(`Remove all ${instances.length} orphaned instance(s) and their historical data? This cannot be undone.`)) return;
+  for (const i of instances) {
+    await fetch(`/api/instances/${i.id}`, { method: 'DELETE', credentials: 'include' });
+  }
+  await loadStaleInstances();
+}
+
 // ─── Drill-down modal ─────────────────────────────────────────────────────────
 
 function openDrillDown(filter) {
