@@ -765,10 +765,18 @@ async function saveSchedule() {
     body: JSON.stringify(body),
   });
   if (res.status === 401) { window.location.href = '/login'; return; }
-  const label = body.interval_minutes > 0
-    ? `Schedule saved — syncing every ${body.interval_minutes} min.`
-    : 'Schedule saved — manual sync only.';
   const btn = document.querySelector('[onclick="saveSchedule()"]');
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    if (btn) {
+      const orig = btn.innerHTML;
+      btn.innerHTML = '<i class="bi bi-x me-1"></i>Save failed';
+      btn.classList.replace('btn-outline-secondary', 'btn-danger');
+      setTimeout(() => { btn.innerHTML = orig; btn.classList.replace('btn-danger', 'btn-outline-secondary'); }, 4000);
+    }
+    alert(`Schedule save failed: ${err.detail || res.statusText}`);
+    return;
+  }
   if (btn) {
     const orig = btn.innerHTML;
     btn.innerHTML = '<i class="bi bi-check me-1"></i>Saved';
@@ -918,6 +926,17 @@ async function savePushoverSettings() {
   if (res.status === 401) { window.location.href = '/login'; return; }
 
   const btn = document.querySelector('[onclick="savePushoverSettings()"]');
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    if (btn) {
+      const orig = btn.innerHTML;
+      btn.innerHTML = '<i class="bi bi-x me-1"></i>Save failed';
+      btn.classList.replace('btn-primary', 'btn-danger');
+      setTimeout(() => { btn.innerHTML = orig; btn.classList.replace('btn-danger', 'btn-primary'); }, 4000);
+    }
+    alert(`Settings save failed: ${err.detail || res.statusText}`);
+    return;
+  }
   if (btn) {
     const orig = btn.innerHTML;
     btn.innerHTML = '<i class="bi bi-check me-1"></i>Saved';
