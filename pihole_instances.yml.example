@@ -8,6 +8,7 @@ instances:
     url: "http://192.168.1.100"
     password: "your-pihole-password"
     color: "#00a65a"   # green
+    master: true       # sync source — exactly one instance should be master
 
   - name: "Office"
     url: "http://192.168.1.101"
@@ -19,6 +20,16 @@ instances:
     password: "your-pihole-password"
     color: "#f39c12"   # orange
 
+  # Pi-hole with no password set — omit the field or leave it empty:
+  # - name: "Garage"
+  #   url: "http://192.168.1.103"
+  #   password: ""
+  #   color: "#9b59b6"   # purple
+
 # Up to 10 instances supported.
-# Colors are used in charts to distinguish each Pi-hole.
-# The password field corresponds to the Pi-hole web interface password (v6 API).
+# Colors are used in charts to distinguish each Pi-hole visually.
+#
+# password: corresponds to the Pi-hole web interface password (Pi-hole v6 API).
+#            Leave empty ("") or omit entirely for instances with no password set.
+# master:    designates the sync source for Pi-hole Sync. Exactly one instance
+#            should be marked master: true. Omit or set false on all replicas.
