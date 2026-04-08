@@ -66,14 +66,17 @@ async def get_schedule(_: User = Depends(get_current_user)) -> dict:
 
 @router.put("/schedule")
 async def set_schedule(req: ScheduleRequest, _: User = Depends(get_current_user)) -> dict:
-    await sync_service.set_schedule(
-        interval_minutes=req.interval_minutes,
-        auto_gravity=req.auto_gravity,
-        import_config=req.import_config,
-        import_gravity=req.import_gravity,
-        import_dhcp_leases=req.import_dhcp_leases,
-        run_gravity=req.run_gravity,
-    )
+    try:
+        await sync_service.set_schedule(
+            interval_minutes=req.interval_minutes,
+            auto_gravity=req.auto_gravity,
+            import_config=req.import_config,
+            import_gravity=req.import_gravity,
+            import_dhcp_leases=req.import_dhcp_leases,
+            run_gravity=req.run_gravity,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to persist schedule: {exc}")
     return sync_service.get_schedule()
 
 

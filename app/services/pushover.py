@@ -151,18 +151,24 @@ async def save_settings(
         "no_logs_minutes": no_logs_minutes,
     })
 
-    try:
-        async with AsyncSessionLocal() as db:
-            stmt = (
-                pg_insert(AppSetting)
-                .values(key=_SETTINGS_KEY, value=payload)
-                .on_conflict_do_update(index_elements=["key"], set_={"value": payload})
+    async with AsyncSessionLocal() as db:
+        stmt = (
+            pg_insert(AppSetting)
+            .values(key=_SETTINGS_KEY, value=payload)
+            .on_conflict_do_update(index_elements=["key"], set_={"value": payload})
+        )
+        await db.execute(stmt)
+        await db.commit()
+
+    # Verify the write landed in a fresh session
+    async with AsyncSessionLocal() as db:
+        row = await db.get(AppSetting, _SETTINGS_KEY)
+        if row is None or row.value != payload:
+            raise RuntimeError(
+                f"DB write verification failed for Pushover settings: "
+                f"committed but read-back returned {'nothing' if row is None else 'wrong value'}"
             )
-            await db.execute(stmt)
-            await db.commit()
-        logger.info("Pushover settings persisted to DB.")
-    except Exception as exc:
-        logger.warning("Could not persist Pushover settings: %s", exc)
+    logger.info("Pushover settings persisted and verified in DB.")
 
 
 def _mask(value: str) -> str:

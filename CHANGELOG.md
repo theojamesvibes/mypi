@@ -4,6 +4,15 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.0.4] - 2026-04-08
+
+### Fixed
+- Settings persistence now verified: after every DB write, a fresh session immediately reads the row back and raises an error if it is missing or wrong — no more silent failures
+- `PUT /api/sync/schedule` and `PUT /api/notifications/settings` now return HTTP 500 with the exact error message if the write or verification fails, instead of returning 200 regardless
+- Save buttons in the UI now show a red "Save failed" state and an alert with the server error message if the API returns an error; previously they always showed "Saved"
+
+---
+
 ## [1.0.3] - 2026-04-08
 
 ### Fixed

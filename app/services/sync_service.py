@@ -69,6 +69,7 @@ def get_schedule() -> dict:
 # ── DB persistence ────────────────────────────────────────────────────────────
 
 async def _db_upsert(key: str, value: str) -> None:
+    """Write key/value to app_settings and verify it was committed."""
     async with AsyncSessionLocal() as db:
         stmt = (
             pg_insert(AppSetting)
@@ -78,17 +79,24 @@ async def _db_upsert(key: str, value: str) -> None:
         await db.execute(stmt)
         await db.commit()
 
+    # Verify in a fresh session (no identity-map cache) that the row landed
+    async with AsyncSessionLocal() as db:
+        row = await db.get(AppSetting, key)
+        if row is None or row.value != value:
+            raise RuntimeError(
+                f"DB write verification failed for key '{key}': "
+                f"committed but read-back returned {'nothing' if row is None else repr(row.value)}"
+            )
+    logger.info("DB upsert verified: key='%s'", key)
+
 
 async def _persist_schedule() -> None:
-    try:
-        await _db_upsert("sync_schedule", json.dumps({
-            "interval_minutes": _schedule_minutes,
-            "auto_gravity": _auto_gravity,
-            **_sync_opts,
-        }))
-        logger.info("Sync schedule persisted to DB.")
-    except Exception as exc:
-        logger.warning("Could not persist sync schedule: %s", exc)
+    await _db_upsert("sync_schedule", json.dumps({
+        "interval_minutes": _schedule_minutes,
+        "auto_gravity": _auto_gravity,
+        **_sync_opts,
+    }))
+    logger.info("Sync schedule persisted and verified in DB.")
 
 
 async def _persist_sync_state(state: SyncState) -> None:
