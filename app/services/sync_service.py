@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.database import AsyncSessionLocal
@@ -119,12 +119,50 @@ async def load_schedule() -> None:
     """Load persisted schedule and last sync result from DB (called at startup)."""
     global _schedule_minutes, _auto_gravity, _sync_opts, _state
 
+    # ── Startup diagnostic: dump entire app_settings table via raw SQL ─────────
+    try:
+        async with AsyncSessionLocal() as db:
+            rows = (await db.execute(text("SELECT key, value FROM app_settings"))).all()
+        if rows:
+            logger.warning("STARTUP: app_settings table contains %d row(s): %s",
+                           len(rows), [r[0] for r in rows])
+        else:
+            logger.warning("STARTUP: app_settings table is EMPTY — no persisted settings found")
+    except Exception as exc:
+        logger.error("STARTUP: could not read app_settings table: %s — "
+                     "check that migration 0004 ran and DB is accessible", exc)
+        return
+
+    # ── Verify DB is writable by round-tripping a test key ────────────────────
+    try:
+        test_val = "startup_write_test"
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                text("INSERT INTO app_settings (key, value) VALUES (:k, :v) "
+                     "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"),
+                {"k": "_startup_test", "v": test_val},
+            )
+            await db.commit()
+        async with AsyncSessionLocal() as db:
+            result = (await db.execute(
+                text("SELECT value FROM app_settings WHERE key = '_startup_test'")
+            )).scalar_one_or_none()
+        if result != test_val:
+            logger.error("STARTUP: DB write/read-back test FAILED — wrote %r, read back %r. "
+                         "Settings will NOT persist.", test_val, result)
+            return
+        logger.warning("STARTUP: DB write/read-back test passed — database is writable")
+    except Exception as exc:
+        logger.error("STARTUP: DB write test raised exception: %s", exc)
+        return
+
+    # ── Load actual settings ───────────────────────────────────────────────────
     try:
         async with AsyncSessionLocal() as db:
             schedule_row = await db.get(AppSetting, "sync_schedule")
             result_row = await db.get(AppSetting, "sync_last_result")
     except Exception as exc:
-        logger.warning("Could not query app_settings on startup: %s", exc)
+        logger.error("STARTUP: failed to load settings from DB: %s", exc)
         return
 
     # Restore schedule
@@ -139,14 +177,14 @@ async def load_schedule() -> None:
                 "import_dhcp_leases": data.get("import_dhcp_leases", False),
                 "run_gravity": data.get("run_gravity", True),
             }
-            logger.info(
-                "Loaded sync schedule from DB: interval=%d min, auto_gravity=%s",
+            logger.warning(
+                "STARTUP: loaded sync schedule from DB — interval=%d min, auto_gravity=%s",
                 _schedule_minutes, _auto_gravity,
             )
         except Exception as exc:
-            logger.warning("Could not parse sync schedule: %s", exc)
+            logger.error("STARTUP: could not parse sync schedule JSON: %s", exc)
     else:
-        logger.info("No persisted sync schedule found in DB — using defaults.")
+        logger.warning("STARTUP: no sync_schedule row in DB — using defaults (interval=0, disabled)")
 
     # Restore last sync result
     if result_row and result_row.value:
