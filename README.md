@@ -8,8 +8,10 @@ A self-hosted dashboard that consolidates up to 10 locally running [Pi-hole](htt
 ---
 
 ## Screenshots
+<img width="3757" height="1955" alt="mypi main screen" src="https://github.com/user-attachments/assets/addbd88c-911d-4e91-8087-851c4236ef24" />
 
-> *(Add screenshots here once running)*
+<img width="3748" height="1960" alt="mypi settings screen" src="https://github.com/user-attachments/assets/09fce879-0cae-47cb-80ba-25bb5e776852" />
+
 
 ---
 
