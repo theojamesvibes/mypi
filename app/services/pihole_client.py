@@ -247,36 +247,41 @@ class PiholeClient:
             raise RuntimeError("PiholeClient must be used as an async context manager")
         await self._ensure_authed()
         url = f"{self.base_url}/api/action/gravity"
-        try:
-            # Use the streaming API so we can explicitly drain and close the response
-            # body before returning.  Pi-hole's gravity endpoint uses chunked transfer
-            # encoding; if we use a plain post() on a persistent connection and ignore
-            # the body, the unread bytes stay in the socket buffer and corrupt the next
-            # request's response (the leftover body gets prepended to the status line).
+
+        async def _post_and_drain() -> tuple[int, bytes]:
+            """POST to gravity, drain the full response body, return (status, body).
+
+            The body MUST be drained before this function returns, regardless of
+            status code or error.  Pi-hole's gravity endpoint uses chunked transfer
+            encoding on a persistent connection; any unread bytes left in the socket
+            corrupt the next request's response (they get prepended to the status
+            line of whatever comes next).
+            """
             async with self._client.stream("POST", url, headers=self._headers()) as resp:
-                if resp.status_code == 401:
-                    self._sid = None
-                    ok = await self._authenticate()
-                    if not ok:
-                        raise ConnectionError(f"Re-authentication failed for {self.base_url}")
-                    # Drain current stream before retrying
-                    async for _ in resp.aiter_bytes():
-                        pass
-                    async with self._client.stream("POST", url, headers=self._headers()) as resp2:
-                        resp2.raise_for_status()
-                        async for _ in resp2.aiter_bytes():
-                            pass
-                    return
-                resp.raise_for_status()
-                # Drain the response body (streaming gravity log or JSON completion
-                # message) so the connection is left in a clean state for reuse.
-                async for _ in resp.aiter_bytes():
-                    pass
-        except httpx.RemoteProtocolError as exc:
-            if "incomplete chunked read" in str(exc).lower():
-                logger.info("Gravity on %s: connection reset (FTL restarted — normal).", self.base_url)
-            else:
-                raise
+                chunks: list[bytes] = []
+                try:
+                    async for chunk in resp.aiter_bytes():
+                        chunks.append(chunk)
+                except httpx.RemoteProtocolError as exc:
+                    if "incomplete chunked read" in str(exc).lower():
+                        # FTL restarted mid-stream — the operation succeeded.
+                        logger.info("Gravity on %s: connection reset (FTL restarted — normal).", self.base_url)
+                        return resp.status_code, b"".join(chunks)
+                    raise
+                return resp.status_code, b"".join(chunks)
+
+        status, body = await _post_and_drain()
+
+        if status == 401:
+            self._sid = None
+            ok = await self._authenticate()
+            if not ok:
+                raise ConnectionError(f"Re-authentication failed for {self.base_url}")
+            status, body = await _post_and_drain()
+
+        if status >= 400:
+            snippet = body.decode(errors="replace")[:200]
+            raise RuntimeError(f"Gravity request to {self.base_url} failed with HTTP {status}: {snippet}")
 
     async def get_summary(self) -> PiholeSummary:
         data = await self._get("/api/stats/summary")

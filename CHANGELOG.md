@@ -4,6 +4,13 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.0.11] - 2026-04-08
+
+### Fixed
+- Gravity response body still leaked into the next request when gravity returned an HTTP error (e.g. Pi-hole `"Gravity failed"`). The 1.0.10 fix drained the body *after* `raise_for_status()`, but `raise_for_status()` throws before the drain runs, and httpx's `aclose()` does not guarantee a full drain of chunked responses in the error path. Rewrote `run_gravity()` to always drain the complete response body *before* any status check or exception — the body is now collected unconditionally inside a helper, and the status/error check happens only after the socket is clean.
+
+---
+
 ## [1.0.10] - 2026-04-08
 
 ### Fixed
