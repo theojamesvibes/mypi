@@ -4,6 +4,13 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.0.10] - 2026-04-08
+
+### Fixed
+- Automated sync raised `illegal status line` when exporting the teleporter from master immediately after running gravity. Pi-hole's gravity endpoint uses chunked transfer encoding; the previous `client.post()` call left the response body unread in the TCP socket buffer on the shared persistent connection. When `get_teleporter()` sent the next request on the same connection, httpx read the leftover gravity body bytes as the start of the teleporter response status line, producing a mangled bytearray. Fixed by switching `run_gravity()` to httpx's streaming API (`client.stream()`) and explicitly draining the response body before returning, leaving the connection in a clean state.
+
+---
+
 ## [1.0.9] - 2026-04-08
 
 ### Fixed

@@ -248,14 +248,30 @@ class PiholeClient:
         await self._ensure_authed()
         url = f"{self.base_url}/api/action/gravity"
         try:
-            resp = await self._client.post(url, headers=self._headers())
-            if resp.status_code == 401:
-                self._sid = None
-                ok = await self._authenticate()
-                if ok:
-                    resp = await self._client.post(url, headers=self._headers())
-            resp.raise_for_status()
-            # Response body is a plaintext gravity log, not JSON — intentionally ignored
+            # Use the streaming API so we can explicitly drain and close the response
+            # body before returning.  Pi-hole's gravity endpoint uses chunked transfer
+            # encoding; if we use a plain post() on a persistent connection and ignore
+            # the body, the unread bytes stay in the socket buffer and corrupt the next
+            # request's response (the leftover body gets prepended to the status line).
+            async with self._client.stream("POST", url, headers=self._headers()) as resp:
+                if resp.status_code == 401:
+                    self._sid = None
+                    ok = await self._authenticate()
+                    if not ok:
+                        raise ConnectionError(f"Re-authentication failed for {self.base_url}")
+                    # Drain current stream before retrying
+                    async for _ in resp.aiter_bytes():
+                        pass
+                    async with self._client.stream("POST", url, headers=self._headers()) as resp2:
+                        resp2.raise_for_status()
+                        async for _ in resp2.aiter_bytes():
+                            pass
+                    return
+                resp.raise_for_status()
+                # Drain the response body (streaming gravity log or JSON completion
+                # message) so the connection is left in a clean state for reuse.
+                async for _ in resp.aiter_bytes():
+                    pass
         except httpx.RemoteProtocolError as exc:
             if "incomplete chunked read" in str(exc).lower():
                 logger.info("Gravity on %s: connection reset (FTL restarted — normal).", self.base_url)
