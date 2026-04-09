@@ -4,6 +4,16 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.0.9] - 2026-04-08
+
+### Fixed
+- Pi-hole session exhaustion: the sync service was creating throwaway `PiholeClient` instances for each operation (up to `2 + 2N` new sessions per sync run for N replicas), and never called `DELETE /api/auth` to release them server-side. Sessions accumulated on Pi-hole until its own TTL expired them, eventually hitting `webserver.api.max_sessions`.
+
+### Changed
+- Extracted Pi-hole client lifecycle management into a new `app/services/client_manager.py` module. Both the collector (polling) and the sync service now share a single persistent, authenticated client per instance. No new Pi-hole sessions are created during a sync — the existing polling session is reused. On a 401 (e.g. after FTL restarts following a teleporter import) the client re-authenticates automatically via the existing retry logic.
+
+---
+
 ## [1.0.8] - 2026-04-08
 
 ### Fixed

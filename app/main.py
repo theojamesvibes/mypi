@@ -21,7 +21,7 @@ from app.auth import get_current_user, get_current_user_optional, hash_password
 from app.config import SESSION_COOKIE_MAX_AGE, SESSION_COOKIE_NAME, settings
 from app.database import AsyncSessionLocal, get_db
 from app.models.user import User
-from app.services.collector import cleanup_old_data, close_all_clients, poll_queries, poll_stats
+from app.services.collector import cleanup_old_data, poll_queries, poll_stats, shutdown as collector_shutdown
 from app.services.config_loader import sync_instances
 from app.services import pushover as pushover_service
 from app.services import sync_service
@@ -61,7 +61,7 @@ async def lifespan(app: FastAPI):
                 settings.stats_poll_interval, settings.queries_poll_interval)
     yield
     scheduler.shutdown(wait=False)
-    await close_all_clients()
+    await collector_shutdown()
 
 
 app = FastAPI(

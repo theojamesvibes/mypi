@@ -12,12 +12,9 @@ from app.database import AsyncSessionLocal
 from app.models.pihole import PiholeInstance, QueryLog, StatsSnapshot
 from app.services import pushover as pushover_service
 from app.services import sync_service
-from app.services.pihole_client import PiholeClient
+from app.services.client_manager import close_client, close_all_clients, get_client, save_sid
 
 logger = logging.getLogger(__name__)
-
-# Persistent clients — one per instance, authenticated once and reused.
-_clients: dict[str, PiholeClient] = {}
 
 # Most recent query timestamp seen per instance (Unix float).
 # Used to fetch only queries newer than what we already have.
@@ -33,43 +30,11 @@ async def _get_active_instances() -> list[PiholeInstance]:
         return list(result.scalars().all())
 
 
-async def _get_client(instance: PiholeInstance) -> PiholeClient:
-    """Return a persistent, open PiholeClient for this instance.
-    Restores a previously saved SID from the database to avoid re-authenticating."""
-    key = str(instance.id)
-    if key not in _clients:
-        client = PiholeClient(instance.url, instance.api_password)
-        await client.open()
-        # Restore persisted SID so we don't need to re-authenticate.
-        if instance.session_sid:
-            client.sid = instance.session_sid
-            logger.info("Restored session SID for %s — skipping auth", instance.name)
-        else:
-            logger.info("Opened new client for %s", instance.name)
-        _clients[key] = client
-    return _clients[key]
-
-
-async def _save_sid(instance_id: object, sid: str | None) -> None:
-    """Persist the session SID so it survives container restarts."""
-    async with AsyncSessionLocal() as db:
-        inst = await db.get(PiholeInstance, instance_id)
-        if inst and inst.session_sid != sid:
-            inst.session_sid = sid
-            await db.commit()
-
-
-async def _close_client(instance_key: str) -> None:
-    client = _clients.pop(instance_key, None)
-    if client:
-        await client.close()
-
-
 async def _poll_stats_for(instance: PiholeInstance) -> None:
     try:
-        client = await _get_client(instance)
+        client = await get_client(instance)
         summary = await client.get_summary()
-        await _save_sid(instance.id, client.sid)
+        await save_sid(instance.id, client.sid)
         snapshot = StatsSnapshot(
             instance_id=instance.id,
             collected_at=datetime.now(timezone.utc),
@@ -127,10 +92,10 @@ async def _poll_queries_for(instance: PiholeInstance) -> None:
     from_ts = _last_seen_ts.get(instance_key)
     logger.info("Polling queries for %s (from_ts=%s)", instance.name, from_ts)
     try:
-        client = await _get_client(instance)
+        client = await get_client(instance)
         queries = await client.get_queries(from_ts=from_ts, length=500)
 
-        await _save_sid(instance.id, client.sid)
+        await save_sid(instance.id, client.sid)
         logger.info("Got %d queries from %s", len(queries), instance.name)
 
         if not queries:
@@ -184,9 +149,9 @@ async def poll_queries() -> None:
     for key in list(_last_seen_ts):
         if key not in active_keys:
             del _last_seen_ts[key]
-    for key in list(_clients):
+    for key in list(_last_seen_ts):
         if key not in active_keys:
-            await _close_client(key)
+            await close_client(key)
 
     await asyncio.gather(*[_poll_queries_for(inst) for inst in instances])
 
@@ -209,8 +174,7 @@ async def cleanup_old_data() -> None:
         )
 
 
-async def close_all_clients() -> None:
+async def shutdown() -> None:
     """Call on shutdown to cleanly close all persistent HTTP clients."""
-    for key in list(_clients):
-        await _close_client(key)
+    await close_all_clients()
     _last_seen_ts.clear()
