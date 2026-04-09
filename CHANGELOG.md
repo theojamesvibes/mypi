@@ -4,27 +4,14 @@ All notable changes to MyPi are documented here.
 
 ---
 
-## [1.0.11] - 2026-04-08
+## [1.0.12] - 2026-04-08
 
 ### Fixed
-- Gravity response body still leaked into the next request when gravity returned an HTTP error (e.g. Pi-hole `"Gravity failed"`). The 1.0.10 fix drained the body *after* `raise_for_status()`, but `raise_for_status()` throws before the drain runs, and httpx's `aclose()` does not guarantee a full drain of chunked responses in the error path. Rewrote `run_gravity()` to always drain the complete response body *before* any status check or exception — the body is now collected unconditionally inside a helper, and the status/error check happens only after the socket is clean.
-
----
-
-## [1.0.10] - 2026-04-08
-
-### Fixed
-- Automated sync raised `illegal status line` when exporting the teleporter from master immediately after running gravity. Pi-hole's gravity endpoint uses chunked transfer encoding; the previous `client.post()` call left the response body unread in the TCP socket buffer on the shared persistent connection. When `get_teleporter()` sent the next request on the same connection, httpx read the leftover gravity body bytes as the start of the teleporter response status line, producing a mangled bytearray. Fixed by switching `run_gravity()` to httpx's streaming API (`client.stream()`) and explicitly draining the response body before returning, leaving the connection in a clean state.
-
----
-
-## [1.0.9] - 2026-04-08
-
-### Fixed
-- Pi-hole session exhaustion: the sync service was creating throwaway `PiholeClient` instances for each operation (up to `2 + 2N` new sessions per sync run for N replicas), and never called `DELETE /api/auth` to release them server-side. Sessions accumulated on Pi-hole until its own TTL expired them, eventually hitting `webserver.api.max_sessions`.
+- **Sync teleporter export fails with `illegal status line`** — Pi-hole's gravity endpoint has inconsistent HTTP framing that leaves response body bytes in the TCP socket regardless of whether the response is drained at the application level. When `get_teleporter()` reused the same persistent connection, httpx read the leftover gravity body as the beginning of the teleporter response status line, producing a mangled bytearray. Fixed by resetting the httpx connection pool in a `finally` block at the end of `run_gravity()` so the next request always starts on a fresh socket. The authenticated SID is preserved so no re-authentication is required.
+- **Pi-hole session exhaustion** — the sync service was creating throwaway `PiholeClient` instances for every operation (up to `2 + 2N` new sessions per sync run for N replicas) and never released them server-side, causing sessions to accumulate until hitting `webserver.api.max_sessions`.
 
 ### Changed
-- Extracted Pi-hole client lifecycle management into a new `app/services/client_manager.py` module. Both the collector (polling) and the sync service now share a single persistent, authenticated client per instance. No new Pi-hole sessions are created during a sync — the existing polling session is reused. On a 401 (e.g. after FTL restarts following a teleporter import) the client re-authenticates automatically via the existing retry logic.
+- Extracted Pi-hole client lifecycle into a new `app/services/client_manager.py` module. Both the collector (polling) and the sync service now share one persistent authenticated client per instance. No new Pi-hole sessions are created during a sync — the existing polling session is reused, with automatic re-authentication on 401.
 
 ---
 
