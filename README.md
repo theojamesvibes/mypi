@@ -335,6 +335,7 @@ mypi/
     │   └── sync.py
     ├── services/
     │   ├── pihole_client.py  # Pi-hole v6 REST API client (teleporter support)
+    │   ├── client_manager.py # Shared persistent client registry (one session per instance)
     │   ├── collector.py      # APScheduler background jobs + offline alerts
     │   ├── config_loader.py  # YAML → DB sync
     │   ├── pushover.py       # Pushover notification service

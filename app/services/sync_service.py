@@ -15,7 +15,7 @@ from app.database import AsyncSessionLocal
 from app.models.pihole import PiholeInstance
 from app.models.settings import AppSetting
 from app.services import pushover as pushover_service
-from app.services.pihole_client import PiholeClient
+from app.services.client_manager import get_client, save_sid
 
 logger = logging.getLogger(__name__)
 
@@ -313,20 +313,23 @@ async def run_sync(
                 import_config, import_gravity, import_dhcp_leases, run_gravity,
             )
 
-            # Teleporter import can be slow on low-powered Pi hardware
-            SYNC_TIMEOUT = 300.0  # 5 minutes
-
-            # Step 1: Run gravity on master to get fresh blocklists before export
+            # Step 1: Run gravity on master to get fresh blocklists before export.
+            # Uses the shared persistent client — no new session created.
             try:
-                async with PiholeClient(master.url, master.api_password, timeout=SYNC_TIMEOUT) as client:
-                    await client.run_gravity()
+                master_client = await get_client(master)
+                await master_client.run_gravity()
+                await save_sid(master.id, master_client.sid)
                 logger.info("Gravity update completed on master %s before export", master.name)
             except Exception as exc:
                 logger.warning("Gravity on master failed (non-fatal, continuing with export): %s", exc)
 
-            # Step 2: Export teleporter zip from master (contains fresh gravity DB)
-            async with PiholeClient(master.url, master.api_password, timeout=SYNC_TIMEOUT) as client:
-                zip_data = await client.get_teleporter()
+            # Step 2: Export teleporter zip from master (contains fresh gravity DB).
+            try:
+                master_client = await get_client(master)
+                zip_data = await master_client.get_teleporter()
+                await save_sid(master.id, master_client.sid)
+            except Exception as exc:
+                raise RuntimeError(f"Failed to export teleporter from master {master.name}: {exc}") from exc
             logger.info("Exported teleporter from master %s (%d bytes)", master.name, len(zip_data))
 
             # Step 3: Push to each replica concurrently, then run gravity on each.
@@ -336,22 +339,26 @@ async def run_sync(
             # stale and diverge from the master.
             async def _sync_replica(replica: PiholeInstance) -> InstanceSyncResult:
                 try:
-                    async with PiholeClient(replica.url, replica.api_password, timeout=SYNC_TIMEOUT) as client:
-                        await client.post_teleporter(
-                            zip_data,
-                            import_config=import_config,
-                            import_gravity=import_gravity,
-                            import_dhcp_leases=import_dhcp_leases,
-                        )
+                    replica_client = await get_client(replica)
+                    await replica_client.post_teleporter(
+                        zip_data,
+                        import_config=import_config,
+                        import_gravity=import_gravity,
+                        import_dhcp_leases=import_dhcp_leases,
+                    )
+                    await save_sid(replica.id, replica_client.sid)
                     logger.info("Teleporter import to %s succeeded", replica.name)
 
                     if import_gravity:
                         # FTL restarts after the teleporter import; give it a moment
-                        # before connecting again to run gravity.
+                        # before reconnecting to run gravity.  The SID will have been
+                        # invalidated by the restart so the client will re-authenticate
+                        # automatically on the next request.
                         await asyncio.sleep(5)
                         try:
-                            async with PiholeClient(replica.url, replica.api_password, timeout=SYNC_TIMEOUT) as client:
-                                await client.run_gravity()
+                            replica_client = await get_client(replica)
+                            await replica_client.run_gravity()
+                            await save_sid(replica.id, replica_client.sid)
                             logger.info("Gravity update completed on replica %s", replica.name)
                         except Exception as g_exc:
                             # Gravity failure is non-fatal: adlists are synced; the
