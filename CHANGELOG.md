@@ -4,6 +4,18 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.0.13] - 2026-04-10
+
+### Fixed
+- **Dashboard stat cards did not update when switching time ranges** — the summary API endpoint always returned snapshot-based counters (Pi-hole's "today" totals), ignoring the selected time range. The endpoint now computes total queries, blocked, percent blocked, forwarded, cached, and unique clients directly from the `query_log` table filtered by the selected window, consistent with how the history and top-domains charts already work. Blocklist size remains snapshot-derived (it is time-independent).
+
+### Changed
+- "Total Queries Today" stat card label shortened to "Total Queries" since the value now reflects whichever time range is selected, not just today.
+- Added **Last 30 days** (720 h) option to the dashboard time-range selector.
+- Raised the `hours` upper bound from 168 to 720 on the `/api/stats/summary`, `/api/stats/history`, and `/api/stats/top` endpoints to support the 30-day range.
+
+---
+
 ## [1.0.12] - 2026-04-08
 
 ### Fixed

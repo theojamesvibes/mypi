@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import Integer, and_, case, func, select, text
+from sqlalchemy import Integer, and_, case, distinct, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
@@ -55,24 +55,51 @@ async def _latest_snapshots_by_instance(db: AsyncSession) -> dict[uuid.UUID, Sta
 
 @router.get("/summary", response_model=AggregatedSummary)
 async def get_summary(
+    hours: int = Query(default=24, ge=1, le=720),
     _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+
     result = await db.execute(select(PiholeInstance).where(PiholeInstance.is_active.is_(True)))
     instances = result.scalars().all()
     snapshots = await _latest_snapshots_by_instance(db)
 
-    per_instance = []
+    # Compute aggregate query counts from QueryLog for the selected time range.
+    agg_result = await db.execute(
+        select(
+            func.count(QueryLog.id).label("total"),
+            func.count(case((QueryLog.status.in_(list(BLOCKED_STATUSES)), QueryLog.id))).label("blocked"),
+            func.count(case((QueryLog.status.in_(["FORWARDED"]), QueryLog.id))).label("forwarded"),
+            func.count(case((QueryLog.status.in_(["CACHE", "CACHE_STALE"]), QueryLog.id))).label("cached"),
+            func.count(distinct(QueryLog.client_ip)).label("unique_clients"),
+        )
+        .where(QueryLog.timestamp >= since)
+    )
+    agg = agg_result.one()
+
+    # Blocklist size is time-independent — take from the most recent snapshot.
+    domains_on_blocklist = 0
+    for snap in snapshots.values():
+        if snap and snap.domains_on_blocklist:
+            domains_on_blocklist = snap.domains_on_blocklist
+            break
+
+    total = agg.total or 0
+    blocked = agg.blocked or 0
+    percent_blocked = round(blocked / total * 100, 1) if total > 0 else 0.0
+
     totals = SummaryStats(
-        dns_queries_today=0,
-        queries_blocked=0,
-        percent_blocked=0.0,
-        domains_on_blocklist=0,
-        unique_clients=0,
-        queries_cached=0,
-        queries_forwarded=0,
+        dns_queries_today=total,
+        queries_blocked=blocked,
+        percent_blocked=percent_blocked,
+        domains_on_blocklist=domains_on_blocklist,
+        unique_clients=agg.unique_clients or 0,
+        queries_cached=agg.cached or 0,
+        queries_forwarded=agg.forwarded or 0,
     )
 
+    per_instance = []
     for inst in instances:
         snap = snapshots.get(inst.id)
         per_instance.append({
@@ -89,25 +116,12 @@ async def get_summary(
             "queries_forwarded": snap.queries_forwarded if snap else 0,
         })
 
-        if snap and snap.status == "online":
-            totals.dns_queries_today += snap.dns_queries_today
-            totals.queries_blocked += snap.queries_blocked
-            # Blocklist count is the same across instances — take one representative value.
-            if totals.domains_on_blocklist == 0:
-                totals.domains_on_blocklist = snap.domains_on_blocklist
-            totals.unique_clients += snap.unique_clients
-            totals.queries_cached += snap.queries_cached
-            totals.queries_forwarded += snap.queries_forwarded
-
-    if totals.dns_queries_today > 0:
-        totals.percent_blocked = round(totals.queries_blocked / totals.dns_queries_today * 100, 1)
-
     return AggregatedSummary(totals=totals, instances=per_instance)
 
 
 @router.get("/history", response_model=HistoryResponse)
 async def get_history(
-    hours: int = Query(default=24, ge=1, le=168),
+    hours: int = Query(default=24, ge=1, le=720),
     instance_id: uuid.UUID | None = Query(default=None),
     _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -151,7 +165,7 @@ async def get_history(
 
 @router.get("/top", response_model=TopStatsResponse)
 async def get_top(
-    hours: int = Query(default=24, ge=1, le=168),
+    hours: int = Query(default=24, ge=1, le=720),
     instance_id: uuid.UUID | None = Query(default=None),
     limit: int = Query(default=10, ge=1, le=50),
     _: User = Depends(get_current_user),

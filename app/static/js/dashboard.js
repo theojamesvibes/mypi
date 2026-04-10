@@ -76,7 +76,7 @@ async function loadDashboard() {
 
   try {
     const [summary, instances, history, top] = await Promise.all([
-      apiFetch('/api/stats/summary'),
+      apiFetch(`/api/stats/summary?hours=${hours}`),
       apiFetch('/api/instances'),
       apiFetch(`/api/stats/history?hours=${hours}`),
       apiFetch(`/api/stats/top?hours=${hours}&limit=10`),
