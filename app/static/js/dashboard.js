@@ -771,7 +771,10 @@ function renderSyncBadge(status) {
       label = `✗ Sync failed ${timeStr}`;
       cls = 'bg-danger';
     } else {
-      label = `⚠ Synced ${ok}/${total} ${timeStr}`;
+      // Include master in the count — if per-replica results exist, the master
+      // export succeeded (a master failure produces a global error, not results).
+      const masterCount = data.master ? 1 : 0;
+      label = `⚠ Synced ${ok + masterCount}/${total + masterCount} ${timeStr}`;
       cls = 'bg-warning text-dark';
     }
   }
@@ -1040,6 +1043,59 @@ async function testPushover() {
     result.innerHTML = res.ok
       ? '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Test notification sent</span>'
       : '<span class="text-danger"><i class="bi bi-x-circle me-1"></i>Failed — check that notifications are enabled and credentials are saved</span>';
+  }
+}
+
+// ─── Session timeout settings ─────────────────────────────────────────────────
+
+async function loadSessionTimeout() {
+  const data = await apiFetch('/api/auth/session-timeout');
+  if (!data) return;
+  const sel = document.getElementById('session-timeout');
+  if (!sel) return;
+  // Select matching option, or nearest if custom value
+  const minutes = String(data.timeout_minutes);
+  const opt = [...sel.options].find(o => o.value === minutes);
+  if (opt) {
+    sel.value = minutes;
+  } else {
+    // Value not in list — add it as a temporary option so the UI reflects reality
+    const custom = document.createElement('option');
+    custom.value = minutes;
+    custom.textContent = `${data.timeout_minutes} minutes`;
+    sel.appendChild(custom);
+    sel.value = minutes;
+  }
+}
+
+async function saveSessionTimeout() {
+  const sel = document.getElementById('session-timeout');
+  const result = document.getElementById('session-timeout-result');
+  const btn = document.querySelector('[onclick="saveSessionTimeout()"]');
+  if (!sel) return;
+
+  const body = { timeout_minutes: parseInt(sel.value) };
+  const res = await fetch('/api/auth/session-timeout', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  if (res.status === 401) { window.location.href = '/login'; return; }
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    if (result) result.innerHTML = `<span class="text-danger"><i class="bi bi-x-circle me-1"></i>${escHtml(err.detail || res.statusText)}</span>`;
+    return;
+  }
+
+  const label = sel.options[sel.selectedIndex]?.text || `${sel.value} min`;
+  if (result) result.innerHTML = `<span class="text-success"><i class="bi bi-check-circle me-1"></i>Saved — takes effect on next login (${label})</span>`;
+  if (btn) {
+    const orig = btn.innerHTML;
+    btn.innerHTML = '<i class="bi bi-check me-1"></i>Saved';
+    btn.classList.replace('btn-outline-secondary', 'btn-success');
+    setTimeout(() => { btn.innerHTML = orig; btn.classList.replace('btn-success', 'btn-outline-secondary'); }, 2000);
   }
 }
 
