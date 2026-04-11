@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,7 +12,7 @@ from app.auth import (
     hash_password,
     verify_password,
 )
-from app.config import SESSION_COOKIE_MAX_AGE, SESSION_COOKIE_NAME
+from app.config import SESSION_COOKIE_NAME
 from app.database import get_db
 from app.models.user import ApiKey, User
 from app.schemas.auth import (
@@ -22,6 +23,7 @@ from app.schemas.auth import (
     TokenResponse,
     UserResponse,
 )
+from app.services import session_settings
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -33,13 +35,14 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
     if user is None or not verify_password(body.password, user.hashed_password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
-    token = create_access_token(user.username)
+    expire_minutes = session_settings.effective_minutes(session_settings.get_timeout_minutes())
+    token = create_access_token(user.username, expire_minutes=expire_minutes)
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=token,
         httponly=True,
         samesite="lax",
-        max_age=SESSION_COOKIE_MAX_AGE,
+        max_age=expire_minutes * 60,
     )
     return TokenResponse(access_token=token)
 
@@ -101,3 +104,28 @@ async def revoke_api_key(
     key.is_active = False
     await db.commit()
     return {"detail": "API key revoked"}
+
+
+# ── Session timeout ────────────────────────────────────────────────────────────
+
+class SessionTimeoutRequest(BaseModel):
+    timeout_minutes: int  # 0 = never
+
+
+@router.get("/session-timeout")
+async def get_session_timeout(_: User = Depends(get_current_user)) -> dict:
+    return {"timeout_minutes": session_settings.get_timeout_minutes()}
+
+
+@router.put("/session-timeout")
+async def set_session_timeout(
+    body: SessionTimeoutRequest,
+    _: User = Depends(get_current_user),
+) -> dict:
+    if body.timeout_minutes < 0:
+        raise HTTPException(status_code=422, detail="timeout_minutes must be >= 0 (0 = never)")
+    try:
+        await session_settings.save_settings(body.timeout_minutes)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to save session timeout: {exc}")
+    return {"timeout_minutes": session_settings.get_timeout_minutes()}

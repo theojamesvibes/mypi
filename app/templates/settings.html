@@ -250,6 +250,37 @@
       </div>
     </div>
 
+    <!-- Session Timeout -->
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header"><i class="bi bi-clock me-1"></i>Session Timeout</div>
+        <div class="card-body">
+          <p class="text-muted small mb-3">
+            How long the dashboard stays logged in after you sign in. Changes take effect on the next login.
+          </p>
+          <div class="row g-3 align-items-end">
+            <div class="col-md-4">
+              <label class="form-label form-label-sm mb-1">Timeout duration</label>
+              <select id="session-timeout" class="form-select form-select-sm">
+                <option value="15">15 minutes</option>
+                <option value="60">1 hour</option>
+                <option value="480">8 hours (default)</option>
+                <option value="1440">1 day</option>
+                <option value="10080">1 week</option>
+                <option value="0">Never</option>
+              </select>
+            </div>
+            <div class="col-auto">
+              <button class="btn btn-sm btn-outline-secondary" onclick="saveSessionTimeout()">
+                <i class="bi bi-save me-1"></i>Save
+              </button>
+            </div>
+          </div>
+          <div id="session-timeout-result" class="small mt-2"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- API info -->
     <div class="col-12">
       <div class="card">
@@ -277,5 +308,6 @@
   loadSyncStatus();
   loadSyncSchedule();
   loadPushoverSettings();
+  loadSessionTimeout();
 </script>
 {% endblock %}

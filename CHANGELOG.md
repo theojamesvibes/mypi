@@ -4,6 +4,17 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.0.14] - 2026-04-11
+
+### Fixed
+- **Sync status badge showed wrong total count on partial failure** — when 1 of 3 instances (master + 2 replicas) failed, the badge showed `1/2` instead of `2/3`. The master is now counted in both the numerator and denominator when per-replica results are present (a master failure produces a global error, not individual results).
+
+### Added
+- **Configurable dashboard session timeout** — new "Session Timeout" card in Settings with options: 15 minutes, 1 hour, 8 hours (default), 1 day, 1 week, Never. Setting is persisted to the `app_settings` table and applied to both the JWT expiry and cookie `max_age` on the next login. Implemented via `app/services/session_settings.py` following the same DB persistence pattern as sync and Pushover settings.
+- **Log MyPi version at startup** — INFO-level log line during lifespan startup makes the running version immediately visible in `docker logs mypi`.
+
+---
+
 ## [1.0.13] - 2026-04-10
 
 ### Fixed

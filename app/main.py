@@ -18,16 +18,20 @@ from app.api import queries as queries_router
 from app.api import stats as stats_router
 from app.api import sync as sync_router
 from app.auth import get_current_user, get_current_user_optional, hash_password
-from app.config import SESSION_COOKIE_MAX_AGE, SESSION_COOKIE_NAME, settings
+from app.config import SESSION_COOKIE_NAME, settings
 from app.database import AsyncSessionLocal, get_db
 from app.models.user import User
 from app.services.collector import cleanup_old_data, poll_queries, poll_stats, shutdown as collector_shutdown
 from app.services.config_loader import sync_instances
 from app.services import pushover as pushover_service
+from app.services import session_settings
 from app.services import sync_service
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
+
+_version_file = Path(__file__).parent.parent / "VERSION"
+APP_VERSION = _version_file.read_text().strip() if _version_file.exists() else "dev"
 
 scheduler = AsyncIOScheduler()
 
@@ -50,9 +54,11 @@ async def _bootstrap() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    logger.info("MyPi version %s starting up", APP_VERSION)
     await _bootstrap()
     await sync_service.load_schedule()
     await pushover_service.load_settings()
+    await session_settings.load_settings()
     scheduler.add_job(poll_stats, "interval", seconds=settings.stats_poll_interval, id="poll_stats")
     scheduler.add_job(poll_queries, "interval", seconds=settings.queries_poll_interval, id="poll_queries")
     scheduler.add_job(cleanup_old_data, "cron", hour=3, minute=0, id="cleanup")
@@ -73,9 +79,6 @@ app = FastAPI(
 
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
-
-_version_file = Path(__file__).parent.parent / "VERSION"
-APP_VERSION = _version_file.read_text().strip() if _version_file.exists() else "dev"
 templates.env.globals["app_version"] = APP_VERSION
 
 # API routers
@@ -109,9 +112,10 @@ async def login_form(request: Request, response: Response, db=Depends(get_db)):
             "login.html", {"request": request, "error": "Invalid username or password"}, status_code=401
         )
 
-    token = create_access_token(user.username)
+    expire_minutes = session_settings.effective_minutes(session_settings.get_timeout_minutes())
+    token = create_access_token(user.username, expire_minutes=expire_minutes)
     redirect = RedirectResponse(url="/", status_code=303)
-    redirect.set_cookie(SESSION_COOKIE_NAME, token, httponly=True, samesite="lax", max_age=SESSION_COOKIE_MAX_AGE)
+    redirect.set_cookie(SESSION_COOKIE_NAME, token, httponly=True, samesite="lax", max_age=expire_minutes * 60)
     return redirect
 
 
