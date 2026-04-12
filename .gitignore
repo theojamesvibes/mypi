@@ -1,5 +1,7 @@
 .env
 pihole_instances.yml
+CLAUDE.md
+.claude/
 __pycache__/
 *.py[cod]
 *.pyo
