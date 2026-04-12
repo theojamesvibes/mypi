@@ -4,6 +4,13 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.0.15] - 2026-04-11
+
+### Added
+- **Configurable offline alert repeat count** — new "Repeat alert while offline" select in the Pushover notification settings, grouped under the "Instance goes offline / comes back" toggle. Options: once (transition only, default — preserves previous behaviour), up to 2–10 times, or "Always (every check)". The counter resets automatically when the instance recovers. Stored in `pushover_settings` alongside the other notification preferences. Implemented via `_offline_alert_max_count` in `pushover.py` and a per-instance counter in `collector.py`.
+
+---
+
 ## [1.0.14] - 2026-04-11
 
 ### Fixed

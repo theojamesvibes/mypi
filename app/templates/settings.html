@@ -207,6 +207,23 @@
                 <input class="form-check-input" type="checkbox" id="po-alert-offline">
                 <label class="form-check-label small" for="po-alert-offline">Instance goes offline / comes back</label>
               </div>
+              <div class="ms-4 mb-2">
+                <label class="form-label form-label-sm mb-1 text-muted" style="font-size:0.72rem;">Repeat alert while offline</label>
+                <select id="po-offline-max-count" class="form-select form-select-sm" style="width:auto;min-width:13rem;">
+                  <option value="1">Once (on transition only)</option>
+                  <option value="2">Up to 2 times</option>
+                  <option value="3">Up to 3 times</option>
+                  <option value="4">Up to 4 times</option>
+                  <option value="5">Up to 5 times</option>
+                  <option value="6">Up to 6 times</option>
+                  <option value="7">Up to 7 times</option>
+                  <option value="8">Up to 8 times</option>
+                  <option value="9">Up to 9 times</option>
+                  <option value="10">Up to 10 times</option>
+                  <option value="0">Always (every check)</option>
+                </select>
+                <div class="form-text" style="font-size:0.68rem;">How many offline alerts to send while the instance stays down. Counts reset when it recovers.</div>
+              </div>
               <div class="form-check mb-1">
                 <input class="form-check-input" type="checkbox" id="po-alert-no-logs">
                 <label class="form-check-label small" for="po-alert-no-logs">

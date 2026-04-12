@@ -23,6 +23,10 @@ _last_seen_ts: dict[str, float] = {}
 # Previous poll status — used to detect online→offline transitions for alerts.
 _prev_status: dict[str, str] = {}
 
+# Number of offline alerts already sent per instance in the current outage period.
+# Resets to 0 when the instance recovers.  Used to enforce offline_alert_max_count.
+_offline_alert_count: dict[str, int] = {}
+
 
 async def _get_active_instances() -> list[PiholeInstance]:
     async with AsyncSessionLocal() as db:
@@ -63,18 +67,30 @@ async def _poll_stats_for(instance: PiholeInstance) -> None:
                 inst.last_seen_at = snapshot.collected_at
         await db.commit()
 
-    # Pushover alerts on status transitions
+    # Pushover alerts: transition-based + configurable repeat for sustained outages
     key = str(instance.id)
     prev = _prev_status.get(key)
-    if prev is not None and prev != snapshot.status:
+    if prev is None:
+        # First poll ever — establish baseline; no alert regardless of status.
         if snapshot.status == "offline":
-            asyncio.get_event_loop().create_task(
-                pushover_service.notify_instance_offline(instance.name)
-            )
-        elif snapshot.status == "online":
-            asyncio.get_event_loop().create_task(
-                pushover_service.notify_instance_back_online(instance.name)
-            )
+            _offline_alert_count[key] = 0
+    elif snapshot.status == "offline":
+        if prev != "offline":
+            # Transition online→offline: always alert, start the counter.
+            _offline_alert_count[key] = 1
+            asyncio.create_task(pushover_service.notify_instance_offline(instance.name))
+        else:
+            # Sustained offline: respect offline_alert_max_count.
+            # 0 = alert every poll; 1-10 = alert at most N times per outage.
+            max_count = pushover_service.get_offline_alert_max_count()
+            current = _offline_alert_count.get(key, 1)
+            if max_count == 0 or current < max_count:
+                _offline_alert_count[key] = current + 1
+                asyncio.create_task(pushover_service.notify_instance_offline(instance.name))
+    elif snapshot.status == "online" and prev == "offline":
+        # Recovery: always alert and reset the outage counter.
+        _offline_alert_count.pop(key, None)
+        asyncio.create_task(pushover_service.notify_instance_back_online(instance.name))
     _prev_status[key] = snapshot.status
 
     # Notify sync service if this is the master (enables auto-gravity detection)
@@ -178,3 +194,4 @@ async def shutdown() -> None:
     """Call on shutdown to cleanly close all persistent HTTP clients."""
     await close_all_clients()
     _last_seen_ts.clear()
+    _offline_alert_count.clear()

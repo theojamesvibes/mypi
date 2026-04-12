@@ -961,6 +961,7 @@ async function loadPushoverSettings() {
   set('po-alert-block-rate', data.alert_high_block_rate);
   set('po-no-logs-minutes', data.no_logs_minutes);
   set('po-block-rate-pct', data.block_rate_threshold_pct);
+  set('po-offline-max-count', data.offline_alert_max_count ?? 1);
 }
 
 async function savePushoverSettings() {
@@ -975,6 +976,7 @@ async function savePushoverSettings() {
     alert_high_block_rate: get('po-alert-block-rate')?.checked ?? false,
     no_logs_minutes: parseInt(get('po-no-logs-minutes')?.value || '30'),
     block_rate_threshold_pct: parseFloat(get('po-block-rate-pct')?.value || '50'),
+    offline_alert_max_count: parseInt(get('po-offline-max-count')?.value || '1'),
   };
 
   const res = await fetch('/api/notifications/settings', {
