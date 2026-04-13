@@ -8,33 +8,6 @@
 
   <div class="row g-3">
 
-    <!-- API Keys -->
-    <div class="col-md-6">
-      <div class="card">
-        <div class="card-header"><i class="bi bi-key me-1"></i>API Keys (for iOS app)</div>
-        <div class="card-body">
-          <p class="text-muted small">API keys let the iOS app authenticate without a password.
-             The key is shown only once — copy it immediately.</p>
-          <form id="create-key-form" onsubmit="createApiKey(event)">
-            <div class="input-group input-group-sm mb-2">
-              <input type="text" id="key-name" class="form-control" placeholder="Key name (e.g. iPhone)">
-              <button class="btn btn-success" type="submit">
-                <i class="bi bi-plus-lg"></i> Create
-              </button>
-            </div>
-          </form>
-          <div id="new-key-alert" class="alert alert-success d-none py-2 small">
-            <strong>New API key (copy now — shown only once):</strong><br>
-            <code id="new-key-value" class="user-select-all"></code>
-          </div>
-          <table class="table table-sm table-hover mb-0">
-            <thead class="table-light"><tr><th>Name</th><th>Created</th><th>Last used</th><th></th></tr></thead>
-            <tbody id="api-keys-tbody"></tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-
     <!-- Instance info -->
     <div class="col-12">
       <div class="card">
@@ -47,7 +20,9 @@
             <thead class="table-light">
               <tr>
                 <th class="ps-3">Name</th>
+                <th>URL</th>
                 <th>Status</th>
+                <th>Last seen</th>
                 <th>Pi-hole</th>
                 <th>FTL</th>
                 <th>Web</th>
@@ -312,9 +287,35 @@
       </div>
     </div>
 
-    <!-- API info -->
-    <div class="col-12">
-      <div class="card">
+    <!-- API Keys + REST API -->
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-header"><i class="bi bi-key me-1"></i>API Keys (for iOS app)</div>
+        <div class="card-body">
+          <p class="text-muted small">API keys let the iOS app authenticate without a password.
+             The key is shown only once — copy it immediately.</p>
+          <form id="create-key-form" onsubmit="createApiKey(event)">
+            <div class="input-group input-group-sm mb-2">
+              <input type="text" id="key-name" class="form-control" placeholder="Key name (e.g. iPhone)">
+              <button class="btn btn-success" type="submit">
+                <i class="bi bi-plus-lg"></i> Create
+              </button>
+            </div>
+          </form>
+          <div id="new-key-alert" class="alert alert-success d-none py-2 small">
+            <strong>New API key (copy now — shown only once):</strong><br>
+            <code id="new-key-value" class="user-select-all"></code>
+          </div>
+          <table class="table table-sm table-hover mb-0">
+            <thead class="table-light"><tr><th>Name</th><th>Created</th><th>Last used</th><th></th></tr></thead>
+            <tbody id="api-keys-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-md-6">
+      <div class="card h-100">
         <div class="card-header"><i class="bi bi-code-slash me-1"></i>REST API</div>
         <div class="card-body">
           <p class="mb-1 small">The MyPi API is available at <code>/api/</code>.
