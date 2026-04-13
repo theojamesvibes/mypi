@@ -167,33 +167,45 @@
       <div class="card">
         <div class="card-header d-flex align-items-center justify-content-between">
           <span><i class="bi bi-arrow-up-circle me-1"></i>Version Check</span>
-          <span id="vc-badge" class="badge bg-secondary">unknown</span>
+          <div class="d-flex gap-1">
+            <span id="vc-badge" class="badge bg-secondary">MyPi unknown</span>
+            <span id="vc-pihole-badge" class="badge bg-secondary">Pi-hole unknown</span>
+          </div>
         </div>
         <div class="card-body">
           <p class="text-muted small mb-3">
-            Checks the <a href="https://github.com/theojamesvibes/mypi" target="_blank">MyPi GitHub repository</a>
-            for a new release once per hour. The version badge in the top bar turns
+            Checks GitHub for new releases once per hour. The MyPi version badge in the top bar turns
             <span class="text-success fw-semibold">green</span> (up to date) or
             <span class="text-danger fw-semibold">red</span> (update available).
+            Pi-hole version pills in the Instances table update the same way.
           </p>
-          <div class="row g-3 align-items-center">
-            <div class="col-auto">
-              <div class="form-check border rounded px-3 py-2" style="background:#f8f9fa;">
-                <input class="form-check-input" type="checkbox" id="vc-enabled">
-                <label class="form-check-label fw-semibold small" for="vc-enabled">Enable version checking</label>
-              </div>
+
+          <!-- MyPi row -->
+          <div class="d-flex align-items-center gap-3 mb-2">
+            <div class="form-check border rounded px-3 py-2 flex-shrink-0" style="background:#f8f9fa;min-width:11rem;">
+              <input class="form-check-input" type="checkbox" id="vc-enabled" onchange="updateCheckNowState()">
+              <label class="form-check-label fw-semibold small" for="vc-enabled">MyPi updates</label>
             </div>
-            <div class="col">
-              <div id="vc-status" class="small text-muted"></div>
+            <div id="vc-status" class="small text-muted"></div>
+          </div>
+
+          <!-- Pi-hole row -->
+          <div class="d-flex align-items-center gap-3 mb-3">
+            <div class="form-check border rounded px-3 py-2 flex-shrink-0" style="background:#f8f9fa;min-width:11rem;">
+              <input class="form-check-input" type="checkbox" id="vc-pihole-enabled" onchange="updateCheckNowState()">
+              <label class="form-check-label fw-semibold small" for="vc-pihole-enabled">Pi-hole updates</label>
             </div>
-            <div class="col-auto d-flex gap-2">
-              <button class="btn btn-sm btn-outline-secondary" onclick="checkVersionNow()">
-                <i class="bi bi-arrow-clockwise me-1"></i>Check now
-              </button>
-              <button class="btn btn-sm btn-outline-primary" onclick="saveVersionCheckSettings()">
-                <i class="bi bi-save me-1"></i>Save
-              </button>
-            </div>
+            <div id="vc-pihole-status" class="small text-muted"></div>
+          </div>
+
+          <!-- Actions -->
+          <div class="d-flex gap-2">
+            <button id="vc-check-btn" class="btn btn-sm btn-outline-secondary" onclick="checkVersionNow()">
+              <i class="bi bi-arrow-clockwise me-1"></i>Check now
+            </button>
+            <button id="vc-save-btn" class="btn btn-sm btn-outline-primary" onclick="saveVersionCheckSettings()">
+              <i class="bi bi-save me-1"></i>Save
+            </button>
           </div>
         </div>
       </div>

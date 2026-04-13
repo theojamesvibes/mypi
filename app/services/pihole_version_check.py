@@ -22,7 +22,8 @@ _REPOS = {
     "web":  "pi-hole/web",
 }
 
-# In-memory cache of latest known versions
+# In-memory state
+_enabled: bool = True
 _latest: dict[str, str] = {}
 _checked_at: datetime | None = None
 _check_in_progress: bool = False
@@ -31,6 +32,16 @@ _check_in_progress: bool = False
 def get_latest_versions() -> dict[str, str]:
     """Return the cached latest versions (empty strings when unknown)."""
     return dict(_latest)
+
+
+def get_status() -> dict:
+    return {
+        "enabled": _enabled,
+        "latest_core": _latest.get("core", ""),
+        "latest_ftl":  _latest.get("ftl", ""),
+        "latest_web":  _latest.get("web", ""),
+        "checked_at": _checked_at.isoformat() if _checked_at else None,
+    }
 
 
 def compute_update_available(installed: str | None, component: str) -> bool | None:
@@ -48,20 +59,22 @@ def compute_update_available(installed: str | None, component: str) -> bool | No
 
 
 async def load_settings() -> None:
-    """Restore cached latest versions from the database on startup."""
-    global _latest, _checked_at
+    """Restore enabled flag and cached latest versions from the database on startup."""
+    global _enabled, _latest, _checked_at
     try:
         async with AsyncSessionLocal() as db:
             row = await db.get(AppSetting, _SETTINGS_KEY)
         if not row or not row.value:
             return
         data = json.loads(row.value)
+        _enabled = data.get("enabled", True)
         _latest = {k: data.get(k, "") for k in ("core", "ftl", "web")}
         checked_at_str = data.get("checked_at")
         if checked_at_str:
             _checked_at = datetime.fromisoformat(checked_at_str)
         logger.info(
-            "Loaded Pi-hole version cache (core=%s, ftl=%s, web=%s)",
+            "Loaded Pi-hole version cache (enabled=%s, core=%s, ftl=%s, web=%s)",
+            _enabled,
             _latest.get("core") or "unknown",
             _latest.get("ftl") or "unknown",
             _latest.get("web") or "unknown",
@@ -70,8 +83,16 @@ async def load_settings() -> None:
         logger.warning("Could not load Pi-hole version cache: %s", exc)
 
 
+async def save_settings(enabled: bool) -> None:
+    global _enabled
+    _enabled = enabled
+    await _persist()
+    logger.info("Pi-hole version check setting saved (enabled=%s)", enabled)
+
+
 async def _persist() -> None:
     payload = json.dumps({
+        "enabled": _enabled,
         "core": _latest.get("core", ""),
         "ftl":  _latest.get("ftl", ""),
         "web":  _latest.get("web", ""),
@@ -90,6 +111,8 @@ async def _persist() -> None:
 async def check_now() -> None:
     """Fetch the latest Pi-hole release versions from GitHub and update all instances."""
     global _latest, _checked_at, _check_in_progress
+    if not _enabled:
+        return
     if _check_in_progress:
         return
     _check_in_progress = True
