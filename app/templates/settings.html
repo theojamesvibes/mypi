@@ -197,6 +197,22 @@
                 <label class="form-check-label small" for="po-alert-offline">Instance goes offline / comes back</label>
               </div>
               <div class="ms-4 mb-2">
+                <label class="form-label form-label-sm mb-1 text-muted" style="font-size:0.72rem;">Retries before alert</label>
+                <select id="po-offline-retries" class="form-select form-select-sm" style="width:auto;min-width:13rem;">
+                  <option value="1">1 (60 s)</option>
+                  <option value="2">2 (2 min)</option>
+                  <option value="3">3 (3 min)</option>
+                  <option value="4">4 (4 min)</option>
+                  <option value="5">5 (5 min)</option>
+                  <option value="6">6 (6 min)</option>
+                  <option value="7">7 (7 min)</option>
+                  <option value="8">8 (8 min)</option>
+                  <option value="9">9 (9 min)</option>
+                  <option value="10">10 (10 min)</option>
+                </select>
+                <div class="form-text" style="font-size:0.68rem;">Retries every 60 s before the first alert fires.</div>
+              </div>
+              <div class="ms-4 mb-2">
                 <label class="form-label form-label-sm mb-1 text-muted" style="font-size:0.72rem;">Repeat alert while offline</label>
                 <select id="po-offline-max-count" class="form-select form-select-sm" style="width:auto;min-width:13rem;">
                   <option value="1">Once (on transition only)</option>
