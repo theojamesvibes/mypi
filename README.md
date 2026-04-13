@@ -1,6 +1,6 @@
 # MyPi
 [![build](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/docker-publish.yml?style=flat-square)](https://github.com/theojamesvibes/mypi/actions)
-[![version](https://img.shields.io/badge/version-1.0.15-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
+[![version](https://img.shields.io/badge/version-1.0.16-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
 [![platform](https://img.shields.io/badge/platform-linux%2Famd64%20|%20linux%2Farm64-teal?style=flat-square)](https://github.com/theojamesvibes/mypi/pkgs/container/mypi)
 
 > **⚠️ Vibe Code Disclosure**
@@ -54,6 +54,7 @@ A self-hosted dashboard that consolidates up to 10 locally running [Pi-hole](htt
 - API key management (create / revoke) for iOS app authentication
 - Instance list showing all active Pi-hole instances with online/offline badge and master indicator
 - **Orphaned instance cleanup** — when an instance is renamed or removed from `pihole_instances.yml`, the old record is detected and shown with an option to permanently remove it along with all associated stats and query log data, individually or in bulk
+- **Software versions table** — shows installed Pi-hole (core), FTL, and web interface versions for every active instance; versions are color-coded green (up to date) or red (update available), with the latest available version shown inline
 - Sync panel: import options, schedule configuration, live sync result with per-replica status
 - Pushover panel: credentials, master enable toggle, per-alert toggles, thresholds
 
@@ -272,6 +273,7 @@ GET     /api/queries                     # Paginated, filterable, sortable query
 # Instances
 GET     /api/instances                   # Active instance list with latest stats + status
 GET     /api/instances/stale             # Orphaned instances (removed from YAML, not yet deleted)
+GET     /api/instances/versions          # Installed + latest-available versions per instance (core/FTL/web)
 DELETE  /api/instances/{id}              # Permanently delete an orphaned instance and its data
 
 # Sync
@@ -359,6 +361,7 @@ MyPi targets **Pi-hole v6** which introduced a new REST API. It uses the followi
 - `GET /api/stats/top_domains` — top domains
 - `GET /api/stats/top_clients` — top clients
 - `GET /api/queries` — paginated query log
+- `GET /api/info/version` — installed + latest-available version info (core / FTL / web)
 - `GET /api/teleporter` — export configuration ZIP (sync)
 - `POST /api/teleporter` — import configuration ZIP (sync)
 - `POST /api/action/gravity` — trigger gravity update (sync)

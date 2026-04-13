@@ -46,6 +46,20 @@ class PiholeTopStats:
     top_clients: list[dict[str, Any]] = field(default_factory=list)
 
 
+@dataclass
+class ComponentVersion:
+    current: str = ""
+    latest: str = ""
+    update_available: bool | None = None
+
+
+@dataclass
+class PiholeVersionInfo:
+    core: ComponentVersion = field(default_factory=ComponentVersion)
+    ftl: ComponentVersion = field(default_factory=ComponentVersion)
+    web: ComponentVersion = field(default_factory=ComponentVersion)
+
+
 AUTH_BACKOFF_SECONDS = 300  # don't retry auth for 5 minutes after a 429
 
 
@@ -272,6 +286,34 @@ class PiholeClient:
             # preserved on self._sid so no re-authentication is needed.
             await self._client.aclose()
             self._client = httpx.AsyncClient(timeout=self.timeout, verify=False)
+
+    async def get_version_info(self) -> PiholeVersionInfo:
+        """Fetch installed and latest-available versions for core, FTL, and web."""
+        data = await self._get("/api/info/version")
+        version_root = data.get("version", data)  # handle both wrapped and flat responses
+
+        def _parse_component(raw: dict) -> ComponentVersion:
+            local = raw.get("local", raw) or {}
+            remote = raw.get("remote", {}) or {}
+            current = local.get("version") or local.get("tag") or ""
+            # Strip leading 'v' for consistent display
+            if current.startswith("v"):
+                current = current[1:]
+            latest_raw = remote.get("version") or remote.get("tag") or ""
+            if latest_raw.startswith("v"):
+                latest_raw = latest_raw[1:]
+            update_available = raw.get("update_available")
+            return ComponentVersion(
+                current=current,
+                latest=latest_raw,
+                update_available=update_available,
+            )
+
+        return PiholeVersionInfo(
+            core=_parse_component(version_root.get("core", {})),
+            ftl=_parse_component(version_root.get("ftl", {})),
+            web=_parse_component(version_root.get("web", {})),
+        )
 
     async def get_summary(self) -> PiholeSummary:
         data = await self._get("/api/stats/summary")

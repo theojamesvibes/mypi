@@ -4,6 +4,13 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.0.16] - 2026-04-12
+
+### Added
+- **Pi-hole software versions table** — new "Pi-hole Software Versions" card on the Settings page, placed between the instances list and the sync card. Shows a table with Pi-hole (core), FTL, and web interface versions for every active instance. Versions are fetched concurrently from each Pi-hole's `/api/info/version` endpoint using the shared persistent clients from `client_manager`. Up-to-date versions render in green; versions where an update is available render in red with the latest version shown inline. A refresh button re-fetches on demand. Instances that are offline or unreachable show their error inline. Implemented via `PiholeVersionInfo`/`ComponentVersion` dataclasses in `pihole_client.py`, `InstanceVersionInfo`/`ComponentVersionSchema` Pydantic models in `schemas/instance.py`, and a new `GET /api/instances/versions` endpoint in `api/instances.py`.
+
+---
+
 ## [1.0.15] - 2026-04-11
 
 ### Added
