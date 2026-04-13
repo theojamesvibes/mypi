@@ -27,6 +27,7 @@ from app.services.config_loader import sync_instances
 from app.services import pushover as pushover_service
 from app.services import session_settings
 from app.services import sync_service
+from app.services import pihole_version_check as pihole_version_check_service
 from app.services import version_check as version_check_service
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -63,14 +64,17 @@ async def lifespan(app: FastAPI):
     await pushover_service.load_settings()
     await session_settings.load_settings()
     await version_check_service.load_settings()
+    await pihole_version_check_service.load_settings()
     scheduler.add_job(poll_stats, "interval", seconds=settings.stats_poll_interval, id="poll_stats")
     scheduler.add_job(poll_queries, "interval", seconds=settings.queries_poll_interval, id="poll_queries")
     scheduler.add_job(cleanup_old_data, "cron", hour=3, minute=0, id="cleanup")
     scheduler.add_job(version_check_service.check_now, "interval", hours=1, id="version_check")
+    scheduler.add_job(pihole_version_check_service.check_now, "interval", hours=1, id="pihole_version_check")
     scheduler.start()
-    # Run an initial version check in the background without blocking startup
+    # Run initial version checks in the background without blocking startup
     import asyncio as _asyncio
     _asyncio.create_task(version_check_service.check_now())
+    _asyncio.create_task(pihole_version_check_service.check_now())
     logger.info("Scheduler started (stats every %ds, queries every %ds).",
                 settings.stats_poll_interval, settings.queries_poll_interval)
     yield

@@ -10,6 +10,7 @@ from sqlalchemy import delete, select
 from app.config import settings
 from app.database import AsyncSessionLocal
 from app.models.pihole import PiholeInstance, QueryLog, StatsSnapshot
+from app.services import pihole_version_check
 from app.services import pushover as pushover_service
 from app.services import sync_service
 from app.services.client_manager import close_client, close_all_clients, get_client, save_sid
@@ -78,9 +79,9 @@ async def _poll_stats_for(instance: PiholeInstance) -> None:
                     inst.version_core = version_info.core.current or None
                     inst.version_ftl = version_info.ftl.current or None
                     inst.version_web = version_info.web.current or None
-                    inst.update_available_core = version_info.core.update_available
-                    inst.update_available_ftl = version_info.ftl.update_available
-                    inst.update_available_web = version_info.web.update_available
+                    inst.update_available_core = pihole_version_check.compute_update_available(inst.version_core, "core")
+                    inst.update_available_ftl = pihole_version_check.compute_update_available(inst.version_ftl, "ftl")
+                    inst.update_available_web = pihole_version_check.compute_update_available(inst.version_web, "web")
         await db.commit()
 
     # Pushover alerts: retry-then-alert + transition-based + configurable repeat for sustained outages
