@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -13,10 +11,7 @@ from app.auth import get_current_user
 from app.database import get_db
 from app.models.pihole import PiholeInstance
 from app.models.user import User
-from app.schemas.instance import ComponentVersionSchema, InstanceStatus, InstanceVersionInfo
-from app.services import client_manager
-
-logger = logging.getLogger(__name__)
+from app.schemas.instance import InstanceStatus
 
 router = APIRouter(prefix="/api/instances", tags=["instances"])
 
@@ -37,6 +32,12 @@ def _build_status(inst: PiholeInstance, snapshots: dict) -> InstanceStatus:
         percent_blocked=snap.percent_blocked if snap else 0.0,
         domains_on_blocklist=snap.domains_on_blocklist if snap else 0,
         unique_clients=snap.unique_clients if snap else 0,
+        version_core=inst.version_core,
+        version_ftl=inst.version_ftl,
+        version_web=inst.version_web,
+        update_available_core=inst.update_available_core,
+        update_available_ftl=inst.update_available_ftl,
+        update_available_web=inst.update_available_web,
     )
 
 
@@ -70,58 +71,6 @@ async def list_stale_instances(
     instances = result.scalars().all()
     snapshots = await _latest_snapshots_by_instance(db)
     return [_build_status(inst, snapshots) for inst in instances]
-
-
-@router.get("/versions", response_model=list[InstanceVersionInfo])
-async def list_instance_versions(
-    _: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Fetch installed/latest version info from all active Pi-hole instances concurrently."""
-    result = await db.execute(
-        select(PiholeInstance)
-        .where(PiholeInstance.is_active.is_(True))
-        .order_by(PiholeInstance.name)
-    )
-    instances = result.scalars().all()
-
-    async def _fetch(inst: PiholeInstance) -> InstanceVersionInfo:
-        try:
-            client = await client_manager.get_client(inst)
-            vi = await client.get_version_info()
-            return InstanceVersionInfo(
-                id=inst.id,
-                name=inst.name,
-                color=inst.color,
-                is_master=inst.is_master,
-                core=ComponentVersionSchema(
-                    current=vi.core.current,
-                    latest=vi.core.latest,
-                    update_available=vi.core.update_available,
-                ),
-                ftl=ComponentVersionSchema(
-                    current=vi.ftl.current,
-                    latest=vi.ftl.latest,
-                    update_available=vi.ftl.update_available,
-                ),
-                web=ComponentVersionSchema(
-                    current=vi.web.current,
-                    latest=vi.web.latest,
-                    update_available=vi.web.update_available,
-                ),
-            )
-        except Exception as exc:
-            logger.warning("Failed to fetch version info for %s: %s", inst.name, exc)
-            return InstanceVersionInfo(
-                id=inst.id,
-                name=inst.name,
-                color=inst.color,
-                is_master=inst.is_master,
-                error=str(exc),
-            )
-
-    results = await asyncio.gather(*[_fetch(inst) for inst in instances])
-    return list(results)
 
 
 @router.delete("/{instance_id}", status_code=204)

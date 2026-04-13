@@ -4,6 +4,16 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.0.17] - 2026-04-13
+
+### Changed
+- **Pi-hole software versions moved into the instances table** — replaces the separate 1.0.16 versions card. Pi-hole (core), FTL, and Web interface versions are now shown as three additional columns directly in the "Pi-hole Instances" table on the Settings page. Versions are fetched from each Pi-hole's `/api/info/version` endpoint on every stats poll cycle and persisted to new columns on `pihole_instances` (migration 0005), so they survive container restarts and are always available from the database rather than requiring a live round-trip. Color coding: green = up to date, red = update available, muted = no remote comparison data yet.
+
+### Removed
+- Dedicated "Pi-hole Software Versions" card and `GET /api/instances/versions` endpoint introduced in 1.0.16 (superseded by the above).
+
+---
+
 ## [1.0.16] - 2026-04-12
 
 ### Added
