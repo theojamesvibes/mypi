@@ -22,6 +22,7 @@ class PushoverSettingsRequest(BaseModel):
     block_rate_threshold_pct: float = 50.0
     no_logs_minutes: int = 30
     offline_alert_max_count: int = 1
+    offline_alert_retries: int = 1
 
 
 class ValidateRequest(BaseModel):
@@ -54,6 +55,7 @@ async def save_settings(
             block_rate_threshold_pct=req.block_rate_threshold_pct,
             no_logs_minutes=req.no_logs_minutes,
             offline_alert_max_count=req.offline_alert_max_count,
+            offline_alert_retries=req.offline_alert_retries,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to persist settings: {exc}")

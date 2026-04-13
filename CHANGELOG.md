@@ -4,6 +4,13 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.0.18] - 2026-04-13
+
+### Added
+- **Retries before offline alert** — new "Retries before alert" selector (1–10) in the Pushover Notifications panel under the "Instance goes offline" toggle. Each retry waits one poll cycle (60 s) before firing the first alert; the existing "Repeat alert while offline" count takes over after that. If the instance recovers before retries are exhausted, no alert is sent and the spurious "back online" notification is also suppressed. Implemented via `_offline_alert_retries` in `pushover.py` and a per-instance `_offline_retry_count` in `collector.py`.
+
+---
+
 ## [1.0.17] - 2026-04-13
 
 ### Changed

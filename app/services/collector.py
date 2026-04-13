@@ -23,6 +23,10 @@ _last_seen_ts: dict[str, float] = {}
 # Previous poll status — used to detect online→offline transitions for alerts.
 _prev_status: dict[str, str] = {}
 
+# Consecutive offline polls already retried before the first alert fires.
+# Resets on transition (online→offline) and on recovery.
+_offline_retry_count: dict[str, int] = {}
+
 # Number of offline alerts already sent per instance in the current outage period.
 # Resets to 0 when the instance recovers.  Used to enforce offline_alert_max_count.
 _offline_alert_count: dict[str, int] = {}
@@ -79,30 +83,41 @@ async def _poll_stats_for(instance: PiholeInstance) -> None:
                     inst.update_available_web = version_info.web.update_available
         await db.commit()
 
-    # Pushover alerts: transition-based + configurable repeat for sustained outages
+    # Pushover alerts: retry-then-alert + transition-based + configurable repeat for sustained outages
     key = str(instance.id)
     prev = _prev_status.get(key)
     if prev is None:
         # First poll ever — establish baseline; no alert regardless of status.
         if snapshot.status == "offline":
+            _offline_retry_count[key] = 0
             _offline_alert_count[key] = 0
     elif snapshot.status == "offline":
+        required_retries = pushover_service.get_offline_alert_retries()
         if prev != "offline":
-            # Transition online→offline: always alert, start the counter.
-            _offline_alert_count[key] = 1
-            asyncio.create_task(pushover_service.notify_instance_offline(instance.name))
+            # Transition online→offline: start the retry countdown; do not alert yet.
+            _offline_retry_count[key] = 0
+            _offline_alert_count[key] = 0
         else:
-            # Sustained offline: respect offline_alert_max_count.
-            # 0 = alert every poll; 1-10 = alert at most N times per outage.
-            max_count = pushover_service.get_offline_alert_max_count()
-            current = _offline_alert_count.get(key, 1)
-            if max_count == 0 or current < max_count:
-                _offline_alert_count[key] = current + 1
-                asyncio.create_task(pushover_service.notify_instance_offline(instance.name))
+            retries_done = _offline_retry_count.get(key, 0)
+            if retries_done < required_retries:
+                # Still within the retry window — wait another poll.
+                _offline_retry_count[key] = retries_done + 1
+            else:
+                # Retries exhausted: alert, then respect offline_alert_max_count for repeats.
+                # 0 = alert every poll; 1-10 = alert at most N times per outage.
+                max_count = pushover_service.get_offline_alert_max_count()
+                current = _offline_alert_count.get(key, 0)
+                if current == 0 or max_count == 0 or current < max_count:
+                    _offline_alert_count[key] = current + 1
+                    asyncio.create_task(pushover_service.notify_instance_offline(instance.name))
     elif snapshot.status == "online" and prev == "offline":
-        # Recovery: always alert and reset the outage counter.
+        # Recovery: alert only if we had already sent an offline alert (avoids spurious
+        # "back online" pings for blips that resolved before retries were exhausted).
+        already_alerted = _offline_alert_count.get(key, 0) > 0
+        _offline_retry_count.pop(key, None)
         _offline_alert_count.pop(key, None)
-        asyncio.create_task(pushover_service.notify_instance_back_online(instance.name))
+        if already_alerted:
+            asyncio.create_task(pushover_service.notify_instance_back_online(instance.name))
     _prev_status[key] = snapshot.status
 
     # Notify sync service if this is the master (enables auto-gravity detection)
@@ -206,4 +221,5 @@ async def shutdown() -> None:
     """Call on shutdown to cleanly close all persistent HTTP clients."""
     await close_all_clients()
     _last_seen_ts.clear()
+    _offline_retry_count.clear()
     _offline_alert_count.clear()
