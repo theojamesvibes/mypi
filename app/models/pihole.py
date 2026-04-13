@@ -24,6 +24,14 @@ class PiholeInstance(Base):
     session_sid: Mapped[str | None] = mapped_column(String(256), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+    # Software versions (populated by the stats poller, persisted across restarts)
+    version_core: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    version_ftl: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    version_web: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    update_available_core: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    update_available_ftl: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    update_available_web: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
     snapshots: Mapped[list[StatsSnapshot]] = relationship(
         "StatsSnapshot", back_populates="instance", cascade="all, delete-orphan"
     )

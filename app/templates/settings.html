@@ -36,16 +36,31 @@
     </div>
 
     <!-- Instance info -->
-    <div class="col-md-6">
-      <div class="card h-100">
+    <div class="col-12">
+      <div class="card">
         <div class="card-header"><i class="bi bi-hdd-network me-1"></i>Pi-hole Instances</div>
-        <div class="card-body">
-          <p class="text-muted small">Instances are configured in <code>pihole_instances.yml</code> and
-             loaded at startup. Restart the container to apply changes.</p>
+        <div class="card-body p-0">
+          <p class="text-muted small px-3 pt-3 mb-2">Instances are configured in <code>pihole_instances.yml</code> and
+             loaded at startup. Restart the container to apply changes.
+             Software versions are fetched on each stats poll and stored in the database.</p>
           <table class="table table-sm table-hover mb-0">
-            <thead class="table-light"><tr><th>Name</th><th>URL</th><th>Status</th></tr></thead>
+            <thead class="table-light">
+              <tr>
+                <th class="ps-3">Name</th>
+                <th>URL</th>
+                <th>Status</th>
+                <th>Pi-hole</th>
+                <th>FTL</th>
+                <th>Web</th>
+              </tr>
+            </thead>
             <tbody id="settings-instances-tbody"></tbody>
           </table>
+          <div class="px-3 py-2" style="font-size:0.7rem;">
+            <span class="text-success fw-semibold me-2"><i class="bi bi-check-circle-fill"></i> Up to date</span>
+            <span class="text-danger fw-semibold"><i class="bi bi-exclamation-circle-fill"></i> Update available</span>
+            <span class="text-muted ms-1">— versions update on the next stats poll after restart</span>
+          </div>
         </div>
       </div>
     </div>
@@ -70,38 +85,6 @@
           <button class="btn btn-sm btn-outline-danger" onclick="deleteAllStale()">
             <i class="bi bi-trash me-1"></i>Remove all orphaned instances
           </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Pi-hole Software Versions -->
-    <div class="col-12">
-      <div class="card">
-        <div class="card-header d-flex align-items-center justify-content-between">
-          <span><i class="bi bi-box-seam me-1"></i>Pi-hole Software Versions</span>
-          <button class="btn btn-sm btn-outline-secondary py-0" onclick="loadInstanceVersions()" title="Refresh">
-            <i class="bi bi-arrow-clockwise"></i>
-          </button>
-        </div>
-        <div class="card-body p-0">
-          <table class="table table-sm table-hover mb-0">
-            <thead class="table-light">
-              <tr>
-                <th class="ps-3">Instance</th>
-                <th>Pi-hole</th>
-                <th>FTL</th>
-                <th>Web</th>
-              </tr>
-            </thead>
-            <tbody id="versions-tbody">
-              <tr><td colspan="4" class="text-muted small ps-3 py-2">Loading…</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <div class="card-footer py-1 px-3" style="font-size:0.7rem;">
-          <span class="text-success fw-semibold me-2"><i class="bi bi-check-circle-fill"></i> Up to date</span>
-          <span class="text-danger fw-semibold"><i class="bi bi-exclamation-circle-fill"></i> Update available</span>
-          <span class="text-muted ms-2">— version shown is currently installed; hover for latest available</span>
         </div>
       </div>
     </div>
@@ -354,7 +337,6 @@
   loadApiKeys();
   loadSettingsInstances();
   loadStaleInstances();
-  loadInstanceVersions();
   loadSyncStatus();
   loadSyncSchedule();
   loadPushoverSettings();

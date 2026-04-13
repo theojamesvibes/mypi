@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class InstanceStatus(BaseModel):
@@ -23,21 +23,12 @@ class InstanceStatus(BaseModel):
     domains_on_blocklist: int = 0
     unique_clients: int = 0
 
+    # Software versions (persisted from last successful poll)
+    version_core: str | None = None
+    version_ftl: str | None = None
+    version_web: str | None = None
+    update_available_core: bool | None = None
+    update_available_ftl: bool | None = None
+    update_available_web: bool | None = None
+
     model_config = {"from_attributes": True}
-
-
-class ComponentVersionSchema(BaseModel):
-    current: str = ""
-    latest: str = ""
-    update_available: bool | None = None
-
-
-class InstanceVersionInfo(BaseModel):
-    id: uuid.UUID
-    name: str
-    color: str
-    is_master: bool = False
-    core: ComponentVersionSchema = Field(default_factory=ComponentVersionSchema)
-    ftl: ComponentVersionSchema = Field(default_factory=ComponentVersionSchema)
-    web: ComponentVersionSchema = Field(default_factory=ComponentVersionSchema)
-    error: str | None = None

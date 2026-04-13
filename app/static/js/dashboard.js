@@ -461,15 +461,29 @@ async function loadSettingsInstances() {
   const instances = await apiFetch('/api/instances');
   if (!instances) return;
   updateStatusBadge(instances);
+
+  function versionCell(version, updateAvailable) {
+    if (!version) return '<td class="small text-muted">—</td>';
+    if (updateAvailable === true)
+      return `<td><span class="text-danger fw-semibold" title="Update available">${escHtml(version)}</span></td>`;
+    if (updateAvailable === false)
+      return `<td><span class="text-success">${escHtml(version)}</span></td>`;
+    // update_available is null — no remote data yet, show neutrally
+    return `<td><span class="text-muted">${escHtml(version)}</span></td>`;
+  }
+
   tbody.innerHTML = instances.map(i => `
     <tr>
-      <td>
+      <td class="ps-3">
         <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${i.color};margin-right:6px;"></span>
         ${escHtml(i.name)}
         ${i.is_master ? '<span class="badge bg-primary ms-1" style="font-size:0.65rem;">master</span>' : ''}
       </td>
       <td class="small text-muted">${escHtml(i.url)}</td>
       <td>${instanceDot(i.status)}${i.status}</td>
+      ${versionCell(i.version_core, i.update_available_core)}
+      ${versionCell(i.version_ftl, i.update_available_ftl)}
+      ${versionCell(i.version_web, i.update_available_web)}
     </tr>
   `).join('');
 }
@@ -504,54 +518,6 @@ async function loadStaleInstances() {
       </td>
     </tr>
   `).join('');
-}
-
-// ─── Pi-hole software versions ───────────────────────────────────────────────
-
-async function loadInstanceVersions() {
-  const tbody = document.getElementById('versions-tbody');
-  if (!tbody) return;
-
-  const data = await apiFetch('/api/instances/versions');
-  if (!data) {
-    tbody.innerHTML = '<tr><td colspan="4" class="text-danger small ps-3 py-2">Failed to load version info.</td></tr>';
-    return;
-  }
-  if (data.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" class="text-muted small ps-3 py-2">No instances configured.</td></tr>';
-    return;
-  }
-
-  function versionCell(comp) {
-    if (!comp || !comp.current) return '<td class="small text-muted">—</td>';
-    const upd = comp.update_available;
-    const hasLatest = comp.latest && comp.latest !== comp.current;
-    const isOutdated = upd === true || (upd === null && hasLatest);
-    const isUpToDate = upd === false || (upd === null && comp.latest && !hasLatest);
-    const tooltip = comp.latest ? ` title="Latest: ${escHtml(comp.latest)}"` : '';
-    if (isOutdated) {
-      return `<td><span class="text-danger fw-semibold"${tooltip}>${escHtml(comp.current)}</span>`
-        + (comp.latest ? ` <span class="text-muted" style="font-size:0.7rem;">→ ${escHtml(comp.latest)}</span>` : '')
-        + '</td>';
-    }
-    if (isUpToDate) {
-      return `<td><span class="text-success"${tooltip}>${escHtml(comp.current)}</span></td>`;
-    }
-    return `<td><span class="text-muted">${escHtml(comp.current)}</span></td>`;
-  }
-
-  tbody.innerHTML = data.map(inst => {
-    const nameCell = `<td class="ps-3">
-      <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${inst.color};margin-right:6px;"></span>
-      ${escHtml(inst.name)}
-      ${inst.is_master ? '<span class="badge bg-primary ms-1" style="font-size:0.65rem;">master</span>' : ''}
-    </td>`;
-
-    if (inst.error) {
-      return `<tr>${nameCell}<td colspan="3" class="text-danger small">${escHtml(inst.error)}</td></tr>`;
-    }
-    return `<tr>${nameCell}${versionCell(inst.core)}${versionCell(inst.ftl)}${versionCell(inst.web)}</tr>`;
-  }).join('');
 }
 
 async function deleteStaleInstance(id, name) {
