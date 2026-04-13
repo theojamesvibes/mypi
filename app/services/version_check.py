@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 _SETTINGS_KEY = "version_check"
 _VERSION_URL = "https://raw.githubusercontent.com/theojamesvibes/mypi/main/VERSION"
-_RELEASE_URL = "https://github.com/theojamesvibes/mypi/releases"
+_RELEASE_URL = "https://github.com/theojamesvibes/mypi/blob/main/CHANGELOG.md"
 
 # In-memory state
 _enabled: bool = True
