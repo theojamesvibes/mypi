@@ -167,6 +167,43 @@
       </div>
     </div>
 
+    <!-- Version Check -->
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header d-flex align-items-center justify-content-between">
+          <span><i class="bi bi-arrow-up-circle me-1"></i>Version Check</span>
+          <span id="vc-badge" class="badge bg-secondary">unknown</span>
+        </div>
+        <div class="card-body">
+          <p class="text-muted small mb-3">
+            Checks the <a href="https://github.com/theojamesvibes/mypi" target="_blank">MyPi GitHub repository</a>
+            for a new release once per hour. The version badge in the top bar turns
+            <span class="text-success fw-semibold">green</span> (up to date) or
+            <span class="text-danger fw-semibold">red</span> (update available).
+          </p>
+          <div class="row g-3 align-items-center">
+            <div class="col-auto">
+              <div class="form-check border rounded px-3 py-2" style="background:#f8f9fa;">
+                <input class="form-check-input" type="checkbox" id="vc-enabled">
+                <label class="form-check-label fw-semibold small" for="vc-enabled">Enable version checking</label>
+              </div>
+            </div>
+            <div class="col">
+              <div id="vc-status" class="small text-muted"></div>
+            </div>
+            <div class="col-auto d-flex gap-2">
+              <button class="btn btn-sm btn-outline-secondary" onclick="checkVersionNow()">
+                <i class="bi bi-arrow-clockwise me-1"></i>Check now
+              </button>
+              <button class="btn btn-sm btn-outline-primary" onclick="saveVersionCheckSettings()">
+                <i class="bi bi-save me-1"></i>Save
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Pushover Notifications -->
     <div class="col-12">
       <div class="card">
@@ -298,43 +335,6 @@
             <button class="btn btn-sm btn-primary" onclick="savePushoverSettings()">
               <i class="bi bi-save me-1"></i>Save notification settings
             </button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Version Check -->
-    <div class="col-12">
-      <div class="card">
-        <div class="card-header d-flex align-items-center justify-content-between">
-          <span><i class="bi bi-arrow-up-circle me-1"></i>Version Check</span>
-          <span id="vc-badge" class="badge bg-secondary">unknown</span>
-        </div>
-        <div class="card-body">
-          <p class="text-muted small mb-3">
-            Checks the <a href="https://github.com/theojamesvibes/mypi" target="_blank">MyPi GitHub repository</a>
-            for a new release once per hour. The version badge in the top bar turns
-            <span class="text-success fw-semibold">green</span> (up to date) or
-            <span class="text-danger fw-semibold">red</span> (update available).
-          </p>
-          <div class="row g-3 align-items-center">
-            <div class="col-auto">
-              <div class="form-check border rounded px-3 py-2" style="background:#f8f9fa;">
-                <input class="form-check-input" type="checkbox" id="vc-enabled">
-                <label class="form-check-label fw-semibold small" for="vc-enabled">Enable version checking</label>
-              </div>
-            </div>
-            <div class="col">
-              <div id="vc-status" class="small text-muted"></div>
-            </div>
-            <div class="col-auto d-flex gap-2">
-              <button class="btn btn-sm btn-outline-secondary" onclick="checkVersionNow()">
-                <i class="bi bi-arrow-clockwise me-1"></i>Check now
-              </button>
-              <button class="btn btn-sm btn-outline-primary" onclick="saveVersionCheckSettings()">
-                <i class="bi bi-save me-1"></i>Save
-              </button>
-            </div>
           </div>
         </div>
       </div>

@@ -590,7 +590,7 @@ async function loadSettingsInstances() {
         ${escHtml(i.name)}
         ${i.is_master ? '<span class="badge bg-primary ms-1" style="font-size:0.65rem;">master</span>' : ''}
       </td>
-      <td class="small"><a href="${escHtml(i.url)}" target="_blank" class="text-muted">${escHtml(i.url)}</a></td>
+      <td class="small"><a href="${escHtml(i.url.replace(/\/+$/, '') + '/admin')}" target="_blank" class="text-muted">${escHtml(i.url)}</a></td>
       <td>${instanceDot(i.status)}${i.status}</td>
       ${fmtLastSeen(i.last_seen_at)}
       ${versionCell(i.version_core, i.update_available_core)}

@@ -51,7 +51,7 @@
       <button id="sidebar-toggle" class="btn btn-sm btn-outline-secondary">
         <i class="bi bi-list"></i>
       </button>
-      <a id="version-badge" class="topbar-version" href="https://github.com/theojamesvibes/mypi/blob/main/CHANGELOG.md" target="_blank" style="text-decoration:none;">v{{ app_version }}</a>
+      <a id="version-badge" class="badge bg-secondary topbar-version" href="https://github.com/theojamesvibes/mypi/blob/main/CHANGELOG.md" target="_blank" style="text-decoration:none;">v{{ app_version }}</a>
     </div>
     <div class="d-flex align-items-center gap-2">
       <span class="badge bg-secondary" id="sync-status-badge" style="display:none!important;"></span>
@@ -171,7 +171,8 @@
       const data = await res.json();
       const badge = document.getElementById('version-badge');
       if (!badge || !data.enabled || data.up_to_date === null) return;
-      badge.style.color = data.up_to_date ? '#69db7c' : '#ff6b6b';
+      badge.classList.remove('bg-secondary', 'bg-success', 'bg-danger');
+      badge.classList.add(data.up_to_date ? 'bg-success' : 'bg-danger');
       if (data.release_url) badge.href = data.release_url;
     } catch (_) {}
   })();
