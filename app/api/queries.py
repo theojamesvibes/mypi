@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.stats import BLOCKED_STATUSES
@@ -12,7 +12,7 @@ from app.auth import get_current_user
 from app.database import get_db
 from app.models.pihole import PiholeInstance, QueryLog
 from app.models.user import User
-from app.schemas.queries import QueryLogEntry, QueryLogPage
+from app.schemas.queries import ClientSummary, QueryLogEntry, QueryLogPage
 
 router = APIRouter(prefix="/api/queries", tags=["queries"])
 
@@ -99,3 +99,43 @@ async def get_queries(
     ]
 
     return QueryLogPage(total=total, page=page, page_size=page_size, items=items)
+
+
+@router.get("/clients", response_model=list[ClientSummary])
+async def get_client_summary(
+    hours: int = Query(default=24, ge=1, le=720),
+    instance_id: uuid.UUID | None = Query(default=None),
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return one row per unique client with aggregate query counts."""
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+    q = (
+        select(
+            QueryLog.client_ip,
+            QueryLog.client_name,
+            func.count(QueryLog.id).label("total_queries"),
+            func.count(
+                case((QueryLog.status.in_(list(BLOCKED_STATUSES)), QueryLog.id))
+            ).label("blocked_queries"),
+            func.max(QueryLog.timestamp).label("last_seen"),
+        )
+        .where(QueryLog.timestamp >= since)
+        .group_by(QueryLog.client_ip, QueryLog.client_name)
+        .order_by(func.count(QueryLog.id).desc())
+    )
+    if instance_id:
+        q = q.where(QueryLog.instance_id == instance_id)
+
+    result = await db.execute(q)
+    return [
+        ClientSummary(
+            client_ip=row.client_ip or "",
+            client_name=row.client_name or "",
+            total_queries=row.total_queries,
+            blocked_queries=row.blocked_queries,
+            last_seen=row.last_seen,
+        )
+        for row in result.fetchall()
+    ]

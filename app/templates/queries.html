@@ -45,6 +45,7 @@
             <option value="">All queries</option>
             <option value="true">Blocked only</option>
             <option value="false">Permitted only</option>
+            <option value="clients">Unique Clients</option>
           </select>
         </div>
         <div class="col-sm-2">
@@ -69,7 +70,7 @@
     <div class="card-body p-0">
       <div class="table-responsive">
         <table class="table table-sm table-hover mb-0 query-log-table">
-          <thead class="table-light">
+          <thead class="table-light" id="queries-thead-default">
             <tr>
               <th class="sort-col" data-col="timestamp">Time <span class="sort-icon" id="sort-timestamp">↓</span></th>
               <th>Instance</th>
@@ -78,6 +79,15 @@
               <th class="sort-col" data-col="client">Client <span class="sort-icon" id="sort-client"></span></th>
               <th class="sort-col" data-col="status">Status <span class="sort-icon" id="sort-status"></span></th>
               <th class="text-end sort-col" data-col="reply_time_ms">Reply (ms) <span class="sort-icon" id="sort-reply_time_ms"></span></th>
+            </tr>
+          </thead>
+          <thead class="table-light d-none" id="queries-thead-clients">
+            <tr>
+              <th>Client</th>
+              <th class="text-end">Queries</th>
+              <th class="text-end">Blocked</th>
+              <th class="text-end">% Blocked</th>
+              <th>Last Seen</th>
             </tr>
           </thead>
           <tbody id="queries-tbody">
@@ -95,6 +105,15 @@
 
 {% block extra_js %}
 <script>
+  // Pre-set filters from URL params (e.g. when navigating from dashboard cards)
+  (function () {
+    const p = new URLSearchParams(window.location.search);
+    if (p.has('domain')) { const el = document.getElementById('f-domain'); if (el) el.value = p.get('domain'); }
+    if (p.has('client')) { const el = document.getElementById('f-client'); if (el) el.value = p.get('client'); }
+    if (p.get('blocked') === 'true')  { const el = document.getElementById('f-blocked'); if (el) el.value = 'true'; }
+    if (p.get('blocked') === 'false') { const el = document.getElementById('f-blocked'); if (el) el.value = 'false'; }
+    if (p.get('show') === 'clients')  { const el = document.getElementById('f-blocked'); if (el) el.value = 'clients'; }
+  })();
   loadInstanceFilter();
   loadQueries(1);
 </script>

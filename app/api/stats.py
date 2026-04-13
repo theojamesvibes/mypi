@@ -56,10 +56,15 @@ async def _latest_snapshots_by_instance(db: AsyncSession) -> dict[uuid.UUID, Sta
 @router.get("/summary", response_model=AggregatedSummary)
 async def get_summary(
     hours: int = Query(default=24, ge=1, le=720),
+    since: datetime | None = Query(default=None),
     _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    if since is not None:
+        since_dt = since if since.tzinfo else since.replace(tzinfo=timezone.utc)
+    else:
+        since_dt = datetime.now(timezone.utc) - timedelta(hours=hours)
+    since = since_dt
 
     result = await db.execute(select(PiholeInstance).where(PiholeInstance.is_active.is_(True)))
     instances = result.scalars().all()
@@ -122,20 +127,27 @@ async def get_summary(
 @router.get("/history", response_model=HistoryResponse)
 async def get_history(
     hours: int = Query(default=24, ge=1, le=720),
+    since: datetime | None = Query(default=None),
+    bucket_minutes: int = Query(default=10, ge=1, le=1440),
     instance_id: uuid.UUID | None = Query(default=None),
     _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    if since is not None:
+        since_dt = since if since.tzinfo else since.replace(tzinfo=timezone.utc)
+    else:
+        since_dt = datetime.now(timezone.utc) - timedelta(hours=hours)
+    since = since_dt
 
-    # Count actual query_log rows per 10-minute bucket — avoids the cumulative
-    # counter problem (dns_queries_today resets at midnight and would be summed
-    # across instances and snapshots, producing wildly inflated numbers).
+    # Count actual query_log rows per bucket — bucket size is configurable so
+    # the chart stays readable across very short (15 min) and long (30 day) windows.
     bucket_col = (
         func.date_trunc("hour", QueryLog.timestamp) +
         func.make_interval(
             0, 0, 0, 0, 0,
-            func.floor(func.extract("minute", QueryLog.timestamp) / 10).cast(Integer) * 10,
+            func.floor(
+                func.extract("minute", QueryLog.timestamp) / bucket_minutes
+            ).cast(Integer) * bucket_minutes,
         )
     ).label("bucket")
 
@@ -166,12 +178,17 @@ async def get_history(
 @router.get("/top", response_model=TopStatsResponse)
 async def get_top(
     hours: int = Query(default=24, ge=1, le=720),
+    since: datetime | None = Query(default=None),
     instance_id: uuid.UUID | None = Query(default=None),
     limit: int = Query(default=10, ge=1, le=50),
     _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    if since is not None:
+        since_dt = since if since.tzinfo else since.replace(tzinfo=timezone.utc)
+        since = since_dt
+    else:
+        since = datetime.now(timezone.utc) - timedelta(hours=hours)
 
     domain_q = (
         select(QueryLog.domain, QueryLog.status, func.count(QueryLog.id).label("cnt"))

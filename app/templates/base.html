@@ -51,7 +51,7 @@
       <button id="sidebar-toggle" class="btn btn-sm btn-outline-secondary">
         <i class="bi bi-list"></i>
       </button>
-      <span class="topbar-version">v{{ app_version }}</span>
+      <a id="version-badge" class="topbar-version" href="https://github.com/theojamesvibes/mypi/releases" target="_blank" style="text-decoration:none;">v{{ app_version }}</a>
     </div>
     <div class="d-flex align-items-center gap-2">
       <span class="badge bg-secondary" id="sync-status-badge" style="display:none!important;"></span>
@@ -160,6 +160,19 @@
     try {
       const res = await fetch('/api/sync/status', { credentials: 'include', cache: 'no-store' });
       if (res.ok) renderSyncBadge(await res.json());
+    } catch (_) {}
+  })();
+
+  // Version badge colour — green = up to date, red = update available
+  (async function () {
+    try {
+      const res = await fetch('/api/version/status', { credentials: 'include', cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      const badge = document.getElementById('version-badge');
+      if (!badge || !data.enabled || data.up_to_date === null) return;
+      badge.style.color = data.up_to_date ? '#69db7c' : '#ff6b6b';
+      if (data.release_url) badge.href = data.release_url;
     } catch (_) {}
   })();
   setInterval(async () => {
