@@ -479,7 +479,6 @@ async function loadSettingsInstances() {
         ${escHtml(i.name)}
         ${i.is_master ? '<span class="badge bg-primary ms-1" style="font-size:0.65rem;">master</span>' : ''}
       </td>
-      <td class="small text-muted">${escHtml(i.url)}</td>
       <td>${instanceDot(i.status)}${i.status}</td>
       ${versionCell(i.version_core, i.update_available_core)}
       ${versionCell(i.version_ftl, i.update_available_ftl)}
