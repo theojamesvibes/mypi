@@ -4,6 +4,15 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.1.2] - 2026-04-13
+
+### Fixed
+- **Sync socket pollution (intermittent "illegal status line" error)** — `run_gravity()` now uses a dedicated throwaway HTTP connection instead of the shared persistent client. Pi-hole's gravity endpoint has inconsistent HTTP framing that can leave stale bytes in the socket; by isolating gravity to its own connection the persistent client is never contaminated. The same session SID is reused so Pi-hole's `max_sessions` limit is unaffected.
+- **Teleporter export retry** — if the teleporter export from the master fails (e.g. due to residual socket data), MyPi automatically retries once after a 2-second delay before reporting the sync as failed. Most intermittent sync errors will now self-recover without user intervention.
+- **Version info fetch failures now logged at WARNING** — previously a failure to retrieve Pi-hole version data was silently swallowed at DEBUG level, causing the version columns in the Instances table to remain blank with no visible indication of why. These failures are now visible in the log.
+
+---
+
 ## [1.1.1] - 2026-04-13
 
 ### Changed

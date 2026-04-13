@@ -256,36 +256,40 @@ class PiholeClient:
                 raise
 
     async def run_gravity(self) -> None:
-        """Trigger a gravity database update on this instance."""
-        if self._client is None:
-            raise RuntimeError("PiholeClient must be used as an async context manager")
+        """Trigger a gravity database update on this instance.
+
+        Uses a dedicated throwaway HTTP connection so Pi-hole's inconsistent
+        gravity response framing never pollutes the shared persistent client.
+        The existing session SID is reused — no new Pi-hole session is created
+        and Pi-hole's max_sessions limit is not affected.
+        """
         await self._ensure_authed()
         url = f"{self.base_url}/api/action/gravity"
 
-        try:
-            resp = await self._client.post(url, headers=self._headers())
-            if resp.status_code == 401:
-                self._sid = None
-                ok = await self._authenticate()
-                if not ok:
-                    raise ConnectionError(f"Re-authentication failed for {self.base_url}")
-                resp = await self._client.post(url, headers=self._headers())
-            if resp.status_code >= 400:
-                snippet = resp.text[:200]
-                raise RuntimeError(f"Gravity request to {self.base_url} failed with HTTP {resp.status_code}: {snippet}")
-        except httpx.RemoteProtocolError as exc:
-            if "incomplete chunked read" in str(exc).lower():
-                logger.info("Gravity on %s: connection reset (FTL restarted — normal).", self.base_url)
-            else:
-                raise
-        finally:
-            # Pi-hole's gravity endpoint has inconsistent HTTP framing that can
-            # leave bytes in the TCP socket regardless of whether we try to drain
-            # them.  Reset the connection pool so the next request (typically
-            # get_teleporter) always starts on a fresh socket.  The SID is
-            # preserved on self._sid so no re-authentication is needed.
-            await self._client.aclose()
-            self._client = httpx.AsyncClient(timeout=self.timeout, verify=False)
+        # Long timeout: gravity can take 30-120 s on a busy instance.
+        async with httpx.AsyncClient(timeout=300, verify=False) as tmp:
+            try:
+                resp = await tmp.post(url, headers=self._headers())
+                if resp.status_code == 401:
+                    # SID may have expired; re-auth on the persistent client and retry.
+                    self._sid = None
+                    ok = await self._authenticate()
+                    if not ok:
+                        raise ConnectionError(f"Re-authentication failed for {self.base_url}")
+                    resp = await tmp.post(url, headers=self._headers())
+                if resp.status_code >= 400:
+                    snippet = resp.text[:200]
+                    raise RuntimeError(
+                        f"Gravity request to {self.base_url} failed with HTTP {resp.status_code}: {snippet}"
+                    )
+                # Response body is consumed; the socket closes cleanly with the
+                # async-with block, discarding any trailing bytes from Pi-hole's
+                # inconsistent HTTP framing without touching self._client.
+            except httpx.RemoteProtocolError as exc:
+                if "incomplete chunked read" in str(exc).lower():
+                    logger.info("Gravity on %s: connection reset (FTL restarted — normal).", self.base_url)
+                else:
+                    raise
 
     async def get_version_info(self) -> PiholeVersionInfo:
         """Fetch installed and latest-available versions for core, FTL, and web."""

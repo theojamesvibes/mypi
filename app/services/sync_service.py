@@ -324,12 +324,28 @@ async def run_sync(
                 logger.warning("Gravity on master failed (non-fatal, continuing with export): %s", exc)
 
             # Step 2: Export teleporter zip from master (contains fresh gravity DB).
-            try:
-                master_client = await get_client(master)
-                zip_data = await master_client.get_teleporter()
-                await save_sid(master.id, master_client.sid)
-            except Exception as exc:
-                raise RuntimeError(f"Failed to export teleporter from master {master.name}: {exc}") from exc
+            # Retry once with a short delay: gravity's socket framing quirks can
+            # occasionally leave stale bytes that corrupt the first teleporter read.
+            zip_data: bytes | None = None
+            last_exc: Exception | None = None
+            for attempt in range(2):
+                try:
+                    master_client = await get_client(master)
+                    zip_data = await master_client.get_teleporter()
+                    await save_sid(master.id, master_client.sid)
+                    break
+                except Exception as exc:
+                    last_exc = exc
+                    if attempt == 0:
+                        logger.warning(
+                            "Teleporter export from %s failed (attempt 1), retrying in 2s: %s",
+                            master.name, exc,
+                        )
+                        await asyncio.sleep(2)
+            if zip_data is None:
+                raise RuntimeError(
+                    f"Failed to export teleporter from master {master.name}: {last_exc}"
+                ) from last_exc
             logger.info("Exported teleporter from master %s (%d bytes)", master.name, len(zip_data))
 
             # Step 3: Push to each replica concurrently, then run gravity on each.

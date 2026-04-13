@@ -60,7 +60,7 @@ async def _poll_stats_for(instance: PiholeInstance) -> None:
         try:
             version_info = await client.get_version_info()
         except Exception as exc:
-            logger.debug("Could not fetch version info for %s: %s", instance.name, exc)
+            logger.warning("Could not fetch version info for %s: %s", instance.name, exc)
     except Exception as exc:
         logger.warning("Failed to poll stats for %s: %s", instance.name, exc)
         snapshot = StatsSnapshot(
