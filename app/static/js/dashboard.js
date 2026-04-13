@@ -561,14 +561,22 @@ async function loadSettingsInstances() {
   if (!instances) return;
   updateStatusBadge(instances);
 
-  function versionCell(version, updateAvailable) {
+  const _versionRepos = {
+    core: 'pi-hole/pi-hole',
+    ftl:  'pi-hole/FTL',
+    web:  'pi-hole/web',
+  };
+
+  function versionCell(version, updateAvailable, type) {
     if (!version) return '<td class="small text-muted">—</td>';
+    const repo = _versionRepos[type] || 'pi-hole/pi-hole';
+    const url = `https://github.com/${repo}/releases/tag/v${encodeURIComponent(version)}`;
     if (updateAvailable === true)
-      return `<td><span class="text-danger fw-semibold" title="Update available">${escHtml(version)}</span></td>`;
+      return `<td><a href="${url}" target="_blank" class="badge bg-danger text-decoration-none" title="Update available">${escHtml(version)}</a></td>`;
     if (updateAvailable === false)
-      return `<td><span class="text-success">${escHtml(version)}</span></td>`;
-    // update_available is null — no remote data yet, show neutrally
-    return `<td><span class="text-muted">${escHtml(version)}</span></td>`;
+      return `<td><a href="${url}" target="_blank" class="badge bg-success text-decoration-none">${escHtml(version)}</a></td>`;
+    // update_available is null — no remote data yet
+    return `<td><a href="${url}" target="_blank" class="badge bg-secondary text-decoration-none">${escHtml(version)}</a></td>`;
   }
 
   function fmtLastSeen(iso) {
@@ -593,9 +601,9 @@ async function loadSettingsInstances() {
       <td class="small"><a href="${escHtml(i.url.replace(/\/+$/, '') + '/admin')}" target="_blank" class="text-muted">${escHtml(i.url)}</a></td>
       <td>${instanceDot(i.status)}${i.status}</td>
       ${fmtLastSeen(i.last_seen_at)}
-      ${versionCell(i.version_core, i.update_available_core)}
-      ${versionCell(i.version_ftl, i.update_available_ftl)}
-      ${versionCell(i.version_web, i.update_available_web)}
+      ${versionCell(i.version_core, i.update_available_core, 'core')}
+      ${versionCell(i.version_ftl, i.update_available_ftl, 'ftl')}
+      ${versionCell(i.version_web, i.update_available_web, 'web')}
     </tr>
   `).join('');
 }
