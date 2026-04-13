@@ -416,4 +416,13 @@ async def run_sync(
             asyncio.create_task(
                 pushover_service.notify_sync_failure(_state.error or "One or more replicas failed to sync")
             )
+        # Refresh Pi-hole version info after sync — FTL may have restarted on
+        # replicas after the teleporter import, so give it a moment to come back.
+        asyncio.create_task(_refresh_versions_post_sync())
         return _state
+
+
+async def _refresh_versions_post_sync() -> None:
+    await asyncio.sleep(15)
+    from app.services.collector import fetch_all_instance_versions
+    await fetch_all_instance_versions()

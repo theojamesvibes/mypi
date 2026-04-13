@@ -4,6 +4,15 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.1.3] - 2026-04-13
+
+### Fixed
+- **Pi-hole version check DB churn** — `_refresh_instance_update_flags()` is now skipped when the fetched latest versions are unchanged from the cached values (e.g. repeated GitHub failures or no new release). Eliminates redundant writes on every hourly check when GitHub is unreachable.
+- **Pi-hole installed versions fetched at startup and post-sync** — a lightweight version fetch (no stats, no query poll) now runs for all active instances immediately at startup and 15 seconds after each sync completes (to allow FTL to restart after teleporter import). This ensures the Instances table always shows current installed versions without waiting for the next 60-second stats poll.
+- **Version check failure notices** — the Instances table now shows a concise warning at the bottom if the MyPi or Pi-hole GitHub version check failed (e.g. no internet access to GitHub). The notice only appears when a check was attempted and produced no result; it is hidden when checks are disabled or passing normally.
+
+---
+
 ## [1.1.2] - 2026-04-13
 
 ### Fixed

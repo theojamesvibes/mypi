@@ -131,6 +131,7 @@ async def check_now() -> None:
                     logger.warning("Pi-hole version check failed for %s: %s", component, exc)
                     # Preserve last known value on transient failure
                     new_latest[component] = _latest.get(component, "")
+        versions_changed = new_latest != _latest
         _latest = new_latest
         _checked_at = datetime.now(timezone.utc)
         await _persist()
@@ -138,7 +139,10 @@ async def check_now() -> None:
             "Pi-hole version check complete — core=%s, ftl=%s, web=%s",
             _latest.get("core"), _latest.get("ftl"), _latest.get("web"),
         )
-        await _refresh_instance_update_flags()
+        # Only recompute instance update flags when the latest versions actually
+        # changed; skips unnecessary DB writes on repeated failures or no-change polls.
+        if versions_changed:
+            await _refresh_instance_update_flags()
     except Exception as exc:
         logger.warning("Pi-hole version check error: %s", exc)
     finally:

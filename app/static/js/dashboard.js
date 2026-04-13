@@ -606,6 +606,23 @@ async function loadSettingsInstances() {
       ${versionCell(i.version_web, i.update_available_web, 'web')}
     </tr>
   `).join('');
+
+  // Version check health notices
+  const noticeDiv = document.getElementById('instances-version-notice');
+  if (noticeDiv) {
+    const [mypi, pihole] = await Promise.all([
+      apiFetch('/api/version/status'),
+      apiFetch('/api/version/pihole-status'),
+    ]);
+    const notices = [];
+    if (mypi?.enabled && mypi?.checked_at && !mypi?.latest_version)
+      notices.push('<i class="bi bi-exclamation-triangle text-warning me-1"></i>MyPi version check failed');
+    if (pihole?.enabled && pihole?.checked_at && !pihole?.latest_core)
+      notices.push('<i class="bi bi-exclamation-triangle text-warning me-1"></i>Pi-hole version check failed');
+    noticeDiv.innerHTML = notices.length
+      ? `<span class="text-muted">${notices.join('<span class="mx-2">·</span>')}</span>`
+      : '';
+  }
 }
 
 // ─── Stale (orphaned) instances ──────────────────────────────────────────────
