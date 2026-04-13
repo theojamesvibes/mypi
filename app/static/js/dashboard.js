@@ -1239,75 +1239,118 @@ async function saveSessionTimeout() {
 
 // ─── Version check settings ───────────────────────────────────────────────────
 
+function updateCheckNowState() {
+  const mypiEnabled  = document.getElementById('vc-enabled')?.checked ?? true;
+  const piholeEnabled = document.getElementById('vc-pihole-enabled')?.checked ?? true;
+  const btn = document.getElementById('vc-check-btn');
+  if (btn) btn.disabled = !mypiEnabled && !piholeEnabled;
+}
+
 async function loadVersionCheckSettings() {
-  const data = await apiFetch('/api/version/status');
-  if (!data) return;
+  const [mypi, pihole] = await Promise.all([
+    apiFetch('/api/version/status'),
+    apiFetch('/api/version/pihole-status'),
+  ]);
 
-  const badge  = document.getElementById('vc-badge');
-  const status = document.getElementById('vc-status');
-  const cb     = document.getElementById('vc-enabled');
+  // ── MyPi ──
+  if (mypi) {
+    const badge  = document.getElementById('vc-badge');
+    const status = document.getElementById('vc-status');
+    const cb     = document.getElementById('vc-enabled');
+    if (cb) cb.checked = mypi.enabled;
 
-  if (cb) cb.checked = data.enabled;
-
-  if (!data.enabled) {
-    if (badge)  { badge.className = 'badge bg-secondary'; badge.textContent = 'disabled'; }
-    if (status) status.innerHTML = '<span class="text-muted">Version checking is off.</span>';
-    return;
+    if (!mypi.enabled) {
+      if (badge)  { badge.className = 'badge bg-secondary'; badge.textContent = 'MyPi disabled'; }
+      if (status) status.innerHTML = '<span class="text-muted">Version checking is off.</span>';
+    } else if (!mypi.latest_version) {
+      if (badge)  { badge.className = 'badge bg-secondary'; badge.textContent = 'MyPi unknown'; }
+      if (status) status.innerHTML = '<span class="text-muted">No check performed yet.</span>';
+    } else {
+      const checked = mypi.checked_at ? new Date(mypi.checked_at).toLocaleString() : '—';
+      if (mypi.up_to_date) {
+        if (badge)  { badge.className = 'badge bg-success'; badge.textContent = 'MyPi current'; }
+        if (status) status.innerHTML =
+          `<span class="text-success"><i class="bi bi-check-circle me-1"></i>v${escHtml(mypi.current_version)} is the latest</span>
+           <span class="text-muted ms-2" style="font-size:0.72rem;">checked ${escHtml(checked)}</span>`;
+      } else {
+        if (badge)  { badge.className = 'badge bg-danger'; badge.textContent = 'MyPi update'; }
+        if (status) status.innerHTML =
+          `<span class="text-danger"><i class="bi bi-exclamation-circle me-1"></i>Update available: v${escHtml(mypi.latest_version)}</span>
+           <a href="${escHtml(mypi.release_url)}" target="_blank" class="btn btn-xs btn-outline-danger ms-2 py-0 px-1" style="font-size:0.75rem;">View release</a>
+           <span class="text-muted ms-2" style="font-size:0.72rem;">checked ${escHtml(checked)}</span>`;
+      }
+    }
   }
 
-  if (!data.latest_version) {
-    if (badge)  { badge.className = 'badge bg-secondary'; badge.textContent = 'not checked'; }
-    if (status) status.innerHTML = '<span class="text-muted">No check performed yet.</span>';
-    return;
+  // ── Pi-hole ──
+  if (pihole) {
+    const badge  = document.getElementById('vc-pihole-badge');
+    const status = document.getElementById('vc-pihole-status');
+    const cb     = document.getElementById('vc-pihole-enabled');
+    if (cb) cb.checked = pihole.enabled;
+
+    if (!pihole.enabled) {
+      if (badge)  { badge.className = 'badge bg-secondary'; badge.textContent = 'Pi-hole disabled'; }
+      if (status) status.innerHTML = '<span class="text-muted">Pi-hole version checking is off.</span>';
+    } else if (!pihole.latest_core) {
+      if (badge)  { badge.className = 'badge bg-secondary'; badge.textContent = 'Pi-hole unknown'; }
+      if (status) status.innerHTML = '<span class="text-muted">No check performed yet.</span>';
+    } else {
+      const checked = pihole.checked_at ? new Date(pihole.checked_at).toLocaleString() : '—';
+      if (badge)  { badge.className = 'badge bg-success'; badge.textContent = 'Pi-hole checked'; }
+      if (status) status.innerHTML =
+        `<span class="text-muted"><i class="bi bi-check-circle me-1"></i>Latest — core: ${escHtml(pihole.latest_core)}, FTL: ${escHtml(pihole.latest_ftl)}, web: ${escHtml(pihole.latest_web)}</span>
+         <span class="text-muted ms-2" style="font-size:0.72rem;">checked ${escHtml(checked)}</span>`;
+    }
   }
 
-  const upToDate = data.up_to_date;
-  const checked  = data.checked_at ? new Date(data.checked_at).toLocaleString() : '—';
-
-  if (upToDate) {
-    if (badge)  { badge.className = 'badge bg-success'; badge.textContent = 'up to date'; }
-    if (status) status.innerHTML =
-      `<span class="text-success"><i class="bi bi-check-circle me-1"></i>v${escHtml(data.current_version)} is the latest</span>
-       <span class="text-muted ms-2" style="font-size:0.72rem;">checked ${escHtml(checked)}</span>`;
-  } else {
-    if (badge)  { badge.className = 'badge bg-danger'; badge.textContent = 'update available'; }
-    if (status) status.innerHTML =
-      `<span class="text-danger"><i class="bi bi-exclamation-circle me-1"></i>Update available: v${escHtml(data.latest_version)}</span>
-       <a href="${escHtml(data.release_url)}" target="_blank" class="btn btn-xs btn-outline-danger ms-2 py-0 px-1" style="font-size:0.75rem;">View release</a>
-       <span class="text-muted ms-2" style="font-size:0.72rem;">checked ${escHtml(checked)}</span>`;
-  }
+  updateCheckNowState();
 }
 
 async function saveVersionCheckSettings() {
-  const enabled = document.getElementById('vc-enabled')?.checked ?? true;
-  const btn = document.querySelector('[onclick="saveVersionCheckSettings()"]');
-  const res = await fetch('/api/version/settings', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify({ enabled }),
-  });
-  if (res.status === 401) { window.location.href = '/login'; return; }
+  const mypiEnabled   = document.getElementById('vc-enabled')?.checked ?? true;
+  const piholeEnabled = document.getElementById('vc-pihole-enabled')?.checked ?? true;
+  const btn = document.getElementById('vc-save-btn');
+
+  const [res1, res2] = await Promise.all([
+    fetch('/api/version/settings', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      credentials: 'include', body: JSON.stringify({ enabled: mypiEnabled }),
+    }),
+    fetch('/api/version/pihole-settings', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      credentials: 'include', body: JSON.stringify({ enabled: piholeEnabled }),
+    }),
+  ]);
+  if (res1.status === 401 || res2.status === 401) { window.location.href = '/login'; return; }
+
+  const ok = res1.ok && res2.ok;
   if (btn) {
     const orig = btn.innerHTML;
-    btn.innerHTML = res.ok ? '<i class="bi bi-check me-1"></i>Saved' : '<i class="bi bi-x me-1"></i>Failed';
-    btn.classList.replace('btn-outline-primary', res.ok ? 'btn-success' : 'btn-danger');
+    btn.innerHTML = ok ? '<i class="bi bi-check me-1"></i>Saved' : '<i class="bi bi-x me-1"></i>Failed';
+    btn.classList.replace('btn-outline-primary', ok ? 'btn-success' : 'btn-danger');
     setTimeout(() => {
       btn.innerHTML = orig;
-      btn.classList.replace(res.ok ? 'btn-success' : 'btn-danger', 'btn-outline-primary');
+      btn.classList.replace(ok ? 'btn-success' : 'btn-danger', 'btn-outline-primary');
     }, 2000);
   }
-  if (res.ok) loadVersionCheckSettings();
+  if (ok) loadVersionCheckSettings();
 }
 
 async function checkVersionNow() {
-  const btn = document.querySelector('[onclick="checkVersionNow()"]');
+  const btn = document.getElementById('vc-check-btn');
   if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-arrow-clockwise spin me-1"></i>Checking…'; }
   try {
-    const res = await fetch('/api/version/check', { method: 'POST', credentials: 'include' });
-    if (res.ok) await loadVersionCheckSettings();
+    const mypiEnabled   = document.getElementById('vc-enabled')?.checked ?? true;
+    const piholeEnabled = document.getElementById('vc-pihole-enabled')?.checked ?? true;
+    const checks = [];
+    if (mypiEnabled)   checks.push(fetch('/api/version/check',        { method: 'POST', credentials: 'include' }));
+    if (piholeEnabled) checks.push(fetch('/api/version/pihole-check', { method: 'POST', credentials: 'include' }));
+    if (checks.length) await Promise.all(checks);
+    await loadVersionCheckSettings();
   } finally {
     if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i>Check now'; }
+    updateCheckNowState();
   }
 }
 
