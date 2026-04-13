@@ -472,6 +472,18 @@ async function loadSettingsInstances() {
     return `<td><span class="text-muted">${escHtml(version)}</span></td>`;
   }
 
+  function fmtLastSeen(iso) {
+    if (!iso) return '<td class="small text-muted">—</td>';
+    const d = new Date(iso);
+    const diffMins = Math.floor((Date.now() - d) / 60000);
+    let label;
+    if (diffMins < 1) label = 'just now';
+    else if (diffMins < 60) label = `${diffMins}m ago`;
+    else if (diffMins < 1440) label = `${Math.floor(diffMins / 60)}h ago`;
+    else label = d.toLocaleDateString();
+    return `<td class="small text-muted" title="${d.toLocaleString()}">${label}</td>`;
+  }
+
   tbody.innerHTML = instances.map(i => `
     <tr>
       <td class="ps-3">
@@ -479,7 +491,9 @@ async function loadSettingsInstances() {
         ${escHtml(i.name)}
         ${i.is_master ? '<span class="badge bg-primary ms-1" style="font-size:0.65rem;">master</span>' : ''}
       </td>
+      <td class="small text-muted">${escHtml(i.url)}</td>
       <td>${instanceDot(i.status)}${i.status}</td>
+      ${fmtLastSeen(i.last_seen_at)}
       ${versionCell(i.version_core, i.update_available_core)}
       ${versionCell(i.version_ftl, i.update_available_ftl)}
       ${versionCell(i.version_web, i.update_available_web)}
