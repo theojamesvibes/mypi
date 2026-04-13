@@ -27,3 +27,11 @@ class QueryLogPage(BaseModel):
     page: int
     page_size: int
     items: list[QueryLogEntry]
+
+
+class ClientSummary(BaseModel):
+    client_ip: str
+    client_name: str
+    total_queries: int
+    blocked_queries: int
+    last_seen: datetime | None = None

@@ -4,6 +4,22 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.1.0] - 2026-04-13
+
+### Added
+- **Stat card footer links** — each of the four dashboard summary cards now has a Pi-hole–style footer strip with a clickable link: Total Queries → Query Log (Unique Clients view); Queries Blocked → Query Log (blocked only); Percent Blocked → Query Log (all queries); Domains on Blocklist → master Pi-hole's `groups-lists` page in a new tab. The client count in the Total Queries footer is populated from live summary data.
+- **Unique Clients view in Query Log** — new "Unique Clients" option in the Show dropdown. Switches the table to a per-client aggregate view (client name/IP, total queries, blocked count, % blocked, last seen) backed by a new `GET /api/queries/clients` endpoint. Navigating from the dashboard card pre-selects this view automatically.
+- **Query Log URL param pre-selection** — navigating to `/queries?blocked=true`, `/queries?blocked=false`, or `/queries?show=clients` now pre-sets the Show filter automatically, enabling direct deep links from the dashboard.
+- **Dashboard time range expansion** — added "Last 15 minutes", "Last 1 hour", and "Today" (since local midnight) to the time range selector. Sub-hour and today windows pass an ISO `since` timestamp to the backend; chart bucket granularity scales automatically (1 min for 15 min, 5 min for 1 hr, 30 min for Today, 60 min for 7 d, etc.). Default remains 24 hours.
+- **Version check** — MyPi now checks its own GitHub repository for a new release once per hour. The version badge in the top bar turns green (up to date) or red (update available) and links directly to the GitHub releases page. An initial check runs at startup. A new "Version Check" card on the Settings page shows current vs latest version, last check time, a "Check now" button, and a toggle to disable checking entirely. State (enabled flag, latest version, last checked) is persisted in the `app_settings` table.
+- **Settings URL hyperlinks** — the URL column in the Pi-hole Instances table is now a clickable link that opens the Pi-hole web UI in a new tab.
+
+### Changed
+- **Settings panel order** — Pushover Notifications moved below Session Timeout (less frequently used settings lower in the page). New order: Instances → Sync → Session Timeout → Pushover → Version Check → API Keys → REST API.
+- **Stats API** — all three endpoints (`/api/stats/summary`, `/api/stats/history`, `/api/stats/top`) now accept an optional `since` (ISO 8601 datetime) parameter in addition to `hours`, enabling sub-hour and calendar-day windows. `/api/stats/history` also accepts `bucket_minutes` to control chart bucket granularity.
+
+---
+
 ## [1.0.18] - 2026-04-13
 
 ### Added

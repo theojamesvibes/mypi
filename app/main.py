@@ -17,6 +17,7 @@ from app.api import notifications as notifications_router
 from app.api import queries as queries_router
 from app.api import stats as stats_router
 from app.api import sync as sync_router
+from app.api import version as version_router
 from app.auth import get_current_user, get_current_user_optional, hash_password
 from app.config import SESSION_COOKIE_NAME, settings
 from app.database import AsyncSessionLocal, get_db
@@ -26,6 +27,7 @@ from app.services.config_loader import sync_instances
 from app.services import pushover as pushover_service
 from app.services import session_settings
 from app.services import sync_service
+from app.services import version_check as version_check_service
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -55,14 +57,20 @@ async def _bootstrap() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("MyPi version %s starting up", APP_VERSION)
+    version_check_service.initialize(APP_VERSION)
     await _bootstrap()
     await sync_service.load_schedule()
     await pushover_service.load_settings()
     await session_settings.load_settings()
+    await version_check_service.load_settings()
     scheduler.add_job(poll_stats, "interval", seconds=settings.stats_poll_interval, id="poll_stats")
     scheduler.add_job(poll_queries, "interval", seconds=settings.queries_poll_interval, id="poll_queries")
     scheduler.add_job(cleanup_old_data, "cron", hour=3, minute=0, id="cleanup")
+    scheduler.add_job(version_check_service.check_now, "interval", hours=1, id="version_check")
     scheduler.start()
+    # Run an initial version check in the background without blocking startup
+    import asyncio as _asyncio
+    _asyncio.create_task(version_check_service.check_now())
     logger.info("Scheduler started (stats every %ds, queries every %ds).",
                 settings.stats_poll_interval, settings.queries_poll_interval)
     yield
@@ -88,6 +96,7 @@ app.include_router(stats_router.router)
 app.include_router(queries_router.router)
 app.include_router(sync_router.router)
 app.include_router(notifications_router.router)
+app.include_router(version_router.router)
 
 
 # ── Web UI routes ─────────────────────────────────────────────────────────────

@@ -71,15 +71,51 @@ async function apiFetch(url) {
 
 // ─── Dashboard ───────────────────────────────────────────────────────────────
 
+// ─── Time range helpers ───────────────────────────────────────────────────────
+
+function getTimeParams() {
+  const val = document.getElementById('time-range')?.value || '24';
+  let since = null, hours = null, bucketMinutes = 10;
+  if (val === '15m') {
+    since = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+    bucketMinutes = 1;
+  } else if (val === '1h') {
+    since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    bucketMinutes = 5;
+  } else if (val === 'today') {
+    const d = new Date(); d.setHours(0, 0, 0, 0);
+    since = d.toISOString();
+    bucketMinutes = 30;
+  } else {
+    hours = parseInt(val);
+    if (hours >= 168) bucketMinutes = 60;
+    else if (hours >= 48) bucketMinutes = 30;
+    else bucketMinutes = 10;
+  }
+  return { since, hours, bucketMinutes };
+}
+
+function buildTimeQS(extra) {
+  const { since, hours, bucketMinutes } = getTimeParams();
+  const base = since ? `since=${encodeURIComponent(since)}` : `hours=${hours}`;
+  return extra ? `${base}&${extra}` : base;
+}
+
+// ─── Dashboard ───────────────────────────────────────────────────────────────
+
+// Master Pi-hole URL — set when instances load; used for Manage Lists footer link.
+let _masterUrl = '';
+
 async function loadDashboard() {
-  const hours = document.getElementById('time-range')?.value || 24;
+  const { since, hours, bucketMinutes } = getTimeParams();
+  const tp = since ? `since=${encodeURIComponent(since)}` : `hours=${hours}`;
 
   try {
     const [summary, instances, history, top] = await Promise.all([
-      apiFetch(`/api/stats/summary?hours=${hours}`),
+      apiFetch(`/api/stats/summary?${tp}`),
       apiFetch('/api/instances'),
-      apiFetch(`/api/stats/history?hours=${hours}`),
-      apiFetch(`/api/stats/top?hours=${hours}&limit=10`),
+      apiFetch(`/api/stats/history?${tp}&bucket_minutes=${bucketMinutes}`),
+      apiFetch(`/api/stats/top?${tp}&limit=10`),
     ]);
 
     if (!summary) return;
@@ -89,6 +125,18 @@ async function loadDashboard() {
     document.getElementById('queries-blocked').textContent = fmtNum(summary.totals.queries_blocked);
     document.getElementById('percent-blocked').textContent = fmtPct(summary.totals.percent_blocked);
     document.getElementById('blocklist-size').textContent = fmtNum(summary.totals.domains_on_blocklist);
+
+    // Stat card footers
+    const clientsFooter = document.getElementById('stat-footer-clients');
+    if (clientsFooter) clientsFooter.textContent = `${fmtNum(summary.totals.unique_clients)} unique clients`;
+
+    // Master URL for Manage Lists footer
+    const master = instances.find(i => i.is_master);
+    if (master && master.url) {
+      _masterUrl = master.url;
+      const blFooter = document.getElementById('stat-footer-blocklist');
+      if (blFooter) blFooter.href = master.url.replace(/\/+$/, '') + '/admin/groups-lists';
+    }
 
     // Blocklist validation — check if all online instances agree
     const onlineInsts = instances.filter(i => i.status === 'online' && i.domains_on_blocklist != null);
@@ -106,7 +154,7 @@ async function loadDashboard() {
       if (blWarning) blWarning.classList.add('d-none');
     }
 
-    _drillHours = hours;
+    _drillHours = hours || 24;
 
     // Online count badge
     updateStatusBadge(instances);
@@ -296,6 +344,20 @@ async function loadQueries(page) {
   const blocked = document.getElementById('f-blocked')?.value || '';
   const hours = document.getElementById('f-hours')?.value || 24;
 
+  // Toggle table header based on view mode
+  const theadDefault = document.getElementById('queries-thead-default');
+  const theadClients = document.getElementById('queries-thead-clients');
+
+  if (blocked === 'clients') {
+    if (theadDefault) theadDefault.classList.add('d-none');
+    if (theadClients) theadClients.classList.remove('d-none');
+    await loadClientSummary(hours, instance);
+    return;
+  }
+
+  if (theadDefault) theadDefault.classList.remove('d-none');
+  if (theadClients) theadClients.classList.add('d-none');
+
   const params = new URLSearchParams({
     page: currentPage, page_size: 100, hours,
     sort_by: _sortBy, sort_dir: _sortDir,
@@ -338,6 +400,43 @@ async function loadQueries(page) {
 
   } catch (err) {
     console.error('Query log error:', err);
+  }
+}
+
+async function loadClientSummary(hours, instanceId) {
+  const params = new URLSearchParams({ hours });
+  if (instanceId) params.set('instance_id', instanceId);
+
+  try {
+    const data = await apiFetch(`/api/queries/clients?${params}`);
+    if (!data) return;
+
+    const tbody = document.getElementById('queries-tbody');
+    if (!tbody) return;
+
+    document.getElementById('query-count').textContent = `${fmtNum(data.length)} unique clients`;
+
+    tbody.innerHTML = data.length
+      ? data.map(c => {
+          const pct = c.total_queries > 0
+            ? ((c.blocked_queries / c.total_queries) * 100).toFixed(1) + '%'
+            : '0.0%';
+          return `<tr>
+            <td class="small">${escHtml(c.client_name || c.client_ip || '—')}</td>
+            <td class="text-end small">${fmtNum(c.total_queries)}</td>
+            <td class="text-end small">${fmtNum(c.blocked_queries)}</td>
+            <td class="text-end small">${pct}</td>
+            <td class="small text-muted">${c.last_seen ? fmtTime(c.last_seen) : '—'}</td>
+          </tr>`;
+        }).join('')
+      : '<tr><td colspan="5" class="text-center text-muted py-4">No clients found.</td></tr>';
+
+    // Clear pagination — client summary is not paginated
+    renderPagination('pagination-top', 1, 1);
+    renderPagination('pagination-bottom', 1, 1);
+
+  } catch (err) {
+    console.error('Client summary error:', err);
   }
 }
 
@@ -491,7 +590,7 @@ async function loadSettingsInstances() {
         ${escHtml(i.name)}
         ${i.is_master ? '<span class="badge bg-primary ms-1" style="font-size:0.65rem;">master</span>' : ''}
       </td>
-      <td class="small text-muted">${escHtml(i.url)}</td>
+      <td class="small"><a href="${escHtml(i.url)}" target="_blank" class="text-muted">${escHtml(i.url)}</a></td>
       <td>${instanceDot(i.status)}${i.status}</td>
       ${fmtLastSeen(i.last_seen_at)}
       ${versionCell(i.version_core, i.update_available_core)}
@@ -1127,6 +1226,80 @@ async function saveSessionTimeout() {
     btn.innerHTML = '<i class="bi bi-check me-1"></i>Saved';
     btn.classList.replace('btn-outline-secondary', 'btn-success');
     setTimeout(() => { btn.innerHTML = orig; btn.classList.replace('btn-success', 'btn-outline-secondary'); }, 2000);
+  }
+}
+
+// ─── Version check settings ───────────────────────────────────────────────────
+
+async function loadVersionCheckSettings() {
+  const data = await apiFetch('/api/version/status');
+  if (!data) return;
+
+  const badge  = document.getElementById('vc-badge');
+  const status = document.getElementById('vc-status');
+  const cb     = document.getElementById('vc-enabled');
+
+  if (cb) cb.checked = data.enabled;
+
+  if (!data.enabled) {
+    if (badge)  { badge.className = 'badge bg-secondary'; badge.textContent = 'disabled'; }
+    if (status) status.innerHTML = '<span class="text-muted">Version checking is off.</span>';
+    return;
+  }
+
+  if (!data.latest_version) {
+    if (badge)  { badge.className = 'badge bg-secondary'; badge.textContent = 'not checked'; }
+    if (status) status.innerHTML = '<span class="text-muted">No check performed yet.</span>';
+    return;
+  }
+
+  const upToDate = data.up_to_date;
+  const checked  = data.checked_at ? new Date(data.checked_at).toLocaleString() : '—';
+
+  if (upToDate) {
+    if (badge)  { badge.className = 'badge bg-success'; badge.textContent = 'up to date'; }
+    if (status) status.innerHTML =
+      `<span class="text-success"><i class="bi bi-check-circle me-1"></i>v${escHtml(data.current_version)} is the latest</span>
+       <span class="text-muted ms-2" style="font-size:0.72rem;">checked ${escHtml(checked)}</span>`;
+  } else {
+    if (badge)  { badge.className = 'badge bg-danger'; badge.textContent = 'update available'; }
+    if (status) status.innerHTML =
+      `<span class="text-danger"><i class="bi bi-exclamation-circle me-1"></i>Update available: v${escHtml(data.latest_version)}</span>
+       <a href="${escHtml(data.release_url)}" target="_blank" class="btn btn-xs btn-outline-danger ms-2 py-0 px-1" style="font-size:0.75rem;">View release</a>
+       <span class="text-muted ms-2" style="font-size:0.72rem;">checked ${escHtml(checked)}</span>`;
+  }
+}
+
+async function saveVersionCheckSettings() {
+  const enabled = document.getElementById('vc-enabled')?.checked ?? true;
+  const btn = document.querySelector('[onclick="saveVersionCheckSettings()"]');
+  const res = await fetch('/api/version/settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ enabled }),
+  });
+  if (res.status === 401) { window.location.href = '/login'; return; }
+  if (btn) {
+    const orig = btn.innerHTML;
+    btn.innerHTML = res.ok ? '<i class="bi bi-check me-1"></i>Saved' : '<i class="bi bi-x me-1"></i>Failed';
+    btn.classList.replace('btn-outline-primary', res.ok ? 'btn-success' : 'btn-danger');
+    setTimeout(() => {
+      btn.innerHTML = orig;
+      btn.classList.replace(res.ok ? 'btn-success' : 'btn-danger', 'btn-outline-primary');
+    }, 2000);
+  }
+  if (res.ok) loadVersionCheckSettings();
+}
+
+async function checkVersionNow() {
+  const btn = document.querySelector('[onclick="checkVersionNow()"]');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-arrow-clockwise spin me-1"></i>Checking…'; }
+  try {
+    const res = await fetch('/api/version/check', { method: 'POST', credentials: 'include' });
+    if (res.ok) await loadVersionCheckSettings();
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i>Check now'; }
   }
 }
 

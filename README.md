@@ -1,6 +1,6 @@
 # MyPi
 [![build](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/docker-publish.yml?style=flat-square)](https://github.com/theojamesvibes/mypi/actions)
-[![version](https://img.shields.io/badge/version-1.0.17-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
+[![version](https://img.shields.io/badge/version-1.1.0-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
 [![platform](https://img.shields.io/badge/platform-linux%2Famd64%20|%20linux%2Farm64-teal?style=flat-square)](https://github.com/theojamesvibes/mypi/pkgs/container/mypi)
 
 > **⚠️ Vibe Code Disclosure**
@@ -22,7 +22,9 @@ A self-hosted dashboard that consolidates up to 10 locally running [Pi-hole](htt
 
 ### Dashboard
 - **Unified stat cards** — Total queries, blocked count, % blocked, and domains on blocklist aggregated across all instances; blocklist card turns red if instances disagree
-- **DNS Queries over Time chart** — Bar chart per 10-minute bucket from actual query log data (not cumulative counters)
+- **Stat card footer links** — each card has a Pi-hole–style footer: unique client count (→ Unique Clients view), List blocked queries, List all queries, Manage lists (→ master Pi-hole admin in new tab)
+- **Time range selector** — Last 15 minutes, Last 1 hour, Today, Last 24 hours (default), 48 hours, 7 days, 30 days; chart bucket granularity scales automatically with the window
+- **DNS Queries over Time chart** — configurable bucket size per time range, from actual query log data (not cumulative counters)
 - **Query type breakdown** — Doughnut chart (Forwarded / Cached / Blocked / Other)
 - **Per-system panel** — Each Pi-hole shown individually with its own stats and online/offline badge
 - **Top Permitted Domains, Top Blocked Domains, Top Clients** — Clickable rows open a drill-down modal with all matching queries for that domain or client
@@ -31,6 +33,8 @@ A self-hosted dashboard that consolidates up to 10 locally running [Pi-hole](htt
 - Consolidated query log across all instances with instance badge per row
 - Column sorting (click any header), pagination, and a **Live View** toggle that refreshes every 2 seconds
 - Filter by instance, domain, client, blocked/permitted status, and time range
+- **Unique Clients view** — Show dropdown option that switches to a per-client aggregate table (total queries, blocked count, % blocked, last seen); accessible directly from the dashboard stat card
+- Deep-link URL params: `/queries?blocked=true`, `/queries?blocked=false`, `/queries?show=clients` pre-set the Show filter automatically
 - Last-updated timestamp shown in the topbar after each refresh
 
 ### Pi-hole Sync
@@ -52,17 +56,19 @@ A self-hosted dashboard that consolidates up to 10 locally running [Pi-hole](htt
 
 ### Settings
 - API key management (create / revoke) for iOS app authentication
-- Instance list showing all active Pi-hole instances with online/offline badge and master indicator
+- Instance list showing all active Pi-hole instances with online/offline badge, master indicator, and clickable URL links (open Pi-hole web UI in new tab)
 - **Orphaned instance cleanup** — when an instance is renamed or removed from `pihole_instances.yml`, the old record is detected and shown with an option to permanently remove it along with all associated stats and query log data, individually or in bulk
 - **Software versions** — Pi-hole (core), FTL, and web interface versions shown as columns in the instances table; fetched on each stats poll and persisted to the database so they survive restarts; color-coded green (up to date) or red (update available)
 - Sync panel: import options, schedule configuration, live sync result with per-replica status
+- Session Timeout panel: configure how long the web UI session stays active
 - Pushover panel: credentials, master enable toggle, per-alert toggles, thresholds
+- **Version Check panel** — shows running vs latest version, last check time; version badge in topbar turns green/red; checks GitHub once per hour (can be disabled)
 
 ### API & Auth
 - Full REST API under `/api/` with auto-generated OpenAPI docs (Swagger UI at `/docs`, ReDoc at `/redoc`)
 - Username/password login for the web UI (JWT session cookie)
 - API key auth (`X-API-Key` header) for mobile clients and automation
-- Version number displayed in the topbar for quick at-a-glance identification
+- Version badge in topbar is green (up to date) or red (update available), links to GitHub releases
 
 ---
 
