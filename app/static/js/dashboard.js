@@ -506,6 +506,54 @@ async function loadStaleInstances() {
   `).join('');
 }
 
+// ─── Pi-hole software versions ───────────────────────────────────────────────
+
+async function loadInstanceVersions() {
+  const tbody = document.getElementById('versions-tbody');
+  if (!tbody) return;
+
+  const data = await apiFetch('/api/instances/versions');
+  if (!data) {
+    tbody.innerHTML = '<tr><td colspan="4" class="text-danger small ps-3 py-2">Failed to load version info.</td></tr>';
+    return;
+  }
+  if (data.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" class="text-muted small ps-3 py-2">No instances configured.</td></tr>';
+    return;
+  }
+
+  function versionCell(comp) {
+    if (!comp || !comp.current) return '<td class="small text-muted">—</td>';
+    const upd = comp.update_available;
+    const hasLatest = comp.latest && comp.latest !== comp.current;
+    const isOutdated = upd === true || (upd === null && hasLatest);
+    const isUpToDate = upd === false || (upd === null && comp.latest && !hasLatest);
+    const tooltip = comp.latest ? ` title="Latest: ${escHtml(comp.latest)}"` : '';
+    if (isOutdated) {
+      return `<td><span class="text-danger fw-semibold"${tooltip}>${escHtml(comp.current)}</span>`
+        + (comp.latest ? ` <span class="text-muted" style="font-size:0.7rem;">→ ${escHtml(comp.latest)}</span>` : '')
+        + '</td>';
+    }
+    if (isUpToDate) {
+      return `<td><span class="text-success"${tooltip}>${escHtml(comp.current)}</span></td>`;
+    }
+    return `<td><span class="text-muted">${escHtml(comp.current)}</span></td>`;
+  }
+
+  tbody.innerHTML = data.map(inst => {
+    const nameCell = `<td class="ps-3">
+      <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${inst.color};margin-right:6px;"></span>
+      ${escHtml(inst.name)}
+      ${inst.is_master ? '<span class="badge bg-primary ms-1" style="font-size:0.65rem;">master</span>' : ''}
+    </td>`;
+
+    if (inst.error) {
+      return `<tr>${nameCell}<td colspan="3" class="text-danger small">${escHtml(inst.error)}</td></tr>`;
+    }
+    return `<tr>${nameCell}${versionCell(inst.core)}${versionCell(inst.ftl)}${versionCell(inst.web)}</tr>`;
+  }).join('');
+}
+
 async function deleteStaleInstance(id, name) {
   if (!confirm(`Remove orphaned instance "${name}" and all its historical data? This cannot be undone.`)) return;
   try {
