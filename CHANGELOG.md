@@ -4,6 +4,14 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.1.1] - 2026-04-13
+
+### Changed
+- **Pi-hole version pills** — the Pi-hole, FTL, and Web version columns in the Settings → Instances table now render as filled Bootstrap pill badges (green = up to date, red = update available, grey = not yet checked) matching the MyPi version badge style. Each pill is a clickable link to the corresponding release on GitHub (pi-hole/pi-hole, pi-hole/FTL, pi-hole/web).
+- **Settings instances legend removed** — the "Up to date / Update available" legend row below the instances table has been removed; the pills are self-explanatory.
+
+---
+
 ## [1.1.0] - 2026-04-13
 
 ### Added
