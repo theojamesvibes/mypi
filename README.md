@@ -1,6 +1,6 @@
 # MyPi
 [![build](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/docker-publish.yml?style=flat-square)](https://github.com/theojamesvibes/mypi/actions)
-[![version](https://img.shields.io/badge/version-1.1.0-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
+[![version](https://img.shields.io/badge/version-1.2.0-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
 [![platform](https://img.shields.io/badge/platform-linux%2Famd64%20|%20linux%2Farm64-teal?style=flat-square)](https://github.com/theojamesvibes/mypi/pkgs/container/mypi)
 
 > **⚠️ Vibe Code Disclosure**
@@ -55,6 +55,7 @@ A self-hosted dashboard that consolidates up to 10 locally running [Pi-hole](htt
 - Validate credentials and send a test notification directly from the Settings page
 
 ### Settings
+- **Appearance** — Light / Dark / System theme selector; preference stored in the browser and applied before first paint (no theme flash); Dark mode covers all UI surfaces including charts
 - API key management (create / revoke) for iOS app authentication
 - Instance list showing all active Pi-hole instances with online/offline badge, master indicator, and clickable URL links (open Pi-hole web UI in new tab)
 - **Orphaned instance cleanup** — when an instance is renamed or removed from `pihole_instances.yml`, the old record is detected and shown with an option to permanently remove it along with all associated stats and query log data, individually or in bulk
@@ -404,6 +405,7 @@ uvicorn app.main:app --reload --port 8080
 - [x] Drill-down modals on top blocked domains and top clients
 - [x] Pushover push notifications (sync failure, offline, no logs, high block rate)
 - [x] Topbar sync status badge (green/yellow/red) on every page
+- [x] Dark / Light / System theme with no flash on load
 - [ ] iOS app
 - [ ] Blocking / unblocking domains via the aggregated UI
 

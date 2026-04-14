@@ -215,10 +215,19 @@ function renderQueriesChart(buckets) {
     options: {
       responsive: true,
       maintainAspectRatio: true,
-      plugins: { legend: { display: false } },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: getChartColors().tipBg,
+          titleColor: getChartColors().tipText,
+          bodyColor: getChartColors().tipText,
+          borderColor: getChartColors().grid,
+          borderWidth: 1,
+        },
+      },
       scales: {
-        x: { grid: { display: false }, ticks: { maxTicksLimit: 12, font: { size: 10 } } },
-        y: { beginAtZero: true, ticks: { font: { size: 10 } } },
+        x: { grid: { display: false }, ticks: { maxTicksLimit: 12, font: { size: 10 }, color: getChartColors().tick } },
+        y: { beginAtZero: true, grid: { color: getChartColors().grid }, ticks: { font: { size: 10 }, color: getChartColors().tick } },
       },
     },
   });
@@ -250,13 +259,22 @@ function renderTypeChart(totals) {
       datasets: [{
         data: [forwarded, cached, blocked, other],
         backgroundColor: ['#3c8dbc', '#00c0ef', '#dd4b39', '#aaa'],
+        borderColor: getChartColors().border,
         borderWidth: 2,
       }],
     },
     options: {
       responsive: true,
       plugins: {
-        legend: { position: 'bottom', labels: { font: { size: 11 }, padding: 10 } },
+        legend: {
+          position: 'bottom',
+          labels: { font: { size: 11 }, padding: 10, color: getChartColors().tick },
+        },
+        tooltip: {
+          backgroundColor: getChartColors().tipBg,
+          titleColor: getChartColors().tipText,
+          bodyColor: getChartColors().tipText,
+        },
       },
       cutout: '65%',
     },
@@ -1370,6 +1388,52 @@ async function checkVersionNow() {
     updateCheckNowState();
   }
 }
+
+// ─── Theme ───────────────────────────────────────────────────────────────────
+
+function getChartColors() {
+  const dark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
+  return {
+    tick:    dark ? '#adb5bd' : '#666',
+    grid:    dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
+    tipBg:   dark ? '#2b2b2b' : '#fff',
+    tipText: dark ? '#e0e0e0' : '#333',
+    border:  dark ? '#212529' : '#fff',
+  };
+}
+
+function applyTheme(pref) {
+  const resolved = pref === 'system'
+    ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+    : pref;
+  document.documentElement.setAttribute('data-bs-theme', resolved);
+  // Trigger chart re-render if on dashboard
+  if (document.getElementById('queriesChart') || document.getElementById('typeChart')) {
+    if (typeof loadDashboard === 'function') loadDashboard();
+  }
+}
+
+function setTheme(pref) {
+  localStorage.setItem('mypi-theme', pref);
+  applyTheme(pref);
+  ['light', 'dark', 'system'].forEach(t => {
+    const btn = document.getElementById('theme-btn-' + t);
+    if (btn) btn.classList.toggle('active', t === pref);
+  });
+}
+
+function initThemeButtons() {
+  const pref = localStorage.getItem('mypi-theme') || 'system';
+  ['light', 'dark', 'system'].forEach(t => {
+    const btn = document.getElementById('theme-btn-' + t);
+    if (btn) btn.classList.toggle('active', t === pref);
+  });
+}
+
+// Update theme live if OS switches and preference is 'system'
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
+  if ((localStorage.getItem('mypi-theme') || 'system') === 'system') applyTheme('system');
+});
 
 // ─── Security helper ──────────────────────────────────────────────────────────
 

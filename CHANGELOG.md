@@ -4,6 +4,18 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.2.0] - 2026-04-13
+
+### Added
+- **Dark mode** — Settings → Appearance card lets users choose Light, Dark, or System
+  (follows OS `prefers-color-scheme`). The preference is stored in `localStorage` and
+  applied synchronously before first paint to eliminate any flash of wrong theme.
+  Built on Bootstrap 5.3's native `data-bs-theme` attribute; custom overrides handle
+  the topbar, card headers, table hover rows, and status pills which Bootstrap does not
+  automatically retheme. Chart.js axes, grid lines, and tooltips update to match.
+
+---
+
 ## [1.1.3] - 2026-04-13
 
 ### Fixed
