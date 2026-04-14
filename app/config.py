@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 import yaml
-from pydantic import field_validator
+from pydantic import field_validator  # noqa: F401 — kept for database_url validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 SESSION_COOKIE_NAME = "session_token"
@@ -44,23 +44,26 @@ class Settings(BaseSettings):
             raise ValueError("DATABASE_URL must be a PostgreSQL URL")
         return v
 
-    @field_validator("encryption_key")
-    @classmethod
-    def validate_encryption_key(cls, v: str) -> str:
-        if not v:
-            raise ValueError(
-                "ENCRYPTION_KEY is required. Generate one with: "
-                "python3 -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+    def validate_encryption_key_at_startup(self) -> None:
+        """Call this during app startup (not at import time) so Alembic migrations
+        can run without ENCRYPTION_KEY being set.  Raises RuntimeError if the key
+        is missing or invalid, which causes a clean startup failure with a clear message."""
+        generate_hint = (
+            "python3 -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+        )
+        if not self.encryption_key:
+            raise RuntimeError(
+                "ENCRYPTION_KEY is not set. Add it to your .env file.\n"
+                f"Generate one with: {generate_hint}"
             )
-        from cryptography.fernet import Fernet, InvalidToken
+        from cryptography.fernet import Fernet
         try:
-            Fernet(v.encode())
+            Fernet(self.encryption_key.encode())
         except Exception:
-            raise ValueError(
-                "ENCRYPTION_KEY is not a valid Fernet key. "
-                "Generate one with: python3 -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+            raise RuntimeError(
+                "ENCRYPTION_KEY is not a valid Fernet key.\n"
+                f"Generate a new one with: {generate_hint}"
             )
-        return v
 
 
 class PiholeInstanceConfig:

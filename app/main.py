@@ -61,6 +61,7 @@ async def _bootstrap() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("MyPi version %s starting up", APP_VERSION)
+    settings.validate_encryption_key_at_startup()
     version_check_service.initialize(APP_VERSION)
     await _bootstrap()
     await sync_service.load_schedule()
