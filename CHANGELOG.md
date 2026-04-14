@@ -4,6 +4,19 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.2.9] — 2026-04-14
+
+### Changed
+- **Backfill uses hourly windows instead of a single large page** — the previous 1.2.8
+  approach fetched with `length=10000` from a 24h start timestamp, which is insufficient
+  for high-volume DNS platforms. The new approach slices the 24h range into one-hour
+  clock windows (00:00–01:00, 01:00–02:00, …, current_hour–now), issuing a separate
+  request per window. Each window still paginates internally (up to 20 pages × 10k rows
+  = 200k queries per hour) if Pi-hole returns a full page. Added `until` parameter
+  support to `PiholeClient.get_queries` to bound each fetch precisely.
+
+---
+
 ## [1.2.8] — 2026-04-14
 
 ### Added
