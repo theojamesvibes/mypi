@@ -11,6 +11,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 
+from cryptography.fernet import Fernet
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+
 from app.api import auth as auth_router
 from app.api import domains as domains_router
 from app.api import instances as instances_router
@@ -22,7 +25,7 @@ from app.api import version as version_router
 from app.auth import get_current_user, get_current_user_optional, hash_password, verify_password
 from app.config import SESSION_COOKIE_NAME, settings
 from app.database import AsyncSessionLocal, get_db
-from app.models.user import User
+from app.models.settings import AppSetting
 from app.models.user import User
 from app.services.collector import backfill_all_instances, cleanup_old_data, fetch_all_instance_versions, poll_queries, poll_stats, shutdown as collector_shutdown
 from app.services.config_loader import sync_instances
@@ -39,6 +42,61 @@ _version_file = Path(__file__).parent.parent / "VERSION"
 APP_VERSION = _version_file.read_text().strip() if _version_file.exists() else "dev"
 
 scheduler = AsyncIOScheduler()
+
+
+_ENCRYPTION_KEY_SETTING = "encryption_key"
+
+
+async def _ensure_encryption_key() -> None:
+    """Resolve the Fernet encryption key used for Pi-hole password storage.
+
+    Priority:
+    1. ENCRYPTION_KEY env var / .env — explicit operator configuration.
+    2. app_settings table — key was auto-generated on a previous startup.
+    3. Neither — generate a new key, persist it to app_settings, and warn.
+
+    Setting settings.encryption_key here (before any ORM read/write touches
+    the encrypted column) ensures _get_fernet() in models/pihole.py picks up
+    the correct key on its first lazy call.
+    """
+    import app.models.pihole as pihole_models
+
+    if settings.encryption_key:
+        # Validate the explicitly-provided key before anything touches the DB.
+        try:
+            Fernet(settings.encryption_key.encode())
+        except Exception:
+            raise RuntimeError(
+                "ENCRYPTION_KEY in .env is not a valid Fernet key. "
+                "Generate a new one with: "
+                "python3 -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+            )
+        return  # explicit key is valid — nothing more to do
+
+    # No key in environment — check the database.
+    async with AsyncSessionLocal() as db:
+        row = await db.get(AppSetting, _ENCRYPTION_KEY_SETTING)
+        if row and row.value:
+            settings.encryption_key = row.value
+            pihole_models._fernet = None  # force _get_fernet() to re-initialise
+            logger.info("Loaded encryption key from database.")
+            return
+
+        # No key anywhere — generate one and persist it.
+        new_key = Fernet.generate_key().decode()
+        stmt = (
+            pg_insert(AppSetting)
+            .values(key=_ENCRYPTION_KEY_SETTING, value=new_key)
+            .on_conflict_do_update(index_elements=["key"], set_={"value": new_key})
+        )
+        await db.execute(stmt)
+        await db.commit()
+        settings.encryption_key = new_key
+        pihole_models._fernet = None
+        logger.warning(
+            "ENCRYPTION_KEY was not set — a key has been auto-generated and saved to the "
+            "database. Add it to your .env for portability: ENCRYPTION_KEY=%s", new_key
+        )
 
 
 async def _bootstrap() -> None:
@@ -61,7 +119,7 @@ async def _bootstrap() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("MyPi version %s starting up", APP_VERSION)
-    settings.validate_encryption_key_at_startup()
+    await _ensure_encryption_key()
     version_check_service.initialize(APP_VERSION)
     await _bootstrap()
     await sync_service.load_schedule()
