@@ -4,6 +4,15 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.2.2] — 2026-04-14
+
+### Fixed
+- **Version Check panel: Pi-hole version numbers now display in green** — the
+  core / FTL / web latest-version text in the Settings Version Check panel was
+  using `text-muted` instead of `text-success`, unlike the MyPi version line.
+
+---
+
 ## [1.2.1] — 2026-04-14
 
 ### Added
