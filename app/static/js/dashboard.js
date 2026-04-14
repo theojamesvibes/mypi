@@ -7,6 +7,7 @@ let typeChart = null;
 let _drillFilter = {};
 let _drillPage = 1;
 let _drillHours = 24;
+let _drillSince = null;   // ISO string when "today" mode is active; null otherwise
 let _drillModal = null;
 let _searchPage = 1;
 let _searchModal = null;
@@ -155,6 +156,7 @@ async function loadDashboard() {
     }
 
     _drillHours = hours || 24;
+    _drillSince = since || null;
 
     // Online count badge
     updateStatusBadge(instances);
@@ -821,7 +823,9 @@ function openDrillDown(filter) {
 
 async function loadDrillPage(page) {
   _drillPage = page;
-  const params = new URLSearchParams({ page, page_size: 50, hours: _drillHours });
+  const params = new URLSearchParams({ page, page_size: 50 });
+  if (_drillSince) params.set('since', _drillSince);
+  else params.set('hours', _drillHours);
   if (_drillFilter.blocked) params.set('blocked', 'true');
   if (_drillFilter.domain) params.set('domain', _drillFilter.domain);
   if (_drillFilter.client) params.set('client', _drillFilter.client);
