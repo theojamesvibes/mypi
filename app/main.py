@@ -18,6 +18,7 @@ from cryptography.fernet import Fernet
 
 from app.api import auth as auth_router
 from app.api import domains as domains_router
+from app.api import health as health_router
 from app.api import instances as instances_router
 from app.api import notifications as notifications_router
 from app.api import queries as queries_router
@@ -164,6 +165,7 @@ templates.env.globals["app_version"] = APP_VERSION
 
 # API routers
 app.include_router(auth_router.router)
+app.include_router(health_router.router)
 app.include_router(instances_router.router)
 app.include_router(stats_router.router)
 app.include_router(queries_router.router)
