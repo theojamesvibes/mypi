@@ -300,3 +300,35 @@ body.login-body {
   #sidebar .nav-item a { justify-content: center; padding: 12px 0; }
   #main-content { margin-left: 56px; }
 }
+
+/* ─── Checkbox highlight (replaces inline style="background:#f8f9fa") ─────── */
+
+.check-highlight { background: #f8f9fa; }
+
+/* ─── Dark mode ──────────────────────────────────────────────────────────── */
+
+[data-bs-theme="dark"] body {
+  background: #1a1d20;
+  color: #dee2e6;
+}
+
+[data-bs-theme="dark"] .topbar {
+  background: #212529;
+  border-bottom-color: #373b3e;
+}
+
+/* Our custom rule hard-codes card-header to #fff — undo it in dark mode */
+[data-bs-theme="dark"] .card-header {
+  background: #2b2f33;
+  border-bottom-color: #373b3e;
+}
+
+[data-bs-theme="dark"] .check-highlight { background: #2b2f33; }
+
+[data-bs-theme="dark"] .sort-col:hover { background: #2c3034; }
+[data-bs-theme="dark"] tr.drill-row:hover td { background: #2a2f35; }
+
+[data-bs-theme="dark"] .status-forwarded { background: #1a3a24; color: #75c98a; }
+[data-bs-theme="dark"] .status-cached    { background: #0d2a45; color: #6aadee; }
+[data-bs-theme="dark"] .status-blocked   { background: #3a1a1a; color: #e88080; }
+[data-bs-theme="dark"] .status-other     { background: #2b2e30; color: #adb5bd; }

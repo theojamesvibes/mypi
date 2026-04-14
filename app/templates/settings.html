@@ -8,6 +8,27 @@
 
   <div class="row g-3">
 
+    <!-- Appearance -->
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header"><i class="bi bi-palette me-1"></i>Appearance</div>
+        <div class="card-body">
+          <p class="text-muted small mb-3">Choose how MyPi looks. <em>System</em> follows your OS setting automatically.</p>
+          <div class="d-flex gap-2">
+            <button type="button" class="btn btn-sm btn-outline-secondary theme-btn" id="theme-btn-light" onclick="setTheme('light')">
+              <i class="bi bi-sun me-1"></i>Light
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-secondary theme-btn" id="theme-btn-dark" onclick="setTheme('dark')">
+              <i class="bi bi-moon-stars me-1"></i>Dark
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-secondary theme-btn" id="theme-btn-system" onclick="setTheme('system')">
+              <i class="bi bi-circle-half me-1"></i>System
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Instance info -->
     <div class="col-12">
       <div class="card">
@@ -183,7 +204,7 @@
 
           <!-- MyPi row -->
           <div class="d-flex align-items-center gap-3 mb-2">
-            <div class="form-check border rounded px-3 py-2 flex-shrink-0" style="background:#f8f9fa;min-width:11rem;">
+            <div class="form-check border rounded px-3 py-2 flex-shrink-0" class="check-highlight" style="min-width:11rem;">
               <input class="form-check-input" type="checkbox" id="vc-enabled" onchange="updateCheckNowState()">
               <label class="form-check-label fw-semibold small" for="vc-enabled">MyPi updates</label>
             </div>
@@ -192,7 +213,7 @@
 
           <!-- Pi-hole row -->
           <div class="d-flex align-items-center gap-3 mb-3">
-            <div class="form-check border rounded px-3 py-2 flex-shrink-0" style="background:#f8f9fa;min-width:11rem;">
+            <div class="form-check border rounded px-3 py-2 flex-shrink-0" class="check-highlight" style="min-width:11rem;">
               <input class="form-check-input" type="checkbox" id="vc-pihole-enabled" onchange="updateCheckNowState()">
               <label class="form-check-label fw-semibold small" for="vc-pihole-enabled">Pi-hole updates</label>
             </div>
@@ -252,7 +273,7 @@
 
             <!-- Master enable -->
             <div class="col-12">
-              <div class="form-check border rounded px-3 py-2" style="background:#f8f9fa;">
+              <div class="form-check border rounded px-3 py-2 check-highlight">
                 <input class="form-check-input" type="checkbox" id="po-enabled">
                 <label class="form-check-label fw-semibold small" for="po-enabled">
                   Enable notifications
@@ -403,5 +424,6 @@
   loadPushoverSettings();
   loadSessionTimeout();
   loadVersionCheckSettings();
+  initThemeButtons();
 </script>
 {% endblock %}
