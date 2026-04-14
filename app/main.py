@@ -23,7 +23,7 @@ from app.auth import get_current_user, get_current_user_optional, hash_password
 from app.config import SESSION_COOKIE_NAME, settings
 from app.database import AsyncSessionLocal, get_db
 from app.models.user import User
-from app.services.collector import cleanup_old_data, fetch_all_instance_versions, poll_queries, poll_stats, shutdown as collector_shutdown
+from app.services.collector import backfill_all_instances, cleanup_old_data, fetch_all_instance_versions, poll_queries, poll_stats, shutdown as collector_shutdown
 from app.services.config_loader import sync_instances
 from app.services import pushover as pushover_service
 from app.services import session_settings
@@ -77,6 +77,7 @@ async def lifespan(app: FastAPI):
     _asyncio.create_task(version_check_service.check_now())
     _asyncio.create_task(pihole_version_check_service.check_now())
     _asyncio.create_task(fetch_all_instance_versions())
+    _asyncio.create_task(backfill_all_instances())
     logger.info("Scheduler started (stats every %ds, queries every %ds).",
                 settings.stats_poll_interval, settings.queries_poll_interval)
     yield
