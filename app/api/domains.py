@@ -36,13 +36,6 @@ async def _get_master(db: AsyncSession) -> PiholeInstance:
     return master
 
 
-def _trigger_sync() -> None:
-    if sync_service.get_state().status != "running":
-        asyncio.create_task(
-            sync_service.run_sync(import_config=False, import_gravity=True, run_gravity=True)
-        )
-
-
 @router.post("/block")
 async def block_domain(
     req: DomainRequest,
@@ -63,7 +56,11 @@ async def block_domain(
         logger.error("Failed to block domain %s on master %s: %s", domain, master.name, exc)
         raise HTTPException(status_code=502, detail=f"Failed to block domain on master: {exc}")
 
-    _trigger_sync()
+    # Sync master → replicas so the new deny entry propagates immediately.
+    if sync_service.get_state().status != "running":
+        asyncio.create_task(
+            sync_service.run_sync(import_config=False, import_gravity=True, run_gravity=True)
+        )
     return Response(status_code=204)
 
 
@@ -73,19 +70,38 @@ async def unblock_domain(
     _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    """Remove domain from the exact deny list on the master Pi-hole, then sync to replicas."""
+    """Remove domain from the exact deny list on every active Pi-hole instance.
+
+    A full sync is intentionally avoided here: run_sync always runs gravity on the
+    master before exporting, which would re-add the domain to gravity.db from adlists
+    and undo the unblock.  Instead we call unblock_domain directly on each instance so
+    the change takes effect without any gravity refresh.
+    """
     domain = domain.strip().lower()
     if not domain:
         raise HTTPException(status_code=422, detail="Domain must not be empty.")
 
-    master = await _get_master(db)
-    try:
-        client = await client_manager.get_client(master)
-        await client.unblock_domain(domain)
-        logger.info("Unblocked domain %s on master %s", domain, master.name)
-    except Exception as exc:
-        logger.error("Failed to unblock domain %s on master %s: %s", domain, master.name, exc)
-        raise HTTPException(status_code=502, detail=f"Failed to unblock domain on master: {exc}")
+    result = await db.execute(
+        select(PiholeInstance).where(PiholeInstance.is_active.is_(True))
+    )
+    instances = list(result.scalars().all())
+    if not instances:
+        raise HTTPException(status_code=503, detail="No active Pi-hole instances configured.")
 
-    _trigger_sync()
+    errors: list[str] = []
+    for inst in instances:
+        try:
+            client = await client_manager.get_client(inst)
+            await client.unblock_domain(domain)
+            logger.info("Unblocked domain %s on %s", domain, inst.name)
+        except Exception as exc:
+            logger.error("Failed to unblock domain %s on %s: %s", domain, inst.name, exc)
+            errors.append(f"{inst.name}: {exc}")
+
+    if errors and len(errors) == len(instances):
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to unblock on all instances: {'; '.join(errors)}",
+        )
+
     return Response(status_code=204)

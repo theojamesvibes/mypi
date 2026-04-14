@@ -399,9 +399,6 @@ async function loadQueries(page) {
       ? data.items.map(q => {
           const d = escHtml(q.domain || '');
           const isBlocked = BLOCKED_STATUSES.has(q.status);
-          const blockBtn = isBlocked
-            ? `<button class="btn btn-xs btn-outline-success py-0 px-1" style="font-size:.7rem;white-space:nowrap;" onclick="unblockDomain(this,'${d}')">Unblock</button>`
-            : `<button class="btn btn-xs btn-outline-danger py-0 px-1" style="font-size:.7rem;white-space:nowrap;" onclick="blockDomain(this,'${d}')">Block</button>`;
           return `<tr>
             <td class="text-nowrap small">${fmtTime(q.timestamp)}</td>
             <td><span class="badge rounded-pill" style="background:#6c757d;font-weight:500;">${escHtml(q.instance_name)}</span></td>
@@ -410,7 +407,7 @@ async function loadQueries(page) {
             <td class="small">${escHtml(q.client_name || q.client_ip || '—')}</td>
             <td>${statusPill(q.status)}</td>
             <td class="text-end small">${q.reply_time_ms != null ? Number(q.reply_time_ms).toFixed(1) : '—'}</td>
-            <td class="text-end">${blockBtn}</td>
+            <td class="text-end">${_mkDomainBtn(d, isBlocked)}</td>
           </tr>`;
         }).join('')
       : '<tr><td colspan="8" class="text-center text-muted py-4">No queries found.</td></tr>';
@@ -534,57 +531,50 @@ function renderPagination(id, current, total) {
 
 // ─── Domain block / unblock ──────────────────────────────────────────────────
 
-async function blockDomain(btn, domain) {
-  if (!domain) return;
-  btn.disabled = true;
-  btn.textContent = '…';
-  try {
-    const resp = await fetch('/api/domains/block', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ domain }),
-    });
-    if (resp.ok || resp.status === 204) {
-      btn.textContent = 'Unblock';
-      btn.className = 'btn btn-xs btn-outline-success py-0 px-1';
-      btn.style.fontSize = '.7rem';
-      btn.style.whiteSpace = 'nowrap';
-      btn.onclick = () => unblockDomain(btn, domain);
-    } else {
-      const err = await resp.json().catch(() => ({}));
-      alert(`Failed to block ${domain}: ${err.detail || resp.status}`);
-      btn.disabled = false;
-      btn.textContent = 'Block';
-    }
-  } catch (e) {
-    alert(`Error blocking ${domain}: ${e}`);
-    btn.disabled = false;
-    btn.textContent = 'Block';
-  }
+// Build the initial Block / Unblock button for a query row.
+// domain must be an already-HTML-escaped string (safe for inline onclick).
+function _mkDomainBtn(domain, isCurrentlyBlocked) {
+  return isCurrentlyBlocked
+    ? `<button class="btn btn-xs btn-outline-success py-0 px-1" style="font-size:.7rem;white-space:nowrap;" onclick="askDomainAction(this,'${domain}',false)">Unblock</button>`
+    : `<button class="btn btn-xs btn-outline-danger py-0 px-1" style="font-size:.7rem;white-space:nowrap;" onclick="askDomainAction(this,'${domain}',true)">Block</button>`;
 }
 
-async function unblockDomain(btn, domain) {
-  if (!domain) return;
-  btn.disabled = true;
-  btn.textContent = '…';
+// First click: replace button with inline "Verb? ✓ ✗" confirmation.
+function askDomainAction(btn, domain, blocking) {
+  const cell = btn.closest('td');
+  const verb = blocking ? 'Block?' : 'Unblock?';
+  const txtCls = blocking ? 'text-danger' : 'text-success';
+  const confirmCls = blocking ? 'btn-outline-danger' : 'btn-outline-success';
+  cell.innerHTML =
+    `<span class="${txtCls} me-1" style="font-size:.7rem;white-space:nowrap;">${verb}</span>` +
+    `<button class="btn btn-xs ${confirmCls} py-0 px-1 me-1" style="font-size:.7rem;" title="Confirm" onclick="doDomainAction(this,'${domain}',${blocking})">✓</button>` +
+    `<button class="btn btn-xs btn-outline-secondary py-0 px-1" style="font-size:.7rem;" title="Cancel" onclick="this.closest('td').innerHTML=_mkDomainBtn('${domain}',${blocking})">✗</button>`;
+}
+
+// Second click (confirm): execute the API call.
+async function doDomainAction(btn, domain, blocking) {
+  const cell = btn.closest('td');
+  cell.innerHTML = `<span class="text-muted" style="font-size:.7rem;">…</span>`;
   try {
-    const resp = await fetch(`/api/domains/block/${encodeURIComponent(domain)}`, { method: 'DELETE' });
+    const resp = blocking
+      ? await fetch('/api/domains/block', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ domain }),
+        })
+      : await fetch(`/api/domains/block/${encodeURIComponent(domain)}`, { method: 'DELETE' });
+
     if (resp.ok || resp.status === 204) {
-      btn.textContent = 'Block';
-      btn.className = 'btn btn-xs btn-outline-danger py-0 px-1';
-      btn.style.fontSize = '.7rem';
-      btn.style.whiteSpace = 'nowrap';
-      btn.onclick = () => blockDomain(btn, domain);
+      // Success: flip to the opposite action button
+      cell.innerHTML = _mkDomainBtn(domain, !blocking);
     } else {
       const err = await resp.json().catch(() => ({}));
-      alert(`Failed to unblock ${domain}: ${err.detail || resp.status}`);
-      btn.disabled = false;
-      btn.textContent = 'Unblock';
+      alert(`Failed to ${blocking ? 'block' : 'unblock'} ${domain}: ${err.detail || resp.status}`);
+      cell.innerHTML = _mkDomainBtn(domain, blocking);
     }
   } catch (e) {
-    alert(`Error unblocking ${domain}: ${e}`);
-    btn.disabled = false;
-    btn.textContent = 'Unblock';
+    alert(`Error: ${e}`);
+    cell.innerHTML = _mkDomainBtn(domain, blocking);
   }
 }
 
