@@ -83,6 +83,22 @@ async def get_summary(
     )
     agg = agg_result.one()
 
+    # Per-instance time-windowed aggregation from QueryLog.
+    inst_agg_result = await db.execute(
+        select(
+            QueryLog.instance_id,
+            func.count(QueryLog.id).label("total"),
+            func.count(case((QueryLog.status.in_(list(BLOCKED_STATUSES)), QueryLog.id))).label("blocked"),
+            func.count(distinct(QueryLog.client_ip)).label("unique_clients"),
+        )
+        .where(QueryLog.timestamp >= since)
+        .group_by(QueryLog.instance_id)
+    )
+    inst_agg: dict[uuid.UUID, tuple[int, int, int]] = {
+        row.instance_id: (row.total, row.blocked, row.unique_clients)
+        for row in inst_agg_result.fetchall()
+    }
+
     # Blocklist size is time-independent — take from the most recent snapshot.
     domains_on_blocklist = 0
     for snap in snapshots.values():
@@ -107,18 +123,24 @@ async def get_summary(
     per_instance = []
     for inst in instances:
         snap = snapshots.get(inst.id)
+        i_total, i_blocked, i_clients = inst_agg.get(inst.id, (0, 0, 0))
+        i_pct = round(i_blocked / i_total * 100, 1) if i_total > 0 else 0.0
         per_instance.append({
             "id": str(inst.id),
             "name": inst.name,
+            "url": inst.url,
             "color": inst.color,
+            "is_master": inst.is_master,
+            "is_active": inst.is_active,
+            "last_seen_at": inst.last_seen_at.isoformat() if inst.last_seen_at else None,
             "status": snap.status if snap else "unknown",
-            "dns_queries_today": snap.dns_queries_today if snap else 0,
-            "queries_blocked": snap.queries_blocked if snap else 0,
-            "percent_blocked": snap.percent_blocked if snap else 0.0,
+            # Time-windowed query counts from QueryLog:
+            "dns_queries_today": i_total,
+            "queries_blocked": i_blocked,
+            "percent_blocked": i_pct,
+            "unique_clients": i_clients,
+            # Time-independent — from latest snapshot:
             "domains_on_blocklist": snap.domains_on_blocklist if snap else 0,
-            "unique_clients": snap.unique_clients if snap else 0,
-            "queries_cached": snap.queries_cached if snap else 0,
-            "queries_forwarded": snap.queries_forwarded if snap else 0,
         })
 
     return AggregatedSummary(totals=totals, instances=per_instance)
