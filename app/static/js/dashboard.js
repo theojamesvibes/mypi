@@ -112,14 +112,15 @@ async function loadDashboard() {
   const tp = since ? `since=${encodeURIComponent(since)}` : `hours=${hours}`;
 
   try {
-    const [summary, instances, history, top] = await Promise.all([
+    const [summary, history, top] = await Promise.all([
       apiFetch(`/api/stats/summary?${tp}`),
-      apiFetch('/api/instances'),
       apiFetch(`/api/stats/history?${tp}&bucket_minutes=${bucketMinutes}`),
       apiFetch(`/api/stats/top?${tp}&limit=10`),
     ]);
 
     if (!summary) return;
+
+    const instances = summary.instances || [];
 
     // Stat cards
     document.getElementById('total-queries').textContent = fmtNum(summary.totals.dns_queries_today);
@@ -169,7 +170,7 @@ async function loadDashboard() {
     // Query type chart (from summary instances)
     renderTypeChart(summary.totals);
 
-    // Per-instance table
+    // Per-instance table — uses time-windowed counts from summary
     renderInstancesTable(instances);
 
     // Top tables — blocked and clients are drillable

@@ -4,6 +4,14 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.4.4] — 2026-04-14
+
+### Fixed
+
+- **Pi-hole Systems panel respects time range** — the per-instance table (Total Queries, Blocked, % Blocked, Clients) now reflects the selected time window instead of always showing Pi-hole's native "today since midnight" counters. The backend computes per-instance aggregations from `query_logs` grouped by `instance_id` for the active time window, identical to how the stat cards and charts are computed. Blocklist size remains time-independent (from the latest snapshot). Also eliminates a redundant `/api/instances` HTTP call — instance metadata is now returned as part of `/api/stats/summary`.
+
+---
+
 ## [1.4.3] — 2026-04-14
 
 ### Fixed
