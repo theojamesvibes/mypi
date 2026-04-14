@@ -5,6 +5,7 @@ import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,12 +36,19 @@ async def _get_master(db: AsyncSession) -> PiholeInstance:
     return master
 
 
-@router.post("/block", status_code=204)
+def _trigger_sync() -> None:
+    if sync_service.get_state().status != "running":
+        asyncio.create_task(
+            sync_service.run_sync(import_config=False, import_gravity=True, run_gravity=True)
+        )
+
+
+@router.post("/block")
 async def block_domain(
     req: DomainRequest,
     _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> None:
+) -> Response:
     """Add domain to the exact deny list on the master Pi-hole, then sync to replicas."""
     domain = req.domain.strip().lower()
     if not domain:
@@ -55,19 +63,16 @@ async def block_domain(
         logger.error("Failed to block domain %s on master %s: %s", domain, master.name, exc)
         raise HTTPException(status_code=502, detail=f"Failed to block domain on master: {exc}")
 
-    # Trigger sync in background — don't block the response waiting for replicas
-    if sync_service.get_state().status != "running":
-        asyncio.create_task(
-            sync_service.run_sync(import_config=False, import_gravity=True, run_gravity=True)
-        )
+    _trigger_sync()
+    return Response(status_code=204)
 
 
-@router.delete("/block/{domain:path}", status_code=204)
+@router.delete("/block/{domain:path}")
 async def unblock_domain(
     domain: str,
     _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> None:
+) -> Response:
     """Remove domain from the exact deny list on the master Pi-hole, then sync to replicas."""
     domain = domain.strip().lower()
     if not domain:
@@ -82,7 +87,5 @@ async def unblock_domain(
         logger.error("Failed to unblock domain %s on master %s: %s", domain, master.name, exc)
         raise HTTPException(status_code=502, detail=f"Failed to unblock domain on master: {exc}")
 
-    if sync_service.get_state().status != "running":
-        asyncio.create_task(
-            sync_service.run_sync(import_config=False, import_gravity=True, run_gravity=True)
-        )
+    _trigger_sync()
+    return Response(status_code=204)

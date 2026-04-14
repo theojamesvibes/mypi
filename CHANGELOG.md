@@ -4,6 +4,17 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.2.3] — 2026-04-14
+
+### Fixed
+- **Startup crash on FastAPI route registration** — `status_code=204` on routes
+  that accept a request body triggers a FastAPI assertion (`Status code 204 must
+  not have a response body`). Both domain block/unblock endpoints now return
+  `Response(status_code=204)` explicitly instead of declaring it on the decorator,
+  which satisfies FastAPI's validator and preserves the correct HTTP semantics.
+
+---
+
 ## [1.2.2] — 2026-04-14
 
 ### Fixed
