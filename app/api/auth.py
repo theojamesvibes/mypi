@@ -141,6 +141,35 @@ async def revoke_api_key(
     return {"detail": "API key revoked"}
 
 
+# ── Change password ───────────────────────────────────────────────────────────
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+    confirm_password: str
+
+
+@router.post("/change-password")
+async def change_password(
+    body: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not verify_password(body.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=422, detail="Current password is incorrect.")
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=422, detail="New password must be at least 8 characters.")
+    if body.new_password != body.confirm_password:
+        raise HTTPException(status_code=422, detail="Passwords do not match.")
+
+    user = await db.get(User, current_user.id)
+    user.hashed_password = hash_password(body.new_password)
+    user.password_change_required = False
+    await db.commit()
+
+    return {"detail": "Password changed successfully."}
+
+
 # ── Session timeout ────────────────────────────────────────────────────────────
 
 class SessionTimeoutRequest(BaseModel):

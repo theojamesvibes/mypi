@@ -369,6 +369,35 @@
       </div>
     </div>
 
+    <!-- Change Password -->
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header"><i class="bi bi-lock me-1"></i>Change Password</div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-4">
+              <div class="mb-2">
+                <label class="form-label form-label-sm mb-1">Current password</label>
+                <input type="password" id="cp-current" class="form-control form-control-sm" autocomplete="current-password">
+              </div>
+              <div class="mb-2">
+                <label class="form-label form-label-sm mb-1">New password</label>
+                <input type="password" id="cp-new" class="form-control form-control-sm" autocomplete="new-password">
+              </div>
+              <div class="mb-3">
+                <label class="form-label form-label-sm mb-1">Confirm new password</label>
+                <input type="password" id="cp-confirm" class="form-control form-control-sm" autocomplete="new-password">
+              </div>
+              <button class="btn btn-sm btn-outline-primary" onclick="changePassword()">
+                <i class="bi bi-lock me-1"></i>Change password
+              </button>
+              <div id="cp-result" class="small mt-2"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- API Keys + REST API -->
     <div class="col-md-6">
       <div class="card h-100">
@@ -425,5 +454,37 @@
   loadSessionTimeout();
   loadVersionCheckSettings();
   initThemeButtons();
+
+  async function changePassword() {
+    const current = document.getElementById('cp-current').value;
+    const newPw   = document.getElementById('cp-new').value;
+    const confirm = document.getElementById('cp-confirm').value;
+    const result  = document.getElementById('cp-result');
+
+    result.textContent = '';
+    result.className = 'small mt-2';
+
+    try {
+      const resp = await fetch('/api/auth/change-password', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({current_password: current, new_password: newPw, confirm_password: confirm}),
+      });
+      const data = await resp.json();
+      if (resp.ok) {
+        result.textContent = data.detail;
+        result.classList.add('text-success');
+        document.getElementById('cp-current').value = '';
+        document.getElementById('cp-new').value = '';
+        document.getElementById('cp-confirm').value = '';
+      } else {
+        result.textContent = data.detail || 'Password change failed.';
+        result.classList.add('text-danger');
+      }
+    } catch {
+      result.textContent = 'Request failed.';
+      result.classList.add('text-danger');
+    }
+  }
 </script>
 {% endblock %}

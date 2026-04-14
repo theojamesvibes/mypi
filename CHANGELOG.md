@@ -4,6 +4,14 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.4.2] — 2026-04-14
+
+### Added
+
+- **Change password in settings** — new card on the Settings page lets any logged-in user change their password without leaving the page. Requires the current password, minimum 8 characters, and confirmation match. Uses the new `POST /api/auth/change-password` JSON endpoint.
+
+---
+
 ## [1.4.1] — 2026-04-14
 
 ### Fixed
