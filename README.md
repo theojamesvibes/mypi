@@ -144,12 +144,11 @@ curl -fsSL https://raw.githubusercontent.com/theojamesvibes/mypi/main/pihole_ins
 
 ### 2. Configure
 
-Edit `.env` — at minimum set these three values:
+Edit `.env` — at minimum set these two values:
 
 ```bash
 POSTGRES_PASSWORD=change-me
 SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
-INITIAL_ADMIN_PASSWORD=change-me
 ```
 
 Edit `pihole_instances.yml` with your Pi-hole URLs and passwords (see [Configuration](#configuration) below). Instances with no password set are supported — leave `password` empty or omit it.
@@ -164,7 +163,7 @@ docker compose up -d
 
 Docker pulls the pre-built image automatically. The dashboard is available at **http://localhost:8080** (or whichever `APP_PORT` you set in `.env`).
 
-Log in with `INITIAL_ADMIN_USER` / `INITIAL_ADMIN_PASSWORD`.
+Log in with username `admin` (or `INITIAL_ADMIN_USER` if overridden) and password `changeme`. You will be required to set a new password immediately before accessing the dashboard.
 
 ---
 
@@ -187,8 +186,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 |---|---|---|
 | `POSTGRES_PASSWORD` | *(required)* | PostgreSQL password |
 | `SECRET_KEY` | *(required)* | JWT signing secret — generate with `secrets.token_hex(32)` |
-| `INITIAL_ADMIN_PASSWORD` | *(required)* | Password for the first admin account |
-| `INITIAL_ADMIN_USER` | `admin` | Username for the first admin account |
+| `INITIAL_ADMIN_USER` | `admin` | Username for the first admin account — password is always `changeme` and must be changed on first login |
 | `APP_PORT` | `8080` | Port to expose the dashboard on |
 | `STATS_POLL_INTERVAL` | `60` | Seconds between stats polls |
 | `QUERIES_POLL_INTERVAL` | `10` | Seconds between query log polls |
@@ -404,7 +402,6 @@ pip install -r requirements.txt
 
 export DATABASE_URL="postgresql+asyncpg://mypi:mypi@localhost:5432/mypi"
 export SECRET_KEY="dev-secret-key"
-export INITIAL_ADMIN_PASSWORD="admin"
 
 alembic upgrade head
 uvicorn app.main:app --reload --port 8080
