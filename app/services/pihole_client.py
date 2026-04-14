@@ -184,6 +184,21 @@ class PiholeClient:
         resp.raise_for_status()
         return resp.json() if resp.content else None
 
+    async def _delete(self, path: str, retry: bool = True) -> Any:
+        if self._client is None:
+            raise RuntimeError("PiholeClient must be used as an async context manager")
+        await self._ensure_authed()
+        url = f"{self.base_url}{path}"
+        resp = await self._client.delete(url, headers=self._headers())
+        if resp.status_code == 401 and retry:
+            self._sid = None
+            ok = await self._authenticate()
+            if ok:
+                return await self._delete(path, retry=False)
+            raise ConnectionError(f"Re-authentication failed for {self.base_url}")
+        resp.raise_for_status()
+        return resp.json() if resp.content else None
+
     async def _get_bytes(self, path: str, retry: bool = True) -> bytes:
         if self._client is None:
             raise RuntimeError("PiholeClient must be used as an async context manager")
@@ -406,3 +421,24 @@ class PiholeClient:
                 continue
 
         return queries
+
+    async def block_domain(self, domain: str) -> None:
+        """Add domain to the exact deny list on this Pi-hole instance."""
+        await self._post(
+            "/api/domains/deny/exact",
+            json_data={"domain": domain, "comment": "blocked via MyPi", "groups": [0], "enabled": True},
+        )
+
+    async def unblock_domain(self, domain: str) -> None:
+        """Remove domain from the exact deny list on this Pi-hole instance."""
+        from urllib.parse import quote
+        await self._delete(f"/api/domains/deny/exact/{quote(domain, safe='')}")
+
+    async def is_domain_blocked(self, domain: str) -> bool:
+        """Return True if domain is present in the exact deny list."""
+        from urllib.parse import quote
+        try:
+            data = await self._get(f"/api/domains/deny/exact/{quote(domain, safe='')}")
+            return bool(data)
+        except Exception:
+            return False
