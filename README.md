@@ -160,6 +160,8 @@ Edit `pihole_instances.yml` with your Pi-hole URLs and passwords (see [Configura
 docker compose up -d
 ```
 
+> **Important — stop timeouts:** The provided `docker-compose.yml` sets `stop_grace_period` on both services (`60s` for Postgres, `30s` for the app). Do not remove these. Without them Docker sends `SIGKILL` after only 10 seconds, which can interrupt a Postgres checkpoint mid-write and corrupt the database — requiring a table rebuild to recover.
+
 Docker pulls the pre-built image automatically. The dashboard is available at **http://localhost:8080** (or whichever `APP_PORT` you set in `.env`).
 
 Log in with `INITIAL_ADMIN_USER` / `INITIAL_ADMIN_PASSWORD`.
