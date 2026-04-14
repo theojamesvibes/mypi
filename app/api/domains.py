@@ -42,16 +42,29 @@ async def check_domain_blocked(
     _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Check whether a domain is currently in the exact deny list on the master Pi-hole."""
+    """Check whether a domain is in the exact deny list on ANY active Pi-hole instance.
+
+    Checks all instances so that a partial unblock (master succeeded, replica failed)
+    is correctly reported as still-blocked.
+    """
     domain = domain.strip().lower()
-    master = await _get_master(db)
-    try:
-        client = await client_manager.get_client(master)
-        blocked = await client.is_domain_blocked(domain)
-        return {"domain": domain, "blocked": blocked}
-    except Exception as exc:
-        logger.error("Failed to check block status for %s: %s", domain, exc)
-        raise HTTPException(status_code=502, detail=f"Failed to check block status: {exc}")
+    result = await db.execute(
+        select(PiholeInstance).where(PiholeInstance.is_active.is_(True))
+    )
+    instances = list(result.scalars().all())
+    if not instances:
+        raise HTTPException(status_code=503, detail="No active Pi-hole instances configured.")
+
+    for inst in instances:
+        try:
+            client = await client_manager.get_client(inst)
+            if await client.is_domain_blocked(domain):
+                logger.info("Domain %s is blocked on %s", domain, inst.name)
+                return {"domain": domain, "blocked": True}
+        except Exception as exc:
+            logger.warning("Failed to check block status on %s for %s: %s", inst.name, domain, exc)
+
+    return {"domain": domain, "blocked": False}
 
 
 @router.post("/block")

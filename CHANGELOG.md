@@ -4,6 +4,24 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.2.6] — 2026-04-14
+
+### Fixed
+- **Block status check now covers all instances** — `GET /api/domains/block/{domain}`
+  previously only checked the master Pi-hole. If an unblock succeeded on master but
+  failed on a replica, MyPi would report the domain as unblocked while DNS queries
+  to the replica still returned `DENYLIST`. The check now queries every active
+  instance and returns `blocked: true` as soon as any one of them has the entry.
+- **Deny-list lookup now matches both `domain` and `name` fields** — Pi-hole's
+  `GET /api/domains/deny/exact` response may use a `name` key rather than `domain`
+  for the domain string. Both `unblock_domain` and `is_domain_blocked` now check
+  either key, preventing silent failures where the entry existed but was never found.
+- **INFO-level logging added** for all deny-list operations — the number of entries
+  returned by Pi-hole, the field keys in each entry, and the ID used for DELETE are
+  now logged so problems can be diagnosed from `docker compose logs mypi`.
+
+---
+
 ## [1.2.5] — 2026-04-14
 
 ### Fixed
