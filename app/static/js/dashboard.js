@@ -1396,7 +1396,7 @@ async function loadVersionCheckSettings() {
       const checked = pihole.checked_at ? new Date(pihole.checked_at).toLocaleString() : '—';
       if (badge)  { badge.className = 'badge bg-success'; badge.textContent = 'Pi-hole checked'; }
       if (status) status.innerHTML =
-        `<span class="text-muted"><i class="bi bi-check-circle me-1"></i>Latest — core: ${escHtml(pihole.latest_core)}, FTL: ${escHtml(pihole.latest_ftl)}, web: ${escHtml(pihole.latest_web)}</span>
+        `<span class="text-success"><i class="bi bi-check-circle me-1"></i>Latest — core: ${escHtml(pihole.latest_core)}, FTL: ${escHtml(pihole.latest_ftl)}, web: ${escHtml(pihole.latest_web)}</span>
          <span class="text-muted ms-2" style="font-size:0.72rem;">checked ${escHtml(checked)}</span>`;
     }
   }
