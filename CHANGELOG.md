@@ -4,6 +4,14 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.4.6] — 2026-04-14
+
+### Added
+
+- **`GET /api/health` endpoint** — unauthenticated discovery endpoint used by the iOS companion app. Returns server version, `stats_poll_interval`, and `queries_poll_interval` so the client can configure its polling cadence and detect staleness before an API key is configured.
+
+---
+
 ## [1.4.5] — 2026-04-14
 
 ### Changed
