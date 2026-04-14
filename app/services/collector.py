@@ -232,71 +232,91 @@ async def poll_queries() -> None:
     await asyncio.gather(*[_poll_queries_for(inst) for inst in instances])
 
 
+async def _store_queries(instance: PiholeInstance, queries: list) -> int:
+    """Insert queries that are not already in the database. Returns count stored."""
+    async with AsyncSessionLocal() as db:
+        pihole_ids = [q.pihole_id for q in queries if q.pihole_id]
+        existing_ids: set[str] = set()
+        if pihole_ids:
+            result = await db.execute(
+                select(QueryLog.pihole_query_id).where(
+                    QueryLog.instance_id == instance.id,
+                    QueryLog.pihole_query_id.in_(pihole_ids),
+                )
+            )
+            existing_ids = {row[0] for row in result.fetchall()}
+
+        new_logs = [
+            QueryLog(
+                instance_id=instance.id,
+                pihole_query_id=q.pihole_id,
+                timestamp=q.timestamp,
+                client_ip=q.client_ip,
+                client_name=q.client_name,
+                query_type=q.query_type,
+                domain=q.domain,
+                status=q.status,
+                reply_type=q.reply_type,
+                reply_time_ms=q.reply_time_ms,
+            )
+            for q in queries
+            if not (q.pihole_id and q.pihole_id in existing_ids)
+        ]
+        if new_logs:
+            db.add_all(new_logs)
+            await db.commit()
+        return len(new_logs)
+
+
 async def backfill_queries_for(instance: PiholeInstance, hours: int = 24) -> None:
-    """Fetch up to `hours` of historical queries from Pi-hole and insert any missing rows.
+    """Backfill up to `hours` of query history from Pi-hole.
 
-    Pages forward using the `from` timestamp until Pi-hole returns a partial page
-    (meaning we have reached the present) or a safety cap of 50 pages is hit.
-    Safe to run against a live table — existing rows are skipped via pihole_query_id dedup.
+    Fetches one clock hour at a time (00:00–01:00, 01:00–02:00, …, current_hour–now)
+    so that the per-request length cap is never the bottleneck regardless of query volume.
+    Within each window, pages forward by timestamp if a full 10 000-row page is returned.
+    Safe against a live table — existing rows are skipped via pihole_query_id dedup.
     """
-    from_ts = (datetime.now(timezone.utc) - timedelta(hours=hours)).timestamp()
-    total_stored = 0
-    page = 0
-    max_pages = 50  # ~500k queries per instance — well beyond any realistic 24h volume
+    now = datetime.now(timezone.utc)
+    # Align to the start of the current clock hour
+    current_hour_start = now.replace(minute=0, second=0, microsecond=0)
 
-    logger.info("Starting %dh backfill for %s", hours, instance.name)
+    # Build list of (window_start, window_end) pairs, oldest first
+    windows: list[tuple[datetime, datetime]] = []
+    for i in range(hours - 1, 0, -1):
+        w_start = current_hour_start - timedelta(hours=i)
+        w_end   = w_start + timedelta(hours=1)
+        windows.append((w_start, w_end))
+    # Final window: current hour start → now
+    windows.append((current_hour_start, now))
+
+    total_stored = 0
+    logger.info("Starting %dh backfill for %s (%d windows)", hours, instance.name, len(windows))
     try:
         client = await get_client(instance)
-        while page < max_pages:
-            queries = await client.get_queries(from_ts=from_ts, length=10000)
-            await save_sid(instance.id, client.sid)
+        for w_start, w_end in windows:
+            from_ts  = w_start.timestamp()
+            until_ts = w_end.timestamp()
+            max_pages = 20  # safety cap per window (~200k queries/hour — far beyond realistic)
 
-            if not queries:
-                break
+            for _ in range(max_pages):
+                queries = await client.get_queries(from_ts=from_ts, until_ts=until_ts, length=10000)
+                await save_sid(instance.id, client.sid)
 
-            async with AsyncSessionLocal() as db:
-                pihole_ids = [q.pihole_id for q in queries if q.pihole_id]
-                existing_ids: set[str] = set()
-                if pihole_ids:
-                    result = await db.execute(
-                        select(QueryLog.pihole_query_id).where(
-                            QueryLog.instance_id == instance.id,
-                            QueryLog.pihole_query_id.in_(pihole_ids),
-                        )
-                    )
-                    existing_ids = {row[0] for row in result.fetchall()}
+                if not queries:
+                    break
 
-                new_logs = [
-                    QueryLog(
-                        instance_id=instance.id,
-                        pihole_query_id=q.pihole_id,
-                        timestamp=q.timestamp,
-                        client_ip=q.client_ip,
-                        client_name=q.client_name,
-                        query_type=q.query_type,
-                        domain=q.domain,
-                        status=q.status,
-                        reply_type=q.reply_type,
-                        reply_time_ms=q.reply_time_ms,
-                    )
-                    for q in queries
-                    if not (q.pihole_id and q.pihole_id in existing_ids)
-                ]
-                if new_logs:
-                    db.add_all(new_logs)
-                    await db.commit()
-                    total_stored += len(new_logs)
+                stored = await _store_queries(instance, queries)
+                total_stored += stored
 
-            if len(queries) < 10000:
-                # Partial page — we've reached the present end of Pi-hole's history
-                break
+                if len(queries) < 10000:
+                    # Partial page — window exhausted
+                    break
 
-            max_ts = max(q.timestamp.timestamp() for q in queries)
-            if max_ts <= from_ts:
-                # No timestamp progress — avoid an infinite loop
-                break
-            from_ts = max_ts
-            page += 1
+                # Full page returned: advance watermark within the window and continue
+                max_ts = max(q.timestamp.timestamp() for q in queries)
+                if max_ts <= from_ts:
+                    break  # no progress guard
+                from_ts = max_ts
 
     except Exception as exc:
         logger.warning("Backfill failed for %s: %s", instance.name, exc)

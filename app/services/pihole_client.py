@@ -389,11 +389,13 @@ class PiholeClient:
             top_clients=sorted(top_clients, key=lambda x: x["count"], reverse=True),
         )
 
-    async def get_queries(self, from_ts: float | None = None, length: int = 500) -> list[PiholeQuery]:
-        """Fetch queries newer than from_ts (Unix timestamp). Returns up to length results."""
+    async def get_queries(self, from_ts: float | None = None, until_ts: float | None = None, length: int = 500) -> list[PiholeQuery]:
+        """Fetch queries in the given time window. Returns up to length results."""
         params: dict[str, Any] = {"length": length}
         if from_ts is not None:
             params["from"] = from_ts
+        if until_ts is not None:
+            params["until"] = until_ts
 
         data = await self._get("/api/queries", params=params)
         queries_raw = data.get("queries", []) or []
