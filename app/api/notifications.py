@@ -1,12 +1,16 @@
 """Pushover notification settings API."""
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.auth import get_current_user
 from app.models.user import User
 from app.services import pushover as pushover_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/notifications", tags=["notifications"])
 
@@ -58,7 +62,8 @@ async def save_settings(
             offline_alert_retries=req.offline_alert_retries,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to persist settings: {exc}")
+        logger.exception("Failed to persist Pushover settings: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to save notification settings.")
     return pushover_service.get_settings()
 
 

@@ -407,10 +407,15 @@ async function loadQueries(page) {
             <td class="small">${escHtml(q.client_name || q.client_ip || '—')}</td>
             <td>${statusPill(q.status)}</td>
             <td class="text-end small">${q.reply_time_ms != null ? Number(q.reply_time_ms).toFixed(1) : '—'}</td>
-            <td class="text-end">${_mkDomainBtn(d, isBlocked)}</td>
+            <td class="text-end domain-action-cell" data-domain="${d}" data-blocked="${isBlocked}"></td>
           </tr>`;
         }).join('')
       : '<tr><td colspan="8" class="text-center text-muted py-4">No queries found.</td></tr>';
+
+    // Populate domain action buttons via DOM (never via innerHTML) to prevent XSS.
+    tbody.querySelectorAll('.domain-action-cell').forEach(td => {
+      td.appendChild(_mkDomainBtn(td.dataset.domain, td.dataset.blocked === 'true'));
+    });
 
     const totalPages = Math.ceil(data.total / data.page_size);
     renderPagination('pagination-top', currentPage, totalPages);
@@ -533,10 +538,24 @@ function renderPagination(id, current, total) {
 
 // Build the initial Block / Unblock button for a query row.
 // domain must be an already-HTML-escaped string (safe for inline onclick).
+// Returns a DOM element — never an HTML string — so domain values cannot inject
+// event-handler code regardless of what characters Pi-hole returns.
 function _mkDomainBtn(domain, isCurrentlyBlocked) {
-  return isCurrentlyBlocked
-    ? `<button class="btn btn-xs btn-outline-success py-0 px-1" style="font-size:.7rem;white-space:nowrap;" onclick="askDomainAction(this,'${domain}',false)">Unblock</button>`
-    : `<button class="btn btn-xs btn-outline-danger py-0 px-1" style="font-size:.7rem;white-space:nowrap;" onclick="askDomainAction(this,'${domain}',true)">Block</button>`;
+  const btn = document.createElement('button');
+  btn.className = `btn btn-xs ${isCurrentlyBlocked ? 'btn-outline-success' : 'btn-outline-danger'} py-0 px-1`;
+  btn.style.cssText = 'font-size:.7rem;white-space:nowrap;';
+  btn.textContent = isCurrentlyBlocked ? 'Unblock' : 'Block';
+  btn.addEventListener('click', () => askDomainAction(btn, domain, isCurrentlyBlocked));
+  return btn;
+}
+
+function _cellSpinner(cell) {
+  cell.replaceChildren();
+  const s = document.createElement('span');
+  s.className = 'text-muted';
+  s.style.fontSize = '.7rem';
+  s.textContent = '…';
+  cell.appendChild(s);
 }
 
 // First click: check actual deny-list state on the master Pi-hole, then show
@@ -544,7 +563,7 @@ function _mkDomainBtn(domain, isCurrentlyBlocked) {
 // fallback used if the API call fails.
 async function askDomainAction(btn, domain, blocking) {
   const cell = btn.closest('td');
-  cell.innerHTML = `<span class="text-muted" style="font-size:.7rem;">…</span>`;
+  _cellSpinner(cell);
 
   // Query the master Pi-hole for the real current state.
   let actuallyBlocked = blocking;
@@ -554,19 +573,33 @@ async function askDomainAction(btn, domain, blocking) {
   } catch (_) { /* keep fallback */ }
 
   const doBlocking = !actuallyBlocked;
-  const verb = doBlocking ? 'Block?' : 'Unblock?';
-  const txtCls = doBlocking ? 'text-danger' : 'text-success';
-  const confirmCls = doBlocking ? 'btn-outline-danger' : 'btn-outline-success';
-  cell.innerHTML =
-    `<span class="${txtCls} me-1" style="font-size:.7rem;white-space:nowrap;">${verb}</span>` +
-    `<button class="btn btn-xs ${confirmCls} py-0 px-1 me-1" style="font-size:.7rem;" title="Confirm" onclick="doDomainAction(this,'${domain}',${doBlocking})">✓</button>` +
-    `<button class="btn btn-xs btn-outline-secondary py-0 px-1" style="font-size:.7rem;" title="Cancel" onclick="this.closest('td').innerHTML=_mkDomainBtn('${domain}',${actuallyBlocked})">✗</button>`;
+
+  const label = document.createElement('span');
+  label.className = `${doBlocking ? 'text-danger' : 'text-success'} me-1`;
+  label.style.cssText = 'font-size:.7rem;white-space:nowrap;';
+  label.textContent = doBlocking ? 'Block?' : 'Unblock?';
+
+  const confirmBtn = document.createElement('button');
+  confirmBtn.className = `btn btn-xs ${doBlocking ? 'btn-outline-danger' : 'btn-outline-success'} py-0 px-1 me-1`;
+  confirmBtn.style.fontSize = '.7rem';
+  confirmBtn.title = 'Confirm';
+  confirmBtn.textContent = '✓';
+  confirmBtn.addEventListener('click', () => doDomainAction(confirmBtn, domain, doBlocking));
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn btn-xs btn-outline-secondary py-0 px-1';
+  cancelBtn.style.fontSize = '.7rem';
+  cancelBtn.title = 'Cancel';
+  cancelBtn.textContent = '✗';
+  cancelBtn.addEventListener('click', () => cell.replaceChildren(_mkDomainBtn(domain, actuallyBlocked)));
+
+  cell.replaceChildren(label, confirmBtn, cancelBtn);
 }
 
 // Second click (confirm): execute the API call.
 async function doDomainAction(btn, domain, blocking) {
   const cell = btn.closest('td');
-  cell.innerHTML = `<span class="text-muted" style="font-size:.7rem;">…</span>`;
+  _cellSpinner(cell);
   try {
     const resp = blocking
       ? await fetch('/api/domains/block', {
@@ -577,16 +610,15 @@ async function doDomainAction(btn, domain, blocking) {
       : await fetch(`/api/domains/block/${encodeURIComponent(domain)}`, { method: 'DELETE' });
 
     if (resp.ok || resp.status === 204) {
-      // Success: flip to the opposite action button
-      cell.innerHTML = _mkDomainBtn(domain, !blocking);
+      cell.replaceChildren(_mkDomainBtn(domain, !blocking));
     } else {
       const err = await resp.json().catch(() => ({}));
       alert(`Failed to ${blocking ? 'block' : 'unblock'} ${domain}: ${err.detail || resp.status}`);
-      cell.innerHTML = _mkDomainBtn(domain, blocking);
+      cell.replaceChildren(_mkDomainBtn(domain, blocking));
     }
   } catch (e) {
     alert(`Error: ${e}`);
-    cell.innerHTML = _mkDomainBtn(domain, blocking);
+    cell.replaceChildren(_mkDomainBtn(domain, blocking));
   }
 }
 

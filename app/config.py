@@ -22,6 +22,14 @@ class Settings(BaseSettings):
     initial_admin_user: str = "admin"
     initial_admin_password: str = "changeme"
 
+    # Fernet key for encrypting Pi-hole API passwords at rest.
+    # Generate with: python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    encryption_key: str = ""
+
+    # Set to true when MyPi is behind a TLS-terminating reverse proxy (Traefik, nginx, etc.)
+    # so session cookies carry the Secure flag.  Leave false for plain-HTTP local access.
+    secure_cookies: bool = False
+
     pihole_config_path: str = "/app/pihole_instances.yml"
     max_pihole_instances: int = 10
 
@@ -34,6 +42,24 @@ class Settings(BaseSettings):
     def validate_database_url(cls, v: str) -> str:
         if not v.startswith("postgresql"):
             raise ValueError("DATABASE_URL must be a PostgreSQL URL")
+        return v
+
+    @field_validator("encryption_key")
+    @classmethod
+    def validate_encryption_key(cls, v: str) -> str:
+        if not v:
+            raise ValueError(
+                "ENCRYPTION_KEY is required. Generate one with: "
+                "python3 -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+            )
+        from cryptography.fernet import Fernet, InvalidToken
+        try:
+            Fernet(v.encode())
+        except Exception:
+            raise ValueError(
+                "ENCRYPTION_KEY is not a valid Fernet key. "
+                "Generate one with: python3 -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+            )
         return v
 
 

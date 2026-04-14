@@ -19,9 +19,10 @@ from app.api import queries as queries_router
 from app.api import stats as stats_router
 from app.api import sync as sync_router
 from app.api import version as version_router
-from app.auth import get_current_user, get_current_user_optional, hash_password
+from app.auth import get_current_user, get_current_user_optional, hash_password, verify_password
 from app.config import SESSION_COOKIE_NAME, settings
 from app.database import AsyncSessionLocal, get_db
+from app.models.user import User
 from app.models.user import User
 from app.services.collector import backfill_all_instances, cleanup_old_data, fetch_all_instance_versions, poll_queries, poll_stats, shutdown as collector_shutdown
 from app.services.config_loader import sync_instances
@@ -50,10 +51,11 @@ async def _bootstrap() -> None:
             admin = User(
                 username=settings.initial_admin_user,
                 hashed_password=hash_password(settings.initial_admin_password),
+                password_change_required=True,
             )
             db.add(admin)
             await db.commit()
-            logger.info("Created initial admin user: %s", settings.initial_admin_user)
+            logger.info("Created initial admin user: %s (password change required on first login)", settings.initial_admin_user)
 
 
 @asynccontextmanager
@@ -131,8 +133,9 @@ async def login_form(request: Request, response: Response, db=Depends(get_db)):
 
     expire_minutes = session_settings.effective_minutes(session_settings.get_timeout_minutes())
     token = create_access_token(user.username, expire_minutes=expire_minutes)
-    redirect = RedirectResponse(url="/", status_code=303)
-    redirect.set_cookie(SESSION_COOKIE_NAME, token, httponly=True, samesite="lax", max_age=expire_minutes * 60)
+    dest = "/change-password" if user.password_change_required else "/"
+    redirect = RedirectResponse(url=dest, status_code=303)
+    redirect.set_cookie(SESSION_COOKIE_NAME, token, httponly=True, secure=settings.secure_cookies, samesite="lax", max_age=expire_minutes * 60)
     return redirect
 
 
@@ -147,6 +150,8 @@ async def logout_web():
 async def dashboard(request: Request, current_user=Depends(get_current_user_optional)):
     if current_user is None:
         return RedirectResponse(url="/login", status_code=303)
+    if current_user.password_change_required:
+        return RedirectResponse(url="/change-password", status_code=303)
     return templates.TemplateResponse("dashboard.html", {"request": request, "user": current_user})
 
 
@@ -154,6 +159,8 @@ async def dashboard(request: Request, current_user=Depends(get_current_user_opti
 async def queries_page(request: Request, current_user=Depends(get_current_user_optional)):
     if current_user is None:
         return RedirectResponse(url="/login", status_code=303)
+    if current_user.password_change_required:
+        return RedirectResponse(url="/change-password", status_code=303)
     return templates.TemplateResponse("queries.html", {"request": request, "user": current_user})
 
 
@@ -161,4 +168,44 @@ async def queries_page(request: Request, current_user=Depends(get_current_user_o
 async def settings_page(request: Request, current_user=Depends(get_current_user_optional)):
     if current_user is None:
         return RedirectResponse(url="/login", status_code=303)
+    if current_user.password_change_required:
+        return RedirectResponse(url="/change-password", status_code=303)
     return templates.TemplateResponse("settings.html", {"request": request, "user": current_user})
+
+
+@app.get("/change-password", response_class=HTMLResponse, include_in_schema=False)
+async def change_password_page(request: Request, current_user=Depends(get_current_user_optional)):
+    if current_user is None:
+        return RedirectResponse(url="/login", status_code=303)
+    return templates.TemplateResponse("change_password.html", {"request": request, "user": current_user})
+
+
+@app.post("/change-password", include_in_schema=False)
+async def change_password_form(request: Request, db=Depends(get_db), current_user=Depends(get_current_user_optional)):
+    if current_user is None:
+        return RedirectResponse(url="/login", status_code=303)
+
+    form = await request.form()
+    current_pw = form.get("current_password", "")
+    new_pw = form.get("new_password", "")
+    confirm_pw = form.get("confirm_password", "")
+
+    def _error(msg: str):
+        return templates.TemplateResponse(
+            "change_password.html", {"request": request, "user": current_user, "error": msg}, status_code=422
+        )
+
+    if not verify_password(current_pw, current_user.hashed_password):
+        return _error("Current password is incorrect.")
+    if len(new_pw) < 8:
+        return _error("New password must be at least 8 characters.")
+    if new_pw != confirm_pw:
+        return _error("Passwords do not match.")
+
+    async with AsyncSessionLocal() as session:
+        user = await session.get(User, current_user.id)
+        user.hashed_password = hash_password(new_pw)
+        user.password_change_required = False
+        await session.commit()
+
+    return RedirectResponse(url="/", status_code=303)

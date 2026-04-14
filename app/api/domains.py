@@ -84,8 +84,8 @@ async def block_domain(
         await client.block_domain(domain)
         logger.info("Blocked domain %s on master %s", domain, master.name)
     except Exception as exc:
-        logger.error("Failed to block domain %s on master %s: %s", domain, master.name, exc)
-        raise HTTPException(status_code=502, detail=f"Failed to block domain on master: {exc}")
+        logger.exception("Failed to block domain %s on master %s: %s", domain, master.name, exc)
+        raise HTTPException(status_code=502, detail="Failed to block domain on master Pi-hole.")
 
     # Sync master → replicas so the new deny entry propagates immediately.
     if sync_service.get_state().status != "running":
@@ -132,7 +132,7 @@ async def unblock_domain(
     if errors and len(errors) == len(instances):
         raise HTTPException(
             status_code=502,
-            detail=f"Failed to unblock on all instances: {'; '.join(errors)}",
+            detail="Failed to unblock domain on all instances.",
         )
 
     return Response(status_code=204)

@@ -1,13 +1,59 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime
 
+from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.types import TypeDecorator
 
 from app.database import Base
+
+logger = logging.getLogger(__name__)
+
+_fernet: Fernet | None = None
+
+
+def _get_fernet() -> Fernet:
+    global _fernet
+    if _fernet is None:
+        from app.config import settings
+        _fernet = Fernet(settings.encryption_key.encode())
+    return _fernet
+
+
+class EncryptedString(TypeDecorator):
+    """Transparent Fernet encryption/decryption for string columns.
+
+    Stores ciphertext as a VARCHAR; encrypts on write, decrypts on read.
+    If decryption fails (e.g. a legacy plaintext row before encryption was
+    added), returns an empty string — config_loader will re-sync the correct
+    value from pihole_instances.yml on the next startup.
+    """
+
+    impl = String
+    cache_ok = True
+
+    def process_bind_param(self, value: str | None, dialect) -> str | None:
+        if not value:
+            return value
+        return _get_fernet().encrypt(value.encode()).decode()
+
+    def process_result_value(self, value: str | None, dialect) -> str | None:
+        if not value:
+            return value
+        try:
+            return _get_fernet().decrypt(value.encode()).decode()
+        except (InvalidToken, Exception):
+            logger.warning(
+                "api_password column contains a value that could not be decrypted "
+                "(likely a pre-encryption plaintext row). Returning empty string — "
+                "value will be re-synced from pihole_instances.yml on next startup."
+            )
+            return ""
 
 
 class PiholeInstance(Base):
@@ -16,7 +62,7 @@ class PiholeInstance(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
     url: Mapped[str] = mapped_column(String(512), nullable=False)
-    api_password: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    api_password: Mapped[str] = mapped_column(EncryptedString(512), nullable=False, default="")
     color: Mapped[str] = mapped_column(String(16), nullable=False, default="#3c8dbc")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
     is_master: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
