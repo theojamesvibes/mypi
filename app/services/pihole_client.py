@@ -430,9 +430,25 @@ class PiholeClient:
         )
 
     async def unblock_domain(self, domain: str) -> None:
-        """Remove domain from the exact deny list on this Pi-hole instance."""
-        from urllib.parse import quote
-        await self._delete(f"/api/domains/deny/exact/{quote(domain, safe='')}")
+        """Remove domain from the exact deny list on this Pi-hole instance.
+
+        Pi-hole v6 assigns each deny-list entry a numeric database ID; the DELETE
+        endpoint expects that ID, not the domain string.  We GET the list first to
+        find the matching entry, then DELETE by ID.  Falls back to the domain-in-path
+        form if no id field is present in the response.
+        """
+        data = await self._get("/api/domains/deny/exact")
+        entries = data if isinstance(data, list) else (data.get("domains") or [])
+        entry = next((e for e in entries if e.get("domain") == domain), None)
+        if entry is None:
+            logger.debug("Domain %s not found in exact deny list on %s — nothing to delete", domain, self.base_url)
+            return
+        entry_id = entry.get("id")
+        if entry_id is not None:
+            await self._delete(f"/api/domains/deny/exact/{entry_id}")
+        else:
+            from urllib.parse import quote
+            await self._delete(f"/api/domains/deny/exact/{quote(domain, safe='')}")
 
     async def is_domain_blocked(self, domain: str) -> bool:
         """Return True if domain is present in the exact deny list."""

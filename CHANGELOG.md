@@ -4,6 +4,26 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.2.4] — 2026-04-14
+
+### Fixed
+- **Unblock domain now works correctly** — two root causes addressed:
+  1. Pi-hole v6 assigns each deny-list entry a numeric database ID; the DELETE
+     endpoint requires that ID, not the domain string. `unblock_domain` now GETs
+     the full deny list first, finds the entry by domain name, and DELETEs by ID
+     (falling back to domain-name-in-path if no `id` field is present).
+  2. The post-unblock sync called `run_sync` which always runs gravity on the
+     master before exporting — this re-added the domain to `gravity.db` from adlists
+     and re-blocked it on every replica. Unblock now calls `unblock_domain` directly
+     on every active instance instead of triggering a full sync, so no gravity runs
+     and adlist-based re-adds cannot occur.
+- **Block/Unblock requires two clicks** — single-click accidental blocks/unblocks
+  eliminated. Clicking Block or Unblock now shows an inline confirmation prompt
+  ("Block? ✓ ✗" / "Unblock? ✓ ✗"). The ✓ confirms the action; ✗ restores the
+  original button without taking any action.
+
+---
+
 ## [1.2.3] — 2026-04-14
 
 ### Fixed
