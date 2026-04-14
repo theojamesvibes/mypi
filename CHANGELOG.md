@@ -4,6 +4,36 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.3.0] — 2026-04-14
+
+### Security
+- **Pi-hole API passwords encrypted at rest** — `api_password` is now stored using
+  Fernet symmetric encryption (AES-128-CBC + HMAC-SHA256). Requires a new
+  `ENCRYPTION_KEY` env var (see `.env.example`). Legacy plaintext rows are handled
+  gracefully on read and re-encrypted by `config_loader` on first startup after upgrade.
+- **DOM-based XSS eliminated** — block/unblock buttons in the query log are now built
+  entirely with DOM methods (`createElement` / `addEventListener`). Domain names from
+  Pi-hole can no longer inject HTML or JavaScript via `onclick` attributes.
+- **Exception details removed from API error responses** — internal exception messages
+  (DB errors, stack traces) are no longer returned to clients. Errors are logged
+  server-side; clients receive generic messages only.
+- **LIKE wildcard injection fixed** — `%` and `_` in domain/client filter parameters
+  are now escaped before use in `ILIKE` queries, preventing filter bypass.
+- **Password change required on first login** — the initial admin account is created
+  with `password_change_required=True`. All web UI routes redirect to `/change-password`
+  until a new password is set. Applies to fresh installs only; existing accounts are
+  unaffected.
+- **`SECURE_COOKIES` env var** — session cookies now respect a `SECURE_COOKIES=true`
+  setting that adds the `Secure` flag. Default is `false` for plain-HTTP local access.
+  Set to `true` when running behind Traefik or any TLS-terminating reverse proxy.
+
+### Migration notes
+- **Required:** Add `ENCRYPTION_KEY` to your `.env` before upgrading.
+  Generate with: `python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
+- Database migration 0006 adds `password_change_required` to the `users` table (runs automatically).
+
+---
+
 ## [1.2.9] — 2026-04-14
 
 ### Changed

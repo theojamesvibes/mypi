@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -12,7 +14,7 @@ from app.auth import (
     hash_password,
     verify_password,
 )
-from app.config import SESSION_COOKIE_NAME
+from app.config import SESSION_COOKIE_NAME, settings
 from app.database import get_db
 from app.models.user import ApiKey, User
 from app.schemas.auth import (
@@ -24,6 +26,8 @@ from app.schemas.auth import (
     UserResponse,
 )
 from app.services import session_settings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -41,6 +45,7 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
         key=SESSION_COOKIE_NAME,
         value=token,
         httponly=True,
+        secure=settings.secure_cookies,
         samesite="lax",
         max_age=expire_minutes * 60,
     )
@@ -127,5 +132,6 @@ async def set_session_timeout(
     try:
         await session_settings.save_settings(body.timeout_minutes)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to save session timeout: {exc}")
+        logger.exception("Failed to save session timeout: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to save session timeout.")
     return {"timeout_minutes": session_settings.get_timeout_minutes()}

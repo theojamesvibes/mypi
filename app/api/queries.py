@@ -17,6 +17,11 @@ from app.schemas.queries import ClientSummary, QueryLogEntry, QueryLogPage
 router = APIRouter(prefix="/api/queries", tags=["queries"])
 
 
+def _escape_like(s: str) -> str:
+    """Escape LIKE wildcards so user input is treated as a literal substring."""
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 _SORT_COLUMNS = {
     "timestamp": QueryLog.timestamp,
     "domain": QueryLog.domain,
@@ -53,10 +58,12 @@ async def get_queries(
     if instance_id:
         base_q = base_q.where(QueryLog.instance_id == instance_id)
     if domain:
-        base_q = base_q.where(QueryLog.domain.ilike(f"%{domain}%"))
+        base_q = base_q.where(QueryLog.domain.ilike(f"%{_escape_like(domain)}%", escape="\\"))
     if client:
+        escaped_client = _escape_like(client)
         base_q = base_q.where(
-            (QueryLog.client_ip.ilike(f"%{client}%")) | (QueryLog.client_name.ilike(f"%{client}%"))
+            (QueryLog.client_ip.ilike(f"%{escaped_client}%", escape="\\"))
+            | (QueryLog.client_name.ilike(f"%{escaped_client}%", escape="\\"))
         )
     if status:
         base_q = base_q.where(QueryLog.status == status)

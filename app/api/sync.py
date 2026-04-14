@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import asyncio
 
+import logging
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.auth import get_current_user
 from app.models.user import User
 from app.services import sync_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/sync", tags=["sync"])
 
@@ -76,7 +80,8 @@ async def set_schedule(req: ScheduleRequest, _: User = Depends(get_current_user)
             run_gravity=req.run_gravity,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to persist schedule: {exc}")
+        logger.exception("Failed to persist sync schedule: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to save sync schedule.")
     return sync_service.get_schedule()
 
 
