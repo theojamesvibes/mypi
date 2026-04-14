@@ -293,13 +293,20 @@ function renderInstancesTable(instances) {
     return;
   }
 
-  tbody.innerHTML = instances.map(inst => `
+  // Master first, then alphabetical by name.
+  const sorted = [...instances].sort((a, b) => {
+    if (a.is_master !== b.is_master) return a.is_master ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  tbody.innerHTML = sorted.map(inst => `
     <tr>
       <td>
-        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${inst.color};margin-right:6px;"></span>
+        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${escHtml(inst.color)};margin-right:6px;"></span>
         <strong>${escHtml(inst.name)}</strong>
+        ${inst.is_master ? '<span class="badge bg-primary ms-1" style="font-size:0.65rem;">master</span>' : ''}
       </td>
-      <td>${instanceDot(inst.status)}${inst.status}</td>
+      <td>${instanceDot(inst.status)}${escHtml(inst.status)}</td>
       <td class="text-end">${fmtNum(inst.dns_queries_today)}</td>
       <td class="text-end">${fmtNum(inst.queries_blocked)}</td>
       <td class="text-end">${fmtPct(inst.percent_blocked)}</td>
