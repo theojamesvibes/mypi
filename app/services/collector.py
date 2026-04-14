@@ -232,6 +232,85 @@ async def poll_queries() -> None:
     await asyncio.gather(*[_poll_queries_for(inst) for inst in instances])
 
 
+async def backfill_queries_for(instance: PiholeInstance, hours: int = 24) -> None:
+    """Fetch up to `hours` of historical queries from Pi-hole and insert any missing rows.
+
+    Pages forward using the `from` timestamp until Pi-hole returns a partial page
+    (meaning we have reached the present) or a safety cap of 50 pages is hit.
+    Safe to run against a live table — existing rows are skipped via pihole_query_id dedup.
+    """
+    from_ts = (datetime.now(timezone.utc) - timedelta(hours=hours)).timestamp()
+    total_stored = 0
+    page = 0
+    max_pages = 50  # ~500k queries per instance — well beyond any realistic 24h volume
+
+    logger.info("Starting %dh backfill for %s", hours, instance.name)
+    try:
+        client = await get_client(instance)
+        while page < max_pages:
+            queries = await client.get_queries(from_ts=from_ts, length=10000)
+            await save_sid(instance.id, client.sid)
+
+            if not queries:
+                break
+
+            async with AsyncSessionLocal() as db:
+                pihole_ids = [q.pihole_id for q in queries if q.pihole_id]
+                existing_ids: set[str] = set()
+                if pihole_ids:
+                    result = await db.execute(
+                        select(QueryLog.pihole_query_id).where(
+                            QueryLog.instance_id == instance.id,
+                            QueryLog.pihole_query_id.in_(pihole_ids),
+                        )
+                    )
+                    existing_ids = {row[0] for row in result.fetchall()}
+
+                new_logs = [
+                    QueryLog(
+                        instance_id=instance.id,
+                        pihole_query_id=q.pihole_id,
+                        timestamp=q.timestamp,
+                        client_ip=q.client_ip,
+                        client_name=q.client_name,
+                        query_type=q.query_type,
+                        domain=q.domain,
+                        status=q.status,
+                        reply_type=q.reply_type,
+                        reply_time_ms=q.reply_time_ms,
+                    )
+                    for q in queries
+                    if not (q.pihole_id and q.pihole_id in existing_ids)
+                ]
+                if new_logs:
+                    db.add_all(new_logs)
+                    await db.commit()
+                    total_stored += len(new_logs)
+
+            if len(queries) < 10000:
+                # Partial page — we've reached the present end of Pi-hole's history
+                break
+
+            max_ts = max(q.timestamp.timestamp() for q in queries)
+            if max_ts <= from_ts:
+                # No timestamp progress — avoid an infinite loop
+                break
+            from_ts = max_ts
+            page += 1
+
+    except Exception as exc:
+        logger.warning("Backfill failed for %s: %s", instance.name, exc)
+        return
+
+    logger.info("Backfill complete for %s: stored %d queries", instance.name, total_stored)
+
+
+async def backfill_all_instances(hours: int = 24) -> None:
+    """Run query backfill for all active instances in parallel."""
+    instances = await _get_active_instances()
+    await asyncio.gather(*[backfill_queries_for(inst, hours=hours) for inst in instances])
+
+
 async def cleanup_old_data() -> None:
     cutoff = datetime.now(timezone.utc) - timedelta(days=settings.data_retention_days)
     async with AsyncSessionLocal() as db:

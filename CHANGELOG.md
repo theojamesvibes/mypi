@@ -4,6 +4,19 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.2.8] — 2026-04-14
+
+### Added
+- **24h query backfill on startup** — at startup MyPi now fetches up to 24 hours of
+  historical queries from each Pi-hole instance and inserts any rows not already in the
+  database. This recovers the query log automatically after a `TRUNCATE query_logs` (e.g.
+  following page corruption). Backfill runs in parallel across all instances as a
+  background task so it does not delay startup. Pagination handles high-volume instances
+  (10k queries per page, up to 50 pages); existing rows are skipped via `pihole_query_id`
+  deduplication, so running against a live table is safe.
+
+---
+
 ## [1.2.7] — 2026-04-14
 
 ### Fixed
