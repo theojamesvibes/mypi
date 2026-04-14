@@ -539,16 +539,28 @@ function _mkDomainBtn(domain, isCurrentlyBlocked) {
     : `<button class="btn btn-xs btn-outline-danger py-0 px-1" style="font-size:.7rem;white-space:nowrap;" onclick="askDomainAction(this,'${domain}',true)">Block</button>`;
 }
 
-// First click: replace button with inline "Verb? ✓ ✗" confirmation.
-function askDomainAction(btn, domain, blocking) {
+// First click: check actual deny-list state on the master Pi-hole, then show
+// the correct "Verb? ✓ ✗" prompt.  The `blocking` hint from the row is only a
+// fallback used if the API call fails.
+async function askDomainAction(btn, domain, blocking) {
   const cell = btn.closest('td');
-  const verb = blocking ? 'Block?' : 'Unblock?';
-  const txtCls = blocking ? 'text-danger' : 'text-success';
-  const confirmCls = blocking ? 'btn-outline-danger' : 'btn-outline-success';
+  cell.innerHTML = `<span class="text-muted" style="font-size:.7rem;">…</span>`;
+
+  // Query the master Pi-hole for the real current state.
+  let actuallyBlocked = blocking;
+  try {
+    const resp = await fetch(`/api/domains/block/${encodeURIComponent(domain)}`);
+    if (resp.ok) actuallyBlocked = (await resp.json()).blocked;
+  } catch (_) { /* keep fallback */ }
+
+  const doBlocking = !actuallyBlocked;
+  const verb = doBlocking ? 'Block?' : 'Unblock?';
+  const txtCls = doBlocking ? 'text-danger' : 'text-success';
+  const confirmCls = doBlocking ? 'btn-outline-danger' : 'btn-outline-success';
   cell.innerHTML =
     `<span class="${txtCls} me-1" style="font-size:.7rem;white-space:nowrap;">${verb}</span>` +
-    `<button class="btn btn-xs ${confirmCls} py-0 px-1 me-1" style="font-size:.7rem;" title="Confirm" onclick="doDomainAction(this,'${domain}',${blocking})">✓</button>` +
-    `<button class="btn btn-xs btn-outline-secondary py-0 px-1" style="font-size:.7rem;" title="Cancel" onclick="this.closest('td').innerHTML=_mkDomainBtn('${domain}',${blocking})">✗</button>`;
+    `<button class="btn btn-xs ${confirmCls} py-0 px-1 me-1" style="font-size:.7rem;" title="Confirm" onclick="doDomainAction(this,'${domain}',${doBlocking})">✓</button>` +
+    `<button class="btn btn-xs btn-outline-secondary py-0 px-1" style="font-size:.7rem;" title="Cancel" onclick="this.closest('td').innerHTML=_mkDomainBtn('${domain}',${actuallyBlocked})">✗</button>`;
 }
 
 // Second click (confirm): execute the API call.

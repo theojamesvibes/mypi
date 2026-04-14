@@ -452,9 +452,9 @@ class PiholeClient:
 
     async def is_domain_blocked(self, domain: str) -> bool:
         """Return True if domain is present in the exact deny list."""
-        from urllib.parse import quote
         try:
-            data = await self._get(f"/api/domains/deny/exact/{quote(domain, safe='')}")
-            return bool(data)
+            data = await self._get("/api/domains/deny/exact")
+            entries = data if isinstance(data, list) else (data.get("domains") or [])
+            return any(e.get("domain") == domain for e in entries)
         except Exception:
             return False

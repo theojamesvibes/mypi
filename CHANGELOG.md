@@ -4,6 +4,19 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.2.5] — 2026-04-14
+
+### Fixed
+- **Block/Unblock button now reflects actual Pi-hole deny-list state** — the
+  button's initial label (Block vs Unblock) was inferred from the query log status,
+  which reflects past queries and not the current blocking state. A domain blocked
+  after queries were logged would still show "Block" on those old rows. Now, clicking
+  the button calls `GET /api/domains/block/{domain}` to check the real current state
+  on the master Pi-hole before showing the confirm dialog — so "Unblock?" is shown
+  for currently-blocked domains regardless of the logged query status.
+
+---
+
 ## [1.2.4] — 2026-04-14
 
 ### Fixed
