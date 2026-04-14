@@ -439,11 +439,20 @@ class PiholeClient:
         """
         data = await self._get("/api/domains/deny/exact")
         entries = data if isinstance(data, list) else (data.get("domains") or [])
-        entry = next((e for e in entries if e.get("domain") == domain), None)
+        logger.info(
+            "unblock_domain: %s on %s — deny list has %d entries; keys in first entry: %s",
+            domain, self.base_url, len(entries),
+            list(entries[0].keys()) if entries else "[]",
+        )
+        entry = next(
+            (e for e in entries if e.get("domain") == domain or e.get("name") == domain),
+            None,
+        )
         if entry is None:
-            logger.debug("Domain %s not found in exact deny list on %s — nothing to delete", domain, self.base_url)
+            logger.info("Domain %s not found in exact deny list on %s — nothing to delete", domain, self.base_url)
             return
         entry_id = entry.get("id")
+        logger.info("Deleting deny-list entry for %s (id=%s) on %s", domain, entry_id, self.base_url)
         if entry_id is not None:
             await self._delete(f"/api/domains/deny/exact/{entry_id}")
         else:
@@ -455,6 +464,15 @@ class PiholeClient:
         try:
             data = await self._get("/api/domains/deny/exact")
             entries = data if isinstance(data, list) else (data.get("domains") or [])
-            return any(e.get("domain") == domain for e in entries)
-        except Exception:
+            logger.info(
+                "is_domain_blocked: %s on %s — %d entries; keys in first: %s",
+                domain, self.base_url, len(entries),
+                list(entries[0].keys()) if entries else "[]",
+            )
+            return any(
+                e.get("domain") == domain or e.get("name") == domain
+                for e in entries
+            )
+        except Exception as exc:
+            logger.warning("Failed to check deny list on %s: %s", self.base_url, exc)
             return False
