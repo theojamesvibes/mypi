@@ -4,6 +4,15 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.4.5] — 2026-04-14
+
+### Changed
+
+- **Pi-hole Systems panel sort order** — master instance is always listed first, remaining instances sorted alphabetically. Order is applied both in the API query and client-side sort so it's consistent regardless of call path.
+- **Master badge in Systems panel** — master instance now shows the same blue "master" pill used in the Settings → Pi-hole Instances table.
+
+---
+
 ## [1.4.4] — 2026-04-14
 
 ### Fixed

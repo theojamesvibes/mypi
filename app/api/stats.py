@@ -66,7 +66,11 @@ async def get_summary(
         since_dt = datetime.now(timezone.utc) - timedelta(hours=hours)
     since = since_dt
 
-    result = await db.execute(select(PiholeInstance).where(PiholeInstance.is_active.is_(True)))
+    result = await db.execute(
+        select(PiholeInstance)
+        .where(PiholeInstance.is_active.is_(True))
+        .order_by(PiholeInstance.is_master.desc(), PiholeInstance.name)
+    )
     instances = result.scalars().all()
     snapshots = await _latest_snapshots_by_instance(db)
 
