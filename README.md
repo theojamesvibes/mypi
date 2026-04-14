@@ -1,6 +1,6 @@
 # MyPi
 [![build](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/docker-publish.yml?style=flat-square)](https://github.com/theojamesvibes/mypi/actions)
-[![version](https://img.shields.io/badge/version-1.2.0-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
+[![version](https://img.shields.io/badge/version-1.2.2-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
 [![platform](https://img.shields.io/badge/platform-linux%2Famd64%20|%20linux%2Farm64-teal?style=flat-square)](https://github.com/theojamesvibes/mypi/pkgs/container/mypi)
 
 > **⚠️ Vibe Code Disclosure**
@@ -33,6 +33,7 @@ A self-hosted dashboard that consolidates up to 10 locally running [Pi-hole](htt
 - Consolidated query log across all instances with instance badge per row
 - Column sorting (click any header), pagination, and a **Live View** toggle that refreshes every 2 seconds
 - Filter by instance, domain, client, blocked/permitted status, and time range
+- **Block / Unblock domains** — every row has an inline button: blocked-status queries show **Unblock**, all others show **Block**. One click adds or removes the domain from the master Pi-hole's exact deny list and triggers a gravity sync to all replicas in the background. The button toggles in-place without a page reload.
 - **Unique Clients view** — Show dropdown option that switches to a per-client aggregate table (total queries, blocked count, % blocked, last seen); accessible directly from the dashboard stat card
 - Deep-link URL params: `/queries?blocked=true`, `/queries?blocked=false`, `/queries?show=clients` pre-set the Show filter automatically
 - Last-updated timestamp shown in the topbar after each refresh
@@ -80,7 +81,7 @@ A self-hosted dashboard that consolidates up to 10 locally running [Pi-hole](htt
 │  Pi-hole 1   Pi-hole 2   …   Pi-hole N          │
 │  (Pi-hole v6, local network)                    │
 └────────────────┬────────────────────────────────┘
-                 │  HTTP (Pi-hole v6 REST API)
+                 │  HTTP or HTTPS (Pi-hole v6 REST API)
                  ▼
 ┌────────────────────────────────────────────────────────┐
 │                    MyPi (Docker)                       │
@@ -216,6 +217,12 @@ instances:
     url: "http://192.168.1.103"
     password: ""
     color: "#9b59b6"
+
+  # HTTPS with a self-signed certificate — just use https:// in the URL:
+  - name: "Secure Pi"
+    url: "https://192.168.1.104"
+    password: "your-pihole-password"
+    color: "#e74c3c"
 ```
 
 - Up to **10 instances** supported
@@ -223,6 +230,10 @@ instances:
 - `password` is the Pi-hole web interface password (Pi-hole v6 API). Leave empty (`""`) or omit entirely for instances with no password configured — MyPi detects the passwordless state automatically and connects without authentication
 - `color` is used in charts to distinguish each instance visually
 - `master: true` designates the sync source for the Pi-hole Sync feature — exactly one instance should be marked master
+
+#### HTTP vs HTTPS
+
+Both `http://` and `https://` URLs are supported. If your Pi-hole is configured with HTTPS (including a self-signed certificate), simply use `https://` in the `url` field — MyPi accepts self-signed certificates without any additional configuration. Using HTTPS is recommended when your Pi-hole is reachable over a network segment you don't fully control.
 
 ---
 
@@ -276,6 +287,10 @@ GET     /api/stats/top                   # Top domains and clients (?hours=24&li
 GET     /api/queries                     # Paginated, filterable, sortable query log
                                          # ?page, page_size, instance_id, domain, client,
                                          #  blocked, hours, sort_by, sort_dir
+
+# Domain blocking
+POST    /api/domains/block               # { "domain": "example.com" } — add to master exact deny list + sync
+DELETE  /api/domains/block/{domain}      # Remove domain from master exact deny list + sync
 
 # Instances
 GET     /api/instances                   # Active instance list with latest stats, status, and software versions
@@ -339,6 +354,7 @@ mypi/
     ├── schemas/              # Pydantic request/response schemas
     ├── api/                  # FastAPI route handlers
     │   ├── auth.py
+    │   ├── domains.py        # Block/unblock domain endpoints
     │   ├── instances.py
     │   ├── notifications.py  # Pushover settings + test/validate endpoints
     │   ├── queries.py
@@ -371,6 +387,8 @@ MyPi targets **Pi-hole v6** which introduced a new REST API. It uses the followi
 - `GET /api/teleporter` — export configuration ZIP (sync)
 - `POST /api/teleporter` — import configuration ZIP (sync)
 - `POST /api/action/gravity` — trigger gravity update (sync)
+- `POST /api/domains/deny/exact` — add a domain to the exact deny list (block)
+- `DELETE /api/domains/deny/exact/{domain}` — remove a domain from the exact deny list (unblock)
 
 Pi-hole v5 (the `api.php` interface) is **not** supported.
 
@@ -406,8 +424,8 @@ uvicorn app.main:app --reload --port 8080
 - [x] Pushover push notifications (sync failure, offline, no logs, high block rate)
 - [x] Topbar sync status badge (green/yellow/red) on every page
 - [x] Dark / Light / System theme with no flash on load
+- [x] Block / Unblock domains from the query log (master deny list + replica sync)
 - [ ] iOS app
-- [ ] Blocking / unblocking domains via the aggregated UI
 
 ---
 
