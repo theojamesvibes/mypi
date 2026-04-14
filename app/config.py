@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     # so session cookies carry the Secure flag.  Leave false for plain-HTTP local access.
     secure_cookies: bool = False
 
+    # Set to true to verify TLS certificates when connecting to Pi-hole instances over HTTPS.
+    # Leave false (default) if your Pi-hole uses a self-signed certificate.
+    verify_pihole_ssl: bool = False
+
     pihole_config_path: str = "/app/pihole_instances.yml"
     max_pihole_instances: int = 10
 

@@ -10,6 +10,7 @@ from sqlalchemy import delete, select
 from app.config import settings
 from app.database import AsyncSessionLocal
 from app.models.pihole import PiholeInstance, QueryLog, StatsSnapshot
+from app.models.user import RevokedToken
 from app.services import pihole_version_check
 from app.services import pushover as pushover_service
 from app.services import sync_service
@@ -333,6 +334,7 @@ async def backfill_all_instances(hours: int = 24) -> None:
 
 async def cleanup_old_data() -> None:
     cutoff = datetime.now(timezone.utc) - timedelta(days=settings.data_retention_days)
+    now = datetime.now(timezone.utc)
     async with AsyncSessionLocal() as db:
         snap_result = await db.execute(
             delete(StatsSnapshot).where(StatsSnapshot.collected_at < cutoff)
@@ -340,12 +342,16 @@ async def cleanup_old_data() -> None:
         query_result = await db.execute(
             delete(QueryLog).where(QueryLog.timestamp < cutoff)
         )
+        token_result = await db.execute(
+            delete(RevokedToken).where(RevokedToken.expires_at < now)
+        )
         await db.commit()
         logger.info(
-            "Cleanup: removed %d snapshots and %d query log entries older than %d days.",
+            "Cleanup: removed %d snapshots, %d query log entries older than %d days, %d expired revoked tokens.",
             snap_result.rowcount,
             query_result.rowcount,
             settings.data_retention_days,
+            token_result.rowcount,
         )
 
 

@@ -76,7 +76,8 @@ class PiholeClient:
 
     async def open(self) -> None:
         """Open the underlying HTTP client. Call once and reuse the instance."""
-        self._client = httpx.AsyncClient(timeout=self.timeout, verify=False)
+        from app.config import settings
+        self._client = httpx.AsyncClient(timeout=self.timeout, verify=settings.verify_pihole_ssl)
 
     @property
     def sid(self) -> str | None:

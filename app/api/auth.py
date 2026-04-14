@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import (
+    _decode_token_claims,
     create_access_token,
     generate_api_key,
     get_current_user,
@@ -16,7 +19,8 @@ from app.auth import (
 )
 from app.config import SESSION_COOKIE_NAME, settings
 from app.database import get_db
-from app.models.user import ApiKey, User
+from app.limiter import limiter
+from app.models.user import ApiKey, RevokedToken, User
 from app.schemas.auth import (
     ApiKeyCreate,
     ApiKeyCreated,
@@ -33,7 +37,8 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(body: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)):
+@limiter.limit("10/minute")
+async def login(request: Request, body: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.username == body.username, User.is_active.is_(True)))
     user = result.scalar_one_or_none()
     if user is None or not verify_password(body.password, user.hashed_password):
@@ -53,7 +58,32 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
 
 
 @router.post("/logout")
-async def logout(response: Response):
+async def logout(
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    authorization: str | None = Cookie(default=None),
+    session_token: str | None = Cookie(default=None),
+):
+    token = None
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization[7:]
+    elif session_token:
+        token = session_token
+
+    if token:
+        claims = _decode_token_claims(token)
+        if claims and claims.get("jti"):
+            jti = claims["jti"]
+            exp = claims.get("exp")
+            expires_at = (
+                datetime.fromtimestamp(exp, tz=timezone.utc)
+                if exp
+                else datetime.now(timezone.utc)
+            )
+            stmt = pg_insert(RevokedToken).values(jti=jti, expires_at=expires_at).on_conflict_do_nothing()
+            await db.execute(stmt)
+            await db.commit()
+
     response.delete_cookie(SESSION_COOKIE_NAME)
     return {"detail": "Logged out"}
 
@@ -70,7 +100,7 @@ async def create_api_key(
     db: AsyncSession = Depends(get_db),
 ):
     raw_key, key_hash = generate_api_key()
-    api_key = ApiKey(user_id=current_user.id, name=body.name, key_hash=key_hash)
+    api_key = ApiKey(user_id=current_user.id, name=body.name, key_hash=key_hash, key_hash_algo="hmac-sha256")
     db.add(api_key)
     await db.commit()
     await db.refresh(api_key)

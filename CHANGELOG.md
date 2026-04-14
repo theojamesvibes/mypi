@@ -4,6 +4,23 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.4.0] — 2026-04-14
+
+### Security
+
+- **Rate limiting** — `POST /login` (web and API) limited to 10 attempts/minute per source IP via `slowapi`. Returns HTTP 429 on breach.
+- **JWT token revocation** — logout (web and API) now inserts the token's JTI into a `revoked_tokens` table. Subsequent requests with a revoked token are rejected immediately rather than being honoured until natural expiry. Expired entries are purged nightly.
+- **Domain input validation** — block/unblock/check endpoints now validate domain strings against `^[a-zA-Z0-9._*-]+$`, returning HTTP 422 on invalid input.
+- **API key hashing upgrade** — new API keys are hashed with HMAC-SHA256 (keyed on `SECRET_KEY`) instead of plain SHA-256, preventing offline cracking of a database dump. Existing keys are transparently rehashed on first verified use — no re-issue required.
+- **`VERIFY_PIHOLE_SSL` setting** — new boolean env var (default `false`) controls whether TLS certificates are verified when connecting to Pi-hole instances over HTTPS. Default preserves existing behaviour for self-signed certificates.
+
+### Upgrade notes
+
+- Alembic migration `0007` runs automatically: adds `revoked_tokens` table and `api_keys.key_hash_algo` column. No manual steps required.
+- Add `VERIFY_PIHOLE_SSL=true` to `.env` if your Pi-hole instances use valid TLS certificates.
+
+---
+
 ## [1.3.0] — 2026-04-14
 
 ### Security

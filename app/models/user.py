@@ -31,8 +31,21 @@ class ApiKey(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     key_hash: Mapped[str] = mapped_column(String(256), unique=True, nullable=False)
+    key_hash_algo: Mapped[str] = mapped_column(String(16), nullable=False, server_default="sha256")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user: Mapped[User] = relationship("User", back_populates="api_keys")
+
+
+class RevokedToken(Base):
+    """JTI denylist for logged-out JWT sessions.
+
+    Rows are cleaned up nightly alongside old query data once the token's
+    natural expiry has passed, so the table stays small.
+    """
+    __tablename__ = "revoked_tokens"
+
+    jti: Mapped[str] = mapped_column(String(64), primary_key=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
