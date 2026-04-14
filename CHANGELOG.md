@@ -4,6 +4,20 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.2.7] — 2026-04-14
+
+### Fixed
+- **Unblock now uses the correct Pi-hole DELETE endpoint** — confirmed from Pi-hole
+  FTL source (`src/api/list.c`): `DELETE /api/domains/deny/exact/{domain}` takes the
+  domain name as the URI path segment, not a numeric database ID. The 1.2.4 change
+  to look up a numeric `id` and DELETE by that (e.g. `/api/domains/deny/exact/5`)
+  caused Pi-hole to treat `5` as an unknown domain name, return 404, and throw an
+  exception that was silently swallowed — leaving the domain still blocked while
+  MyPi reported success. `unblock_domain` is now a direct one-shot DELETE by domain
+  name with no prior GET required.
+
+---
+
 ## [1.2.6] — 2026-04-14
 
 ### Fixed

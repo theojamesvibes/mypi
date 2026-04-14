@@ -432,32 +432,13 @@ class PiholeClient:
     async def unblock_domain(self, domain: str) -> None:
         """Remove domain from the exact deny list on this Pi-hole instance.
 
-        Pi-hole v6 assigns each deny-list entry a numeric database ID; the DELETE
-        endpoint expects that ID, not the domain string.  We GET the list first to
-        find the matching entry, then DELETE by ID.  Falls back to the domain-in-path
-        form if no id field is present in the response.
+        Per Pi-hole FTL source (src/api/list.c): DELETE /api/domains/deny/exact/{domain}
+        uses the domain name as the URI path segment — NOT a numeric database ID.
         """
-        data = await self._get("/api/domains/deny/exact")
-        entries = data if isinstance(data, list) else (data.get("domains") or [])
-        logger.info(
-            "unblock_domain: %s on %s — deny list has %d entries; keys in first entry: %s",
-            domain, self.base_url, len(entries),
-            list(entries[0].keys()) if entries else "[]",
-        )
-        entry = next(
-            (e for e in entries if e.get("domain") == domain or e.get("name") == domain),
-            None,
-        )
-        if entry is None:
-            logger.info("Domain %s not found in exact deny list on %s — nothing to delete", domain, self.base_url)
-            return
-        entry_id = entry.get("id")
-        logger.info("Deleting deny-list entry for %s (id=%s) on %s", domain, entry_id, self.base_url)
-        if entry_id is not None:
-            await self._delete(f"/api/domains/deny/exact/{entry_id}")
-        else:
-            from urllib.parse import quote
-            await self._delete(f"/api/domains/deny/exact/{quote(domain, safe='')}")
+        from urllib.parse import quote
+        encoded = quote(domain, safe="")
+        logger.info("Unblocking %s on %s (DELETE /api/domains/deny/exact/%s)", domain, self.base_url, encoded)
+        await self._delete(f"/api/domains/deny/exact/{encoded}")
 
     async def is_domain_blocked(self, domain: str) -> bool:
         """Return True if domain is present in the exact deny list."""
