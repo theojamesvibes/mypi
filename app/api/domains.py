@@ -36,6 +36,24 @@ async def _get_master(db: AsyncSession) -> PiholeInstance:
     return master
 
 
+@router.get("/block/{domain:path}")
+async def check_domain_blocked(
+    domain: str,
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Check whether a domain is currently in the exact deny list on the master Pi-hole."""
+    domain = domain.strip().lower()
+    master = await _get_master(db)
+    try:
+        client = await client_manager.get_client(master)
+        blocked = await client.is_domain_blocked(domain)
+        return {"domain": domain, "blocked": blocked}
+    except Exception as exc:
+        logger.error("Failed to check block status for %s: %s", domain, exc)
+        raise HTTPException(status_code=502, detail=f"Failed to check block status: {exc}")
+
+
 @router.post("/block")
 async def block_domain(
     req: DomainRequest,
