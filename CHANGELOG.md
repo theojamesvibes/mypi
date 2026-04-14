@@ -4,6 +4,19 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.2.1] — 2026-04-14
+
+### Added
+- **Block/Unblock domains from the query log** — each row in the Query Log now
+  shows a Block or Unblock button. Blocked-status queries show Unblock; all others
+  show Block. Clicking calls `POST /api/domains/block` or
+  `DELETE /api/domains/block/{domain}`, which adds or removes the domain from the
+  exact deny list on the master Pi-hole then triggers a gravity sync to all
+  replicas in the background. HTTPS with self-signed certs was already supported
+  via `verify=False` on all Pi-hole API calls.
+
+---
+
 ## [1.2.0] - 2026-04-13
 
 ### Added

@@ -12,6 +12,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 
 from app.api import auth as auth_router
+from app.api import domains as domains_router
 from app.api import instances as instances_router
 from app.api import notifications as notifications_router
 from app.api import queries as queries_router
@@ -99,6 +100,7 @@ app.include_router(auth_router.router)
 app.include_router(instances_router.router)
 app.include_router(stats_router.router)
 app.include_router(queries_router.router)
+app.include_router(domains_router.router)
 app.include_router(sync_router.router)
 app.include_router(notifications_router.router)
 app.include_router(version_router.router)
