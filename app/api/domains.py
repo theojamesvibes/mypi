@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
@@ -20,6 +21,13 @@ from app.services import sync_service
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/domains", tags=["domains"])
+
+_DOMAIN_RE = re.compile(r"^[a-zA-Z0-9._*-]+$")
+
+
+def _validate_domain(domain: str) -> None:
+    if not domain or not _DOMAIN_RE.match(domain):
+        raise HTTPException(status_code=422, detail="Invalid domain name.")
 
 
 class DomainRequest(BaseModel):
@@ -48,6 +56,7 @@ async def check_domain_blocked(
     is correctly reported as still-blocked.
     """
     domain = domain.strip().lower()
+    _validate_domain(domain)
     result = await db.execute(
         select(PiholeInstance).where(PiholeInstance.is_active.is_(True))
     )
@@ -75,8 +84,7 @@ async def block_domain(
 ) -> Response:
     """Add domain to the exact deny list on the master Pi-hole, then sync to replicas."""
     domain = req.domain.strip().lower()
-    if not domain:
-        raise HTTPException(status_code=422, detail="Domain must not be empty.")
+    _validate_domain(domain)
 
     master = await _get_master(db)
     try:
@@ -109,8 +117,7 @@ async def unblock_domain(
     the change takes effect without any gravity refresh.
     """
     domain = domain.strip().lower()
-    if not domain:
-        raise HTTPException(status_code=422, detail="Domain must not be empty.")
+    _validate_domain(domain)
 
     result = await db.execute(
         select(PiholeInstance).where(PiholeInstance.is_active.is_(True))

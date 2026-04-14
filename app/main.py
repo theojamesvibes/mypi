@@ -5,14 +5,16 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import Depends, FastAPI, Request, Response
+from fastapi import Cookie, Depends, FastAPI, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from cryptography.fernet import Fernet
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.api import auth as auth_router
 from app.api import domains as domains_router
@@ -22,11 +24,12 @@ from app.api import queries as queries_router
 from app.api import stats as stats_router
 from app.api import sync as sync_router
 from app.api import version as version_router
-from app.auth import get_current_user, get_current_user_optional, hash_password, verify_password
+from app.auth import _decode_token_claims, get_current_user, get_current_user_optional, hash_password, verify_password
 from app.config import SESSION_COOKIE_NAME, settings
 from app.database import AsyncSessionLocal, get_db
+from app.limiter import limiter
 from app.models.settings import AppSetting
-from app.models.user import User
+from app.models.user import RevokedToken, User
 from app.services.collector import backfill_all_instances, cleanup_old_data, fetch_all_instance_versions, poll_queries, poll_stats, shutdown as collector_shutdown
 from app.services.config_loader import sync_instances
 from app.services import pushover as pushover_service
@@ -152,6 +155,8 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
@@ -176,6 +181,7 @@ async def login_page(request: Request):
 
 
 @app.post("/login", include_in_schema=False)
+@limiter.limit("10/minute")
 async def login_form(request: Request, response: Response, db=Depends(get_db)):
     form = await request.form()
     username = form.get("username", "")
@@ -199,7 +205,25 @@ async def login_form(request: Request, response: Response, db=Depends(get_db)):
 
 
 @app.get("/logout", include_in_schema=False)
-async def logout_web():
+async def logout_web(
+    session_token: str | None = Cookie(default=None),
+    db=Depends(get_db),
+):
+    if session_token:
+        claims = _decode_token_claims(session_token)
+        if claims and claims.get("jti"):
+            from datetime import datetime, timezone
+            jti = claims["jti"]
+            exp = claims.get("exp")
+            expires_at = (
+                datetime.fromtimestamp(exp, tz=timezone.utc)
+                if exp
+                else datetime.now(timezone.utc)
+            )
+            stmt = pg_insert(RevokedToken).values(jti=jti, expires_at=expires_at).on_conflict_do_nothing()
+            await db.execute(stmt)
+            await db.commit()
+
     response = RedirectResponse(url="/login", status_code=303)
     response.delete_cookie(SESSION_COOKIE_NAME)
     return response
