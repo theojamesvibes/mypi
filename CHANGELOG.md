@@ -4,6 +4,16 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.4.3] — 2026-04-14
+
+### Fixed
+
+- **Drill-down time window mismatch** — the query detail modal now uses the same time window as the graphs above it. Previously it always defaulted to 24 hours regardless of the selected window. Two root causes fixed:
+  - `/api/queries` and `/api/queries/clients` now accept an optional `since` ISO datetime parameter (overrides `hours` when provided), allowing the "today" window to be expressed exactly.
+  - Dashboard JS now stores `_drillSince` alongside `_drillHours` when `loadDashboard` runs, and passes `since` (or `hours`) to the drill-down query accordingly.
+
+---
+
 ## [1.4.2] — 2026-04-14
 
 ### Added

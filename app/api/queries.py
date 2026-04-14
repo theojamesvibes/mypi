@@ -42,12 +42,14 @@ async def get_queries(
     status: str | None = Query(default=None),
     blocked: bool | None = Query(default=None, description="true=blocked only, false=permitted only"),
     hours: int = Query(default=24, ge=1, le=720),
+    since: datetime | None = Query(default=None, description="ISO datetime; overrides hours when provided"),
     sort_by: str = Query(default="timestamp"),
     sort_dir: str = Query(default="desc"),
     _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    if since is None:
+        since = datetime.now(timezone.utc) - timedelta(hours=hours)
 
     base_q = (
         select(QueryLog, PiholeInstance.name.label("instance_name"))
@@ -111,12 +113,14 @@ async def get_queries(
 @router.get("/clients", response_model=list[ClientSummary])
 async def get_client_summary(
     hours: int = Query(default=24, ge=1, le=720),
+    since: datetime | None = Query(default=None, description="ISO datetime; overrides hours when provided"),
     instance_id: uuid.UUID | None = Query(default=None),
     _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Return one row per unique client with aggregate query counts."""
-    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    if since is None:
+        since = datetime.now(timezone.utc) - timedelta(hours=hours)
 
     q = (
         select(
