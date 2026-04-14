@@ -5,7 +5,7 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from app.config import settings
 from app.database import AsyncSessionLocal
@@ -270,28 +270,54 @@ async def _store_queries(instance: PiholeInstance, queries: list) -> int:
 
 
 async def backfill_queries_for(instance: PiholeInstance, hours: int = 24) -> None:
-    """Backfill up to `hours` of query history from Pi-hole.
+    """Backfill query history from Pi-hole for any gap since the last stored entry.
 
-    Fetches one clock hour at a time (00:00–01:00, 01:00–02:00, …, current_hour–now)
-    so that the per-request length cap is never the bottleneck regardless of query volume.
-    Within each window, pages forward by timestamp if a full 10 000-row page is returned.
-    Safe against a live table — existing rows are skipped via pihole_query_id dedup.
+    On a healthy DB the most-recent row will be only seconds old, so backfill
+    is skipped entirely.  After a TRUNCATE or on first startup the full `hours`
+    window is fetched.  In between (e.g. a long container downtime) only the
+    gap from the last stored timestamp forward is fetched.
+
+    Fetches one clock hour at a time so the per-request length cap is never
+    the bottleneck.  Within each window, pages forward by timestamp if a full
+    10 000-row page is returned.
     """
     now = datetime.now(timezone.utc)
-    # Align to the start of the current clock hour
-    current_hour_start = now.replace(minute=0, second=0, microsecond=0)
+    recent_threshold = timedelta(minutes=10)
 
-    # Build list of (window_start, window_end) pairs, oldest first
+    # Check the most recent stored query for this instance.
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(func.max(QueryLog.timestamp)).where(QueryLog.instance_id == instance.id)
+        )
+        latest_ts: datetime | None = result.scalar_one_or_none()
+
+    if latest_ts is not None and latest_ts.tzinfo is None:
+        latest_ts = latest_ts.replace(tzinfo=timezone.utc)
+
+    if latest_ts is not None and (now - latest_ts) < recent_threshold:
+        logger.debug("Backfill skipped for %s — data is current (latest: %s)", instance.name, latest_ts)
+        return
+
+    # Determine the start of the backfill window.
+    if latest_ts is not None:
+        backfill_start = latest_ts
+        logger.info("Backfill for %s from last stored timestamp %s", instance.name, latest_ts)
+    else:
+        backfill_start = now - timedelta(hours=hours)
+        logger.info("Backfill for %s — no existing data, fetching last %dh", instance.name, hours)
+
+    # Build clock-aligned hourly windows from backfill_start to now.
+    current_hour_start = now.replace(minute=0, second=0, microsecond=0)
     windows: list[tuple[datetime, datetime]] = []
-    for i in range(hours - 1, 0, -1):
-        w_start = current_hour_start - timedelta(hours=i)
-        w_end   = w_start + timedelta(hours=1)
-        windows.append((w_start, w_end))
-    # Final window: current hour start → now
-    windows.append((current_hour_start, now))
+    w = backfill_start.replace(minute=0, second=0, microsecond=0)
+    while w < current_hour_start:
+        w_end = w + timedelta(hours=1)
+        windows.append((max(w, backfill_start), w_end))
+        w = w_end
+    windows.append((max(current_hour_start, backfill_start), now))
 
     total_stored = 0
-    logger.info("Starting %dh backfill for %s (%d windows)", hours, instance.name, len(windows))
+    logger.info("Starting backfill for %s (%d windows)", instance.name, len(windows))
     try:
         client = await get_client(instance)
         for w_start, w_end in windows:

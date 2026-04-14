@@ -4,6 +4,16 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.4.1] — 2026-04-14
+
+### Fixed
+
+- **Smart backfill on startup** — `backfill_all_instances` previously ran the full 24-hour window fetch on every container start, even when the database was healthy and current. Now each instance checks `MAX(timestamp)` in `query_logs` first:
+  - Data less than 10 minutes old → backfill skipped entirely.
+  - Gap detected (downtime, truncate, first run) → only the missing window from the last stored timestamp forward is fetched, not the full 24h.
+
+---
+
 ## [1.4.0] — 2026-04-14
 
 ### Security
