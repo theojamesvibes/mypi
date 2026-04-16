@@ -1,6 +1,4 @@
 """Block/unblock domains via the master Pi-hole, then sync to replicas."""
-from __future__ import annotations
-
 import asyncio
 import logging
 import re

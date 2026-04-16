@@ -1,6 +1,4 @@
 """Pushover notification settings API."""
-from __future__ import annotations
-
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
