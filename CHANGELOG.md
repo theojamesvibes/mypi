@@ -4,6 +4,14 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.4.7] — 2026-04-16
+
+### Fixed
+
+- **`/openapi.json` 500 error** — `from __future__ import annotations` in API router files caused Pydantic to treat request body types as unresolved forward references during OpenAPI schema generation, misclassifying them as `Query` parameters and crashing. Removed the import from the five affected files (`auth.py`, `sync.py`, `version.py`, `notifications.py`, `domains.py`); Python 3.12 handles all used type syntax natively.
+
+---
+
 ## [1.4.6] — 2026-04-14
 
 ### Added
