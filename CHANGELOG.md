@@ -4,6 +4,11 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.7.3] — 2026-04-17
+
+### Fixed
+- SSL handshake failure (root cause identified): `httpx 0.28.0` silently dropped support for passing `ssl.SSLContext` as the `verify=` parameter on `AsyncClient` — a truthy SSLContext object was treated as `verify=True` and the custom permissive context from 1.7.1/1.7.2 was never applied. All connections continued using Python's default `SECLEVEL=2` context, which rejects Pi-hole FTL's cipher configuration on Debian 13 ARM. Fixed by building `AsyncHTTPTransport(verify=ssl_context)` explicitly (which still supports SSLContext) and passing it as the `transport=` argument.
+
 ## [1.7.2] — 2026-04-17
 
 ### Fixed
