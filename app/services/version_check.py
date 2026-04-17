@@ -31,8 +31,18 @@ def initialize(current_version: str) -> None:
     _current_version = current_version
 
 
+def _parse_version(v: str) -> tuple[int, ...]:
+    try:
+        return tuple(int(x) for x in v.strip().split("."))
+    except Exception:
+        return (0,)
+
+
 def get_status() -> dict:
-    up_to_date = (_latest_version == _current_version) if _latest_version else None
+    if _latest_version:
+        up_to_date = _parse_version(_current_version) >= _parse_version(_latest_version)
+    else:
+        up_to_date = None
     return {
         "enabled": _enabled,
         "current_version": _current_version,

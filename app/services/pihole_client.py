@@ -18,16 +18,22 @@ def _build_ssl_context(verify: bool) -> bool | ssl.SSLContext:
     """Return an ssl context for httpx.
 
     When verify=True use httpx's default (full chain + hostname verification).
-    When verify=False build a permissive context: no cert check AND SECLEVEL=1
-    so older Pi-hole/lighttpd TLS configs (weak DHE params etc.) still handshake
-    with OpenSSL 3.x which defaults to SECLEVEL=2.
+    When verify=False build a maximally permissive context:
+    - CERT_NONE / check_hostname=False — skip cert validation
+    - SECLEVEL=0 — allow any cipher strength (covers weak DHE/RSA params)
+    - OP_LEGACY_SERVER_CONNECT — permit legacy TLS renegotiation disabled by
+      default in OpenSSL 3.x; Pi-hole's FTL web server triggers this on some
+      distros (notably Debian 13 ARM).
     """
     if verify:
         return True
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
-    ctx.set_ciphers("DEFAULT:@SECLEVEL=1")
+    ctx.set_ciphers("DEFAULT:@SECLEVEL=0")
+    # OP_LEGACY_SERVER_CONNECT added in Python 3.12; fall back to the raw flag
+    # value on older runtimes where it's still relevant.
+    ctx.options |= getattr(ssl, "OP_LEGACY_SERVER_CONNECT", 0x4)
     return ctx
 
 
