@@ -153,6 +153,38 @@
       </div>
     </div>
 
+    <!-- Polling -->
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header"><i class="bi bi-clock-history me-1"></i>Polling</div>
+        <div class="card-body">
+          <p class="text-muted small mb-3">
+            How often MyPi fetches new queries from each Pi-hole. Lower values give a more real-time
+            query log but increase load on Pi-hole's API server. 60 s is recommended for normal use;
+            drop to 10 s temporarily when using the live log for troubleshooting.
+          </p>
+          <div class="row g-3 align-items-end">
+            <div class="col-md-4">
+              <label class="form-label form-label-sm mb-1">Query poll interval</label>
+              <select id="poll-interval" class="form-select form-select-sm">
+                <option value="10">10 seconds (live log / debug)</option>
+                <option value="30">30 seconds</option>
+                <option value="60">60 seconds (recommended)</option>
+                <option value="120">2 minutes</option>
+                <option value="300">5 minutes</option>
+              </select>
+            </div>
+            <div class="col-auto">
+              <button class="btn btn-sm btn-outline-secondary" onclick="savePollInterval()">
+                <i class="bi bi-save me-1"></i>Save
+              </button>
+            </div>
+          </div>
+          <div id="poll-interval-result" class="small mt-2"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- Session Timeout (moved above Pushover) -->
     <div class="col-12">
       <div class="card">
@@ -453,7 +485,45 @@
   loadPushoverSettings();
   loadSessionTimeout();
   loadVersionCheckSettings();
+  loadPollInterval();
   initThemeButtons();
+
+  async function loadPollInterval() {
+    try {
+      const resp = await fetch('/api/poll-settings/');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const sel = document.getElementById('poll-interval');
+      // Select the closest option; fall back to first if exact match not found.
+      const opt = [...sel.options].find(o => parseInt(o.value) === data.interval_seconds);
+      if (opt) sel.value = opt.value;
+    } catch {}
+  }
+
+  async function savePollInterval() {
+    const result = document.getElementById('poll-interval-result');
+    const interval = parseInt(document.getElementById('poll-interval').value);
+    result.textContent = '';
+    result.className = 'small mt-2';
+    try {
+      const resp = await fetch('/api/poll-settings/', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({interval_seconds: interval}),
+      });
+      const data = await resp.json();
+      if (resp.ok) {
+        result.textContent = `Saved — polling every ${data.interval_seconds}s (takes effect immediately).`;
+        result.classList.add('text-success');
+      } else {
+        result.textContent = data.detail || 'Save failed.';
+        result.classList.add('text-danger');
+      }
+    } catch {
+      result.textContent = 'Request failed.';
+      result.classList.add('text-danger');
+    }
+  }
 
   async function changePassword() {
     const current = document.getElementById('cp-current').value;

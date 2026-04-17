@@ -41,7 +41,6 @@ async def _get_active_instances() -> list[PiholeInstance]:
 
 
 async def _poll_stats_for(instance: PiholeInstance) -> None:
-    version_info = None
     try:
         client = await get_client(instance)
         summary = await client.get_summary()
@@ -58,10 +57,6 @@ async def _poll_stats_for(instance: PiholeInstance) -> None:
             queries_cached=summary.queries_cached,
             queries_forwarded=summary.queries_forwarded,
         )
-        try:
-            version_info = await client.get_version_info()
-        except Exception as exc:
-            logger.warning("Could not fetch version info for %s: %s", instance.name, exc)
     except Exception as exc:
         logger.warning("Failed to poll stats for %s: %s", instance.name, exc)
         snapshot = StatsSnapshot(
@@ -76,13 +71,6 @@ async def _poll_stats_for(instance: PiholeInstance) -> None:
             inst = await db.get(PiholeInstance, instance.id)
             if inst:
                 inst.last_seen_at = snapshot.collected_at
-                if version_info is not None:
-                    inst.version_core = version_info.core.current or None
-                    inst.version_ftl = version_info.ftl.current or None
-                    inst.version_web = version_info.web.current or None
-                    inst.update_available_core = pihole_version_check.compute_update_available(inst.version_core, "core")
-                    inst.update_available_ftl = pihole_version_check.compute_update_available(inst.version_ftl, "ftl")
-                    inst.update_available_web = pihole_version_check.compute_update_available(inst.version_web, "web")
         await db.commit()
 
     # Pushover alerts: retry-then-alert + transition-based + configurable repeat for sustained outages

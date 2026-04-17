@@ -4,6 +4,20 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.5.0] — 2026-04-17
+
+### Added
+- Settings screen: configurable query poll interval (10 s / 30 s / 60 s / 2 min / 5 min). Default 60 s for new installs; existing installs migrate to 10 s via DB migration to preserve prior behavior. Change takes effect immediately without restart.
+
+### Changed
+- Query poll interval is now persisted in `app_settings` and managed via the UI rather than the `QUERIES_POLL_INTERVAL` env var (env var still accepted as startup fallback).
+- Stats polling no longer fetches Pi-hole version info on every 60 s tick; version checks now run exclusively via the dedicated hourly job — saves 1 API call/min per instance.
+- Parallelized `get_top_stats` Pi-hole API calls (3 sequential → concurrent with `asyncio.gather`).
+- Limited httpx keepalive pool to 2 connections per Pi-hole (was unlimited default of 20), reducing idle TCP connections held open against FTL.
+
+### Fixed
+- `run_gravity()` now respects `VERIFY_PIHOLE_SSL` setting (was hardcoded `verify=False`).
+
 ## [1.4.7] — 2026-04-16
 
 ### Fixed

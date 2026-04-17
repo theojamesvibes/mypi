@@ -77,7 +77,11 @@ class PiholeClient:
     async def open(self) -> None:
         """Open the underlying HTTP client. Call once and reuse the instance."""
         from app.config import settings
-        self._client = httpx.AsyncClient(timeout=self.timeout, verify=settings.verify_pihole_ssl)
+        self._client = httpx.AsyncClient(
+            timeout=self.timeout,
+            verify=settings.verify_pihole_ssl,
+            limits=httpx.Limits(max_keepalive_connections=2, max_connections=5),
+        )
 
     @property
     def sid(self) -> str | None:
@@ -283,7 +287,8 @@ class PiholeClient:
         url = f"{self.base_url}/api/action/gravity"
 
         # Long timeout: gravity can take 30-120 s on a busy instance.
-        async with httpx.AsyncClient(timeout=300, verify=False) as tmp:
+        from app.config import settings
+        async with httpx.AsyncClient(timeout=300, verify=settings.verify_pihole_ssl) as tmp:
             try:
                 resp = await tmp.post(url, headers=self._headers())
                 if resp.status_code == 401:
@@ -365,9 +370,11 @@ class PiholeClient:
         return buckets
 
     async def get_top_stats(self, count: int = 10) -> PiholeTopStats:
-        permitted_data = await self._get("/api/stats/top_domains", params={"blocked": "false", "count": count})
-        blocked_data = await self._get("/api/stats/top_domains", params={"blocked": "true", "count": count})
-        clients_data = await self._get("/api/stats/top_clients", params={"count": count})
+        permitted_data, blocked_data, clients_data = await asyncio.gather(
+            self._get("/api/stats/top_domains", params={"blocked": "false", "count": count}),
+            self._get("/api/stats/top_domains", params={"blocked": "true", "count": count}),
+            self._get("/api/stats/top_clients", params={"count": count}),
+        )
 
         top_permitted = [
             {"domain": domain, "count": cnt}
