@@ -6,6 +6,7 @@ from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import Cookie, Depends, FastAPI, Request, Response
+from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -161,6 +162,7 @@ app = FastAPI(
     description="Consolidated Pi-hole dashboard and API",
     version=APP_VERSION,
     lifespan=lifespan,
+    docs_url=None,
 )
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -180,6 +182,17 @@ app.include_router(sync_router.router)
 app.include_router(notifications_router.router)
 app.include_router(poll_settings_router.router)
 app.include_router(version_router.router)
+
+
+# ── API docs ──────────────────────────────────────────────────────────────────
+
+@app.get("/docs", include_in_schema=False)
+async def swagger_ui():
+    return get_swagger_ui_html(
+        openapi_url="/openapi.json",
+        title="MyPi API",
+        swagger_favicon_url="/static/img/logo.svg",
+    )
 
 
 # ── Web UI routes ─────────────────────────────────────────────────────────────

@@ -8,6 +8,7 @@ All notable changes to MyPi are documented here.
 
 ### Changed
 - Sync panel last-sync result: master instance now shows a green checkmark and a `master` pill badge (matching the style used in the Instances panels), consistent with replica rows. The plain "Master: name" heading is removed.
+- `/docs` Swagger UI now shows the MyPi logo as its favicon instead of the default FastAPI CDN icon.
 
 ## [1.5.1] — 2026-04-17
 
