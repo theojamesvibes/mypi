@@ -325,6 +325,20 @@ body.login-body {
 
 [data-bs-theme="dark"] .check-highlight { background: #2b2f33; }
 
+/* Bootstrap's table-light hardcodes white/gray — override for dark mode */
+[data-bs-theme="dark"] .table-light,
+[data-bs-theme="dark"] .table-light > th,
+[data-bs-theme="dark"] .table-light > td,
+[data-bs-theme="dark"] thead.table-light th,
+[data-bs-theme="dark"] thead.table-light td {
+  --bs-table-color: #dee2e6;
+  --bs-table-bg: #2b2f33;
+  --bs-table-border-color: #373b3e;
+  color: #dee2e6;
+  background-color: #2b2f33;
+  border-color: #373b3e;
+}
+
 [data-bs-theme="dark"] .sort-col:hover { background: #2c3034; }
 [data-bs-theme="dark"] tr.drill-row:hover td { background: #2a2f35; }
 
