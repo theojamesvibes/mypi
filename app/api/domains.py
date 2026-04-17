@@ -1,10 +1,11 @@
-"""Block/unblock domains via the master Pi-hole, then sync to replicas."""
+"""Domain allow/deny list management — per-instance direct API calls, no sync needed."""
+from __future__ import annotations
+
 import asyncio
 import logging
 import re
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +15,6 @@ from app.database import get_db
 from app.models.pihole import PiholeInstance
 from app.models.user import User
 from app.services import client_manager
-from app.services import sync_service
 
 logger = logging.getLogger(__name__)
 
@@ -42,102 +42,134 @@ async def _get_master(db: AsyncSession) -> PiholeInstance:
     return master
 
 
-@router.get("/block/{domain:path}")
-async def check_domain_blocked(
+async def _get_all_active(db: AsyncSession) -> list[PiholeInstance]:
+    result = await db.execute(select(PiholeInstance).where(PiholeInstance.is_active.is_(True)))
+    instances = list(result.scalars().all())
+    if not instances:
+        raise HTTPException(status_code=503, detail="No active Pi-hole instances configured.")
+    return instances
+
+
+async def _apply_to_all(instances: list[PiholeInstance], fn) -> dict:
+    """Run fn(client, inst) on all instances concurrently. Returns per-instance results."""
+    async def _run(inst):
+        try:
+            client = await client_manager.get_client(inst)
+            await fn(client, inst)
+            return {"name": inst.name, "ok": True}
+        except Exception as exc:
+            logger.error("Domain operation failed on %s: %s", inst.name, exc)
+            return {"name": inst.name, "ok": False, "error": str(exc)}
+
+    results = await asyncio.gather(*[_run(inst) for inst in instances])
+    ok_count = sum(1 for r in results if r["ok"])
+    return {"results": list(results), "ok_count": ok_count, "total": len(instances)}
+
+
+@router.get("/status/{domain:path}")
+async def get_domain_status(
     domain: str,
     _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Check whether a domain is in the exact deny list on ANY active Pi-hole instance.
+    """Check deny/allow list membership on the master Pi-hole.
 
-    Checks all instances so that a partial unblock (master succeeded, replica failed)
-    is correctly reported as still-blocked.
+    Returns effective status: 'allowed' (allow list entry present, beats deny/gravity),
+    'denied' (deny list only), or 'unmanaged' (not in any local list).
     """
     domain = domain.strip().lower()
     _validate_domain(domain)
-    result = await db.execute(
-        select(PiholeInstance).where(PiholeInstance.is_active.is_(True))
-    )
-    instances = list(result.scalars().all())
-    if not instances:
-        raise HTTPException(status_code=503, detail="No active Pi-hole instances configured.")
-
-    for inst in instances:
-        try:
-            client = await client_manager.get_client(inst)
-            if await client.is_domain_blocked(domain):
-                logger.info("Domain %s is blocked on %s", domain, inst.name)
-                return {"domain": domain, "blocked": True}
-        except Exception as exc:
-            logger.warning("Failed to check block status on %s for %s: %s", inst.name, domain, exc)
-
-    return {"domain": domain, "blocked": False}
-
-
-@router.post("/block")
-async def block_domain(
-    req: DomainRequest,
-    _: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> Response:
-    """Add domain to the exact deny list on the master Pi-hole, then sync to replicas."""
-    domain = req.domain.strip().lower()
-    _validate_domain(domain)
-
     master = await _get_master(db)
     try:
         client = await client_manager.get_client(master)
-        await client.block_domain(domain)
-        logger.info("Blocked domain %s on master %s", domain, master.name)
+        raw = await client.get_domain_list_status(domain)
     except Exception as exc:
-        logger.exception("Failed to block domain %s on master %s: %s", domain, master.name, exc)
-        raise HTTPException(status_code=502, detail="Failed to block domain on master Pi-hole.")
+        logger.exception("Failed to check domain status on master %s: %s", master.name, exc)
+        raise HTTPException(status_code=502, detail="Failed to check domain status on master Pi-hole.")
 
-    # Sync master → replicas so the new deny entry propagates immediately.
-    if sync_service.get_state().status != "running":
-        asyncio.create_task(
-            sync_service.run_sync(import_config=False, import_gravity=True, run_gravity=True)
-        )
-    return Response(status_code=204)
+    in_deny = raw["in_deny"]
+    in_allow = raw["in_allow"]
+    if in_allow:
+        effective = "allowed"
+    elif in_deny:
+        effective = "denied"
+    else:
+        effective = "unmanaged"
+
+    return {"domain": domain, "in_deny": in_deny, "in_allow": in_allow, "effective": effective}
 
 
-@router.delete("/block/{domain:path}")
-async def unblock_domain(
+@router.post("/deny")
+async def add_to_deny(
+    req: DomainRequest,
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Add domain to exact deny list on all instances. Removes allow override first."""
+    domain = req.domain.strip().lower()
+    _validate_domain(domain)
+    instances = await _get_all_active(db)
+
+    async def _deny(client, inst):
+        await client.remove_allow_exact(domain)
+        await client.add_deny_exact(domain)
+
+    result = await _apply_to_all(instances, _deny)
+    if result["ok_count"] == 0:
+        raise HTTPException(status_code=502, detail="Operation failed on all instances.")
+    return result
+
+
+@router.delete("/deny/{domain:path}")
+async def remove_from_deny(
     domain: str,
     _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Response:
-    """Remove domain from the exact deny list on every active Pi-hole instance.
-
-    A full sync is intentionally avoided here: run_sync always runs gravity on the
-    master before exporting, which would re-add the domain to gravity.db from adlists
-    and undo the unblock.  Instead we call unblock_domain directly on each instance so
-    the change takes effect without any gravity refresh.
-    """
+) -> dict:
+    """Remove domain from exact deny list on all instances."""
     domain = domain.strip().lower()
     _validate_domain(domain)
+    instances = await _get_all_active(db)
 
-    result = await db.execute(
-        select(PiholeInstance).where(PiholeInstance.is_active.is_(True))
-    )
-    instances = list(result.scalars().all())
-    if not instances:
-        raise HTTPException(status_code=503, detail="No active Pi-hole instances configured.")
+    result = await _apply_to_all(instances, lambda client, inst: client.remove_deny_exact(domain))
+    if result["ok_count"] == 0:
+        raise HTTPException(status_code=502, detail="Operation failed on all instances.")
+    return result
 
-    errors: list[str] = []
-    for inst in instances:
-        try:
-            client = await client_manager.get_client(inst)
-            await client.unblock_domain(domain)
-            logger.info("Unblocked domain %s on %s", domain, inst.name)
-        except Exception as exc:
-            logger.error("Failed to unblock domain %s on %s: %s", domain, inst.name, exc)
-            errors.append(f"{inst.name}: {exc}")
 
-    if errors and len(errors) == len(instances):
-        raise HTTPException(
-            status_code=502,
-            detail="Failed to unblock domain on all instances.",
-        )
+@router.post("/allow")
+async def add_to_allow(
+    req: DomainRequest,
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Add domain to exact allow list on all instances (overrides gravity/deny). Removes deny entry first."""
+    domain = req.domain.strip().lower()
+    _validate_domain(domain)
+    instances = await _get_all_active(db)
 
-    return Response(status_code=204)
+    async def _allow(client, inst):
+        await client.remove_deny_exact(domain)
+        await client.add_allow_exact(domain)
+
+    result = await _apply_to_all(instances, _allow)
+    if result["ok_count"] == 0:
+        raise HTTPException(status_code=502, detail="Operation failed on all instances.")
+    return result
+
+
+@router.delete("/allow/{domain:path}")
+async def remove_from_allow(
+    domain: str,
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Remove domain from exact allow list on all instances."""
+    domain = domain.strip().lower()
+    _validate_domain(domain)
+    instances = await _get_all_active(db)
+
+    result = await _apply_to_all(instances, lambda client, inst: client.remove_allow_exact(domain))
+    if result["ok_count"] == 0:
+        raise HTTPException(status_code=502, detail="Operation failed on all instances.")
+    return result

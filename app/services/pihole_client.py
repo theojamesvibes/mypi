@@ -432,38 +432,74 @@ class PiholeClient:
 
         return queries
 
-    async def block_domain(self, domain: str) -> None:
-        """Add domain to the exact deny list on this Pi-hole instance."""
-        await self._post(
-            "/api/domains/deny/exact",
-            json_data={"domain": domain, "comment": "blocked via MyPi", "groups": [0], "enabled": True},
+    async def get_domain_list_status(self, domain: str) -> dict[str, bool]:
+        """Return {in_deny, in_allow} by checking both exact lists in parallel."""
+        deny_data, allow_data = await asyncio.gather(
+            self._get("/api/domains/deny/exact"),
+            self._get("/api/domains/allow/exact"),
+            return_exceptions=True,
         )
 
-    async def unblock_domain(self, domain: str) -> None:
-        """Remove domain from the exact deny list on this Pi-hole instance.
-
-        Per Pi-hole FTL source (src/api/list.c): DELETE /api/domains/deny/exact/{domain}
-        uses the domain name as the URI path segment — NOT a numeric database ID.
-        """
-        from urllib.parse import quote
-        encoded = quote(domain, safe="")
-        logger.info("Unblocking %s on %s (DELETE /api/domains/deny/exact/%s)", domain, self.base_url, encoded)
-        await self._delete(f"/api/domains/deny/exact/{encoded}")
-
-    async def is_domain_blocked(self, domain: str) -> bool:
-        """Return True if domain is present in the exact deny list."""
-        try:
-            data = await self._get("/api/domains/deny/exact")
+        def _present(data: Any) -> bool:
+            if isinstance(data, BaseException):
+                return False
             entries = data if isinstance(data, list) else (data.get("domains") or [])
-            logger.info(
-                "is_domain_blocked: %s on %s — %d entries; keys in first: %s",
-                domain, self.base_url, len(entries),
-                list(entries[0].keys()) if entries else "[]",
+            return any(e.get("domain") == domain or e.get("name") == domain for e in entries)
+
+        return {"in_deny": _present(deny_data), "in_allow": _present(allow_data)}
+
+    async def add_deny_exact(self, domain: str) -> None:
+        """Add domain to the exact deny list. Idempotent — no-op if already present."""
+        try:
+            await self._post(
+                "/api/domains/deny/exact",
+                json_data={"domain": domain, "comment": "blocked via MyPi", "groups": [0], "enabled": True},
             )
-            return any(
-                e.get("domain") == domain or e.get("name") == domain
-                for e in entries
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 409:
+                return  # already in list
+            raise
+
+    async def add_allow_exact(self, domain: str) -> None:
+        """Add domain to the exact allow list (overrides gravity). Idempotent."""
+        try:
+            await self._post(
+                "/api/domains/allow/exact",
+                json_data={"domain": domain, "comment": "allowed via MyPi", "groups": [0], "enabled": True},
             )
-        except Exception as exc:
-            logger.warning("Failed to check deny list on %s: %s", self.base_url, exc)
-            return False
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 409:
+                return  # already in list
+            raise
+
+    async def remove_deny_exact(self, domain: str) -> None:
+        """Remove domain from exact deny list. Idempotent — no-op if not present."""
+        if self._client is None:
+            raise RuntimeError("PiholeClient must be used as an async context manager")
+        await self._ensure_authed()
+        from urllib.parse import quote
+        url = f"{self.base_url}/api/domains/deny/exact/{quote(domain, safe='')}"
+        resp = await self._client.delete(url, headers=self._headers())
+        if resp.status_code == 401:
+            self._sid = None
+            if not await self._authenticate():
+                raise ConnectionError(f"Re-authentication failed for {self.base_url}")
+            resp = await self._client.delete(url, headers=self._headers())
+        if resp.status_code not in (200, 204, 404):
+            resp.raise_for_status()
+
+    async def remove_allow_exact(self, domain: str) -> None:
+        """Remove domain from exact allow list. Idempotent — no-op if not present."""
+        if self._client is None:
+            raise RuntimeError("PiholeClient must be used as an async context manager")
+        await self._ensure_authed()
+        from urllib.parse import quote
+        url = f"{self.base_url}/api/domains/allow/exact/{quote(domain, safe='')}"
+        resp = await self._client.delete(url, headers=self._headers())
+        if resp.status_code == 401:
+            self._sid = None
+            if not await self._authenticate():
+                raise ConnectionError(f"Re-authentication failed for {self.base_url}")
+            resp = await self._client.delete(url, headers=self._headers())
+        if resp.status_code not in (200, 204, 404):
+            resp.raise_for_status()

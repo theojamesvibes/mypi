@@ -4,6 +4,16 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.7.0] — 2026-04-17
+
+### Changed
+- Domain block/unblock completely rewritten for correctness and clarity.
+  - New shield button on each query row opens a modal that fetches the real Pi-hole status (deny list, allow list, or unmanaged) before offering any action — no more acting on stale row data.
+  - Four explicit API endpoints replace the old pair: `POST/DELETE /api/domains/deny` and `POST/DELETE /api/domains/allow`.
+  - Blocking adds to the deny list and removes any allow override first; allowing adds to the allow list and removes any deny entry first. Both operations run on all instances in parallel (no sync/gravity run needed — FTL reloads lists immediately).
+  - Modal shows deny/allow badge indicators, last query status, a plain-English summary of the effective state (Blocked / Allowed / Gravity blocked / Unmanaged / Conflict), and context-appropriate action buttons.
+  - Per-instance success/failure results are displayed after each operation.
+
 ## [1.6.0] — 2026-04-17
 
 ### Changed
