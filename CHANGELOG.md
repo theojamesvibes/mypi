@@ -8,6 +8,7 @@ All notable changes to MyPi are documented here.
 
 ### Changed
 - Reverted all SSL context changes from 1.7.1–1.7.4 (SECLEVEL=0, OP_LEGACY_SERVER_CONNECT, TLS 1.2 maximum, custom AsyncHTTPTransport). Root cause of the Raspberry Pi 3 SSL errors was Pi-hole FTL having a corrupted TLS state (likely accumulated stale connections from container restarts during debugging), not a TLS configuration incompatibility. Rebooting the Pi-hole cleared the state and connections resumed normally. Connections are back to the original `verify=settings.verify_pihole_ssl` behavior — secure TLS defaults with cert verification disabled only when `VERIFY_PIHOLE_SSL=false` is explicitly set.
+- **Troubleshooting note:** If you see `[SSL: SSLV3_ALERT_HANDSHAKE_FAILURE]` errors for a Pi-hole instance, run `sudo systemctl restart pihole-FTL` on that Pi-hole. This clears any stale TLS connections that have exhausted FTL's connection pool without requiring a full reboot.
 
 ## [1.7.4] — 2026-04-17
 
