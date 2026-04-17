@@ -4,6 +4,11 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.7.4] — 2026-04-17
+
+### Fixed
+- SSL handshake failure on Raspberry Pi 3 (ARMv7): Pi-hole FTL on ARMv7 is statically linked against OpenSSL 1.1.x whose TLS 1.3 extension handling is incompatible with the TLS 1.3 ClientHello that Python 3.12 / OpenSSL 3.x sends. The permissive ssl context now sets `maximum_version = TLSv1_2` to avoid TLS 1.3 negotiation entirely. TLS 1.2 with `SECLEVEL=0` and `OP_LEGACY_SERVER_CONNECT` is fully compatible with all Pi-hole builds including older ARM binaries, while remaining secure for internal LAN use.
+
 ## [1.7.3] — 2026-04-17
 
 ### Fixed
