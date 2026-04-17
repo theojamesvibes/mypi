@@ -4,6 +4,11 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.7.1] — 2026-04-17
+
+### Fixed
+- Pi-hole instances reporting SSL handshake failure (`SSLV3_ALERT_HANDSHAKE_FAILURE`) when `VERIFY_PIHOLE_SSL=false`. OpenSSL 3.x defaults to `SECLEVEL=2`, which refuses to offer weak DHE cipher suites that older Pi-hole/lighttpd TLS configurations require. When certificate verification is disabled, MyPi now builds a permissive `ssl.SSLContext` (`SECLEVEL=1`, `CERT_NONE`, `check_hostname=False`) so the TLS handshake succeeds regardless of the Pi-hole's cipher configuration.
+
 ## [1.7.0] — 2026-04-17
 
 ### Changed

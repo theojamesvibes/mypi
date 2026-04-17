@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import ssl
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -11,6 +12,23 @@ from typing import Any
 import httpx
 
 logger = logging.getLogger(__name__)
+
+
+def _build_ssl_context(verify: bool) -> bool | ssl.SSLContext:
+    """Return an ssl context for httpx.
+
+    When verify=True use httpx's default (full chain + hostname verification).
+    When verify=False build a permissive context: no cert check AND SECLEVEL=1
+    so older Pi-hole/lighttpd TLS configs (weak DHE params etc.) still handshake
+    with OpenSSL 3.x which defaults to SECLEVEL=2.
+    """
+    if verify:
+        return True
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    ctx.set_ciphers("DEFAULT:@SECLEVEL=1")
+    return ctx
 
 
 
@@ -79,7 +97,7 @@ class PiholeClient:
         from app.config import settings
         self._client = httpx.AsyncClient(
             timeout=self.timeout,
-            verify=settings.verify_pihole_ssl,
+            verify=_build_ssl_context(settings.verify_pihole_ssl),
             limits=httpx.Limits(max_keepalive_connections=2, max_connections=5),
         )
 
@@ -288,7 +306,7 @@ class PiholeClient:
 
         # Long timeout: gravity can take 30-120 s on a busy instance.
         from app.config import settings
-        async with httpx.AsyncClient(timeout=300, verify=settings.verify_pihole_ssl) as tmp:
+        async with httpx.AsyncClient(timeout=300, verify=_build_ssl_context(settings.verify_pihole_ssl)) as tmp:
             try:
                 resp = await tmp.post(url, headers=self._headers())
                 if resp.status_code == 401:
