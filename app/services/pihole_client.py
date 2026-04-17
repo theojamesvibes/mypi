@@ -14,27 +14,32 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
-def _build_ssl_context(verify: bool) -> bool | ssl.SSLContext:
-    """Return an ssl context for httpx.
+def _make_transport(verify: bool, limits: httpx.Limits | None = None) -> httpx.AsyncHTTPTransport:
+    """Build an AsyncHTTPTransport with the correct SSL settings.
 
-    When verify=True use httpx's default (full chain + hostname verification).
-    When verify=False build a maximally permissive context:
-    - CERT_NONE / check_hostname=False — skip cert validation
-    - SECLEVEL=0 — allow any cipher strength (covers weak DHE/RSA params)
-    - OP_LEGACY_SERVER_CONNECT — permit legacy TLS renegotiation disabled by
-      default in OpenSSL 3.x; Pi-hole's FTL web server triggers this on some
-      distros (notably Debian 13 ARM).
+    httpx 0.28+ dropped ssl.SSLContext support from AsyncClient.verify — a truthy
+    SSLContext object was silently treated as verify=True and the custom context was
+    never applied.  AsyncHTTPTransport.verify still accepts ssl.SSLContext, so we
+    always build the transport explicitly.
+
+    When verify=False: disables cert checking, allows legacy TLS renegotiation
+    (OP_LEGACY_SERVER_CONNECT — disabled by default in OpenSSL 3.x, triggered by
+    Pi-hole FTL's embedded web server on some distros), and drops cipher SECLEVEL
+    to 0 so older DHE/RSA parameters in Pi-hole certs don't cause handshake failure.
     """
-    if verify:
-        return True
-    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    ctx.set_ciphers("DEFAULT:@SECLEVEL=0")
-    # OP_LEGACY_SERVER_CONNECT added in Python 3.12; fall back to the raw flag
-    # value on older runtimes where it's still relevant.
-    ctx.options |= getattr(ssl, "OP_LEGACY_SERVER_CONNECT", 0x4)
-    return ctx
+    kwargs: dict = {}
+    if limits:
+        kwargs["limits"] = limits
+    if not verify:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        ctx.set_ciphers("DEFAULT:@SECLEVEL=0")
+        ctx.options |= getattr(ssl, "OP_LEGACY_SERVER_CONNECT", 0x4)
+        kwargs["verify"] = ctx
+    else:
+        kwargs["verify"] = True
+    return httpx.AsyncHTTPTransport(**kwargs)
 
 
 
@@ -103,8 +108,10 @@ class PiholeClient:
         from app.config import settings
         self._client = httpx.AsyncClient(
             timeout=self.timeout,
-            verify=_build_ssl_context(settings.verify_pihole_ssl),
-            limits=httpx.Limits(max_keepalive_connections=2, max_connections=5),
+            transport=_make_transport(
+                settings.verify_pihole_ssl,
+                limits=httpx.Limits(max_keepalive_connections=2, max_connections=5),
+            ),
         )
 
     @property
@@ -312,7 +319,7 @@ class PiholeClient:
 
         # Long timeout: gravity can take 30-120 s on a busy instance.
         from app.config import settings
-        async with httpx.AsyncClient(timeout=300, verify=_build_ssl_context(settings.verify_pihole_ssl)) as tmp:
+        async with httpx.AsyncClient(timeout=300, transport=_make_transport(settings.verify_pihole_ssl)) as tmp:
             try:
                 resp = await tmp.post(url, headers=self._headers())
                 if resp.status_code == 401:
