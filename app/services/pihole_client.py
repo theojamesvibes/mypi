@@ -36,6 +36,12 @@ def _make_transport(verify: bool, limits: httpx.Limits | None = None) -> httpx.A
         ctx.verify_mode = ssl.CERT_NONE
         ctx.set_ciphers("DEFAULT:@SECLEVEL=0")
         ctx.options |= getattr(ssl, "OP_LEGACY_SERVER_CONNECT", 0x4)
+        # Pi-hole FTL on ARMv7 (Raspberry Pi 3) is statically linked against
+        # OpenSSL 1.1.x and its TLS 1.3 implementation is incompatible with
+        # some extensions Python 3.12 / OpenSSL 3.x sends in the ClientHello.
+        # Forcing TLS 1.2 maximum avoids TLS 1.3 negotiation entirely and works
+        # with all Pi-hole builds including older ARM binaries.
+        ctx.maximum_version = ssl.TLSVersion.TLSv1_2
         kwargs["verify"] = ctx
     else:
         kwargs["verify"] = True
