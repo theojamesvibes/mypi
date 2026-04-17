@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import ssl
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -12,40 +11,6 @@ from typing import Any
 import httpx
 
 logger = logging.getLogger(__name__)
-
-
-def _make_transport(verify: bool, limits: httpx.Limits | None = None) -> httpx.AsyncHTTPTransport:
-    """Build an AsyncHTTPTransport with the correct SSL settings.
-
-    httpx 0.28+ dropped ssl.SSLContext support from AsyncClient.verify — a truthy
-    SSLContext object was silently treated as verify=True and the custom context was
-    never applied.  AsyncHTTPTransport.verify still accepts ssl.SSLContext, so we
-    always build the transport explicitly.
-
-    When verify=False: disables cert checking, allows legacy TLS renegotiation
-    (OP_LEGACY_SERVER_CONNECT — disabled by default in OpenSSL 3.x, triggered by
-    Pi-hole FTL's embedded web server on some distros), and drops cipher SECLEVEL
-    to 0 so older DHE/RSA parameters in Pi-hole certs don't cause handshake failure.
-    """
-    kwargs: dict = {}
-    if limits:
-        kwargs["limits"] = limits
-    if not verify:
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        ctx.set_ciphers("DEFAULT:@SECLEVEL=0")
-        ctx.options |= getattr(ssl, "OP_LEGACY_SERVER_CONNECT", 0x4)
-        # Pi-hole FTL on ARMv7 (Raspberry Pi 3) is statically linked against
-        # OpenSSL 1.1.x and its TLS 1.3 implementation is incompatible with
-        # some extensions Python 3.12 / OpenSSL 3.x sends in the ClientHello.
-        # Forcing TLS 1.2 maximum avoids TLS 1.3 negotiation entirely and works
-        # with all Pi-hole builds including older ARM binaries.
-        ctx.maximum_version = ssl.TLSVersion.TLSv1_2
-        kwargs["verify"] = ctx
-    else:
-        kwargs["verify"] = True
-    return httpx.AsyncHTTPTransport(**kwargs)
 
 
 
@@ -114,10 +79,8 @@ class PiholeClient:
         from app.config import settings
         self._client = httpx.AsyncClient(
             timeout=self.timeout,
-            transport=_make_transport(
-                settings.verify_pihole_ssl,
-                limits=httpx.Limits(max_keepalive_connections=2, max_connections=5),
-            ),
+            verify=settings.verify_pihole_ssl,
+            limits=httpx.Limits(max_keepalive_connections=2, max_connections=5),
         )
 
     @property
@@ -325,7 +288,7 @@ class PiholeClient:
 
         # Long timeout: gravity can take 30-120 s on a busy instance.
         from app.config import settings
-        async with httpx.AsyncClient(timeout=300, transport=_make_transport(settings.verify_pihole_ssl)) as tmp:
+        async with httpx.AsyncClient(timeout=300, verify=settings.verify_pihole_ssl) as tmp:
             try:
                 resp = await tmp.post(url, headers=self._headers())
                 if resp.status_code == 401:
