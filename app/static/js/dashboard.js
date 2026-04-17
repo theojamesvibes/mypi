@@ -1153,6 +1153,10 @@ function renderSyncStatus(data) {
     return;
   }
 
+  const masterRow = data.master
+    ? `<div><i class="bi bi-check-circle text-success me-1"></i><strong>${escHtml(data.master)}</strong><span class="badge bg-primary ms-1" style="font-size:0.65rem;">master</span></div>`
+    : '';
+
   const rows = (data.results || []).map(r => {
     const icon = r.status === 'success'
       ? '<i class="bi bi-check-circle text-success me-1"></i>'
@@ -1161,8 +1165,7 @@ function renderSyncStatus(data) {
     return `<div>${icon}<strong>${escHtml(r.name)}</strong>${err}</div>`;
   }).join('');
 
-  const masterLine = data.master ? `<div class="text-muted mb-1">Master: <strong>${escHtml(data.master)}</strong></div>` : '';
-  result.innerHTML = `${masterLine}${rows}<div class="text-muted mt-1">Completed: ${finished}</div>`;
+  result.innerHTML = `${masterRow}${rows}<div class="text-muted mt-1">Completed: ${finished}</div>`;
 }
 
 async function triggerSync() {

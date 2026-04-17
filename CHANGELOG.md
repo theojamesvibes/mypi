@@ -4,6 +4,11 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.6.0] — 2026-04-17
+
+### Changed
+- Sync panel last-sync result: master instance now shows a green checkmark and a `master` pill badge (matching the style used in the Instances panels), consistent with replica rows. The plain "Master: name" heading is removed.
+
 ## [1.5.1] — 2026-04-17
 
 ### Fixed
