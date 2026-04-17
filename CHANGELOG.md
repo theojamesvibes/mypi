@@ -4,6 +4,12 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.7.2] — 2026-04-17
+
+### Fixed
+- SSL handshake failure on Debian 13 ARM Pi-hole instances: dropped SSL security level to `SECLEVEL=0` (from 1) and added `OP_LEGACY_SERVER_CONNECT` to the permissive SSL context. OpenSSL 3.x disables legacy TLS renegotiation by default; Pi-hole's FTL web server on Debian 13 triggers this path. Both flags are only applied when `VERIFY_PIHOLE_SSL=false`.
+- Version badge incorrectly showing red (update available) immediately after upgrading MyPi: `up_to_date` now uses semver `>=` comparison so a running version newer than the last cached GitHub check is correctly treated as current.
+
 ## [1.7.1] — 2026-04-17
 
 ### Fixed
