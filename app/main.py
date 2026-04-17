@@ -21,6 +21,7 @@ from app.api import domains as domains_router
 from app.api import health as health_router
 from app.api import instances as instances_router
 from app.api import notifications as notifications_router
+from app.api import poll_settings as poll_settings_router
 from app.api import queries as queries_router
 from app.api import stats as stats_router
 from app.api import sync as sync_router
@@ -33,6 +34,7 @@ from app.models.settings import AppSetting
 from app.models.user import RevokedToken, User
 from app.services.collector import backfill_all_instances, cleanup_old_data, fetch_all_instance_versions, poll_queries, poll_stats, shutdown as collector_shutdown
 from app.services.config_loader import sync_instances
+from app.services import poll_settings as poll_settings_service
 from app.services import pushover as pushover_service
 from app.services import session_settings
 from app.services import sync_service
@@ -131,8 +133,12 @@ async def lifespan(app: FastAPI):
     await session_settings.load_settings()
     await version_check_service.load_settings()
     await pihole_version_check_service.load_settings()
+    await poll_settings_service.load_settings()
+    poll_settings_service.set_reschedule_callback(
+        lambda s: scheduler.reschedule_job("poll_queries", trigger="interval", seconds=s)
+    )
     scheduler.add_job(poll_stats, "interval", seconds=settings.stats_poll_interval, id="poll_stats")
-    scheduler.add_job(poll_queries, "interval", seconds=settings.queries_poll_interval, id="poll_queries")
+    scheduler.add_job(poll_queries, "interval", seconds=poll_settings_service.get_interval_seconds(), id="poll_queries")
     scheduler.add_job(cleanup_old_data, "cron", hour=3, minute=0, id="cleanup")
     scheduler.add_job(version_check_service.check_now, "interval", hours=1, id="version_check")
     scheduler.add_job(pihole_version_check_service.check_now, "interval", hours=1, id="pihole_version_check")
@@ -144,7 +150,7 @@ async def lifespan(app: FastAPI):
     _asyncio.create_task(fetch_all_instance_versions())
     _asyncio.create_task(backfill_all_instances())
     logger.info("Scheduler started (stats every %ds, queries every %ds).",
-                settings.stats_poll_interval, settings.queries_poll_interval)
+                settings.stats_poll_interval, poll_settings_service.get_interval_seconds())
     yield
     scheduler.shutdown(wait=False)
     await collector_shutdown()
@@ -153,7 +159,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="MyPi",
     description="Consolidated Pi-hole dashboard and API",
-    version="1.0.0",
+    version=APP_VERSION,
     lifespan=lifespan,
 )
 app.state.limiter = limiter
@@ -172,6 +178,7 @@ app.include_router(queries_router.router)
 app.include_router(domains_router.router)
 app.include_router(sync_router.router)
 app.include_router(notifications_router.router)
+app.include_router(poll_settings_router.router)
 app.include_router(version_router.router)
 
 
