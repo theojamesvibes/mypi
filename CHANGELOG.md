@@ -4,6 +4,11 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.5.1] — 2026-04-17
+
+### Fixed
+- Dark mode: table headers with `table-light` (instances, API keys, query log, dashboard tables) now render with the same dark background as other card headers instead of white.
+
 ## [1.5.0] — 2026-04-17
 
 ### Added
