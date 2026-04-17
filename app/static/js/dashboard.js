@@ -21,6 +21,13 @@ document.addEventListener('click', e => {
   if (configs) openDrillDown(configs[parseInt(tr.dataset.idx)]);
 });
 
+// Delegated click handler for domain management shield buttons in query log
+document.addEventListener('click', e => {
+  const btn = e.target.closest('.domain-manage-btn');
+  if (!btn) return;
+  openDomainModal(btn.dataset.domain, btn.dataset.qstatus || '');
+});
+
 // ─── Utilities ───────────────────────────────────────────────────────────────
 
 function fmtNum(n) {
@@ -417,15 +424,10 @@ async function loadQueries(page) {
             <td class="small">${escHtml(q.client_name || q.client_ip || '—')}</td>
             <td>${statusPill(q.status)}</td>
             <td class="text-end small">${q.reply_time_ms != null ? Number(q.reply_time_ms).toFixed(1) : '—'}</td>
-            <td class="text-end domain-action-cell" data-domain="${d}" data-blocked="${isBlocked}"></td>
+            <td class="text-end">${q.domain ? `<button class="btn btn-sm btn-outline-secondary py-0 px-1 domain-manage-btn" data-domain="${d}" data-qstatus="${escHtml(q.status || '')}" title="Manage domain" style="font-size:.7rem;"><i class="bi bi-shield"></i></button>` : ''}</td>
           </tr>`;
         }).join('')
       : '<tr><td colspan="8" class="text-center text-muted py-4">No queries found.</td></tr>';
-
-    // Populate domain action buttons via DOM (never via innerHTML) to prevent XSS.
-    tbody.querySelectorAll('.domain-action-cell').forEach(td => {
-      td.appendChild(_mkDomainBtn(td.dataset.domain, td.dataset.blocked === 'true'));
-    });
 
     const totalPages = Math.ceil(data.total / data.page_size);
     renderPagination('pagination-top', currentPage, totalPages);
@@ -544,91 +546,131 @@ function renderPagination(id, current, total) {
   }).join('');
 }
 
-// ─── Domain block / unblock ──────────────────────────────────────────────────
+// ─── Domain management modal ─────────────────────────────────────────────────
 
-// Build the initial Block / Unblock button for a query row.
-// domain must be an already-HTML-escaped string (safe for inline onclick).
-// Returns a DOM element — never an HTML string — so domain values cannot inject
-// event-handler code regardless of what characters Pi-hole returns.
-function _mkDomainBtn(domain, isCurrentlyBlocked) {
-  const btn = document.createElement('button');
-  btn.className = `btn btn-xs ${isCurrentlyBlocked ? 'btn-outline-success' : 'btn-outline-danger'} py-0 px-1`;
-  btn.style.cssText = 'font-size:.7rem;white-space:nowrap;';
-  btn.textContent = isCurrentlyBlocked ? 'Unblock' : 'Block';
-  btn.addEventListener('click', () => askDomainAction(btn, domain, isCurrentlyBlocked));
-  return btn;
-}
+let _currentDomain = null;
 
-function _cellSpinner(cell) {
-  cell.replaceChildren();
-  const s = document.createElement('span');
-  s.className = 'text-muted';
-  s.style.fontSize = '.7rem';
-  s.textContent = '…';
-  cell.appendChild(s);
-}
+async function openDomainModal(domain, queryStatus) {
+  _currentDomain = domain;
 
-// First click: check actual deny-list state on the master Pi-hole, then show
-// the correct "Verb? ✓ ✗" prompt.  The `blocking` hint from the row is only a
-// fallback used if the API call fails.
-async function askDomainAction(btn, domain, blocking) {
-  const cell = btn.closest('td');
-  _cellSpinner(cell);
+  const modal = document.getElementById('domainModal');
+  if (!modal) return;
 
-  // Query the master Pi-hole for the real current state.
-  let actuallyBlocked = blocking;
+  document.getElementById('domain-modal-title').textContent = domain;
+  document.getElementById('domain-modal-body').innerHTML =
+    '<div class="text-center py-3"><span class="spinner-border spinner-border-sm me-2"></span>Checking status\u2026</div>';
+  document.getElementById('domain-modal-footer').innerHTML =
+    '<button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>';
+
+  bootstrap.Modal.getOrCreateInstance(modal).show();
+
   try {
-    const resp = await fetch(`/api/domains/block/${encodeURIComponent(domain)}`);
-    if (resp.ok) actuallyBlocked = (await resp.json()).blocked;
-  } catch (_) { /* keep fallback */ }
-
-  const doBlocking = !actuallyBlocked;
-
-  const label = document.createElement('span');
-  label.className = `${doBlocking ? 'text-danger' : 'text-success'} me-1`;
-  label.style.cssText = 'font-size:.7rem;white-space:nowrap;';
-  label.textContent = doBlocking ? 'Block?' : 'Unblock?';
-
-  const confirmBtn = document.createElement('button');
-  confirmBtn.className = `btn btn-xs ${doBlocking ? 'btn-outline-danger' : 'btn-outline-success'} py-0 px-1 me-1`;
-  confirmBtn.style.fontSize = '.7rem';
-  confirmBtn.title = 'Confirm';
-  confirmBtn.textContent = '✓';
-  confirmBtn.addEventListener('click', () => doDomainAction(confirmBtn, domain, doBlocking));
-
-  const cancelBtn = document.createElement('button');
-  cancelBtn.className = 'btn btn-xs btn-outline-secondary py-0 px-1';
-  cancelBtn.style.fontSize = '.7rem';
-  cancelBtn.title = 'Cancel';
-  cancelBtn.textContent = '✗';
-  cancelBtn.addEventListener('click', () => cell.replaceChildren(_mkDomainBtn(domain, actuallyBlocked)));
-
-  cell.replaceChildren(label, confirmBtn, cancelBtn);
+    const resp = await fetch(`/api/domains/status/${encodeURIComponent(domain)}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    renderDomainStatus(domain, queryStatus, await resp.json());
+  } catch (err) {
+    document.getElementById('domain-modal-body').innerHTML =
+      `<div class="alert alert-danger mb-0">Failed to check status: ${escHtml(String(err))}</div>`;
+  }
 }
 
-// Second click (confirm): execute the API call.
-async function doDomainAction(btn, domain, blocking) {
-  const cell = btn.closest('td');
-  _cellSpinner(cell);
-  try {
-    const resp = blocking
-      ? await fetch('/api/domains/block', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ domain }),
-        })
-      : await fetch(`/api/domains/block/${encodeURIComponent(domain)}`, { method: 'DELETE' });
+function renderDomainStatus(domain, queryStatus, status) {
+  const body = document.getElementById('domain-modal-body');
+  const footer = document.getElementById('domain-modal-footer');
+  const { in_deny, in_allow, effective } = status;
 
-    if (resp.ok || resp.status === 204) {
-      cell.replaceChildren(_mkDomainBtn(domain, !blocking));
-    } else {
-      const err = await resp.json().catch(() => ({}));
-      alert(`Failed to ${blocking ? 'block' : 'unblock'} ${domain}: ${err.detail || resp.status}`);
-      cell.replaceChildren(_mkDomainBtn(domain, blocking));
+  const denyBadge = in_deny
+    ? '<span class="badge bg-danger me-1"><i class="bi bi-shield-fill-x me-1"></i>In Deny List</span>'
+    : '<span class="badge bg-secondary me-1"><i class="bi bi-shield me-1"></i>Not in Deny List</span>';
+  const allowBadge = in_allow
+    ? '<span class="badge bg-success me-1"><i class="bi bi-shield-fill-check me-1"></i>In Allow List</span>'
+    : '<span class="badge bg-secondary me-1"><i class="bi bi-shield me-1"></i>Not in Allow List</span>';
+
+  let summaryHtml, footerHtml;
+
+  if (in_deny && in_allow) {
+    summaryHtml = '<div class="alert alert-warning py-2 mb-0"><i class="bi bi-exclamation-triangle me-2"></i><strong>Conflict</strong> \u2014 domain is in both lists. Allow takes priority.</div>';
+    footerHtml = `<button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+      <button class="btn btn-outline-danger" onclick="doDomainAction('remove_allow')">Remove Allow</button>
+      <button class="btn btn-outline-danger" onclick="doDomainAction('remove_deny')">Remove Block</button>
+      <button class="btn btn-danger" onclick="doDomainAction('clear')"><i class="bi bi-trash me-1"></i>Clear Both</button>`;
+  } else if (effective === 'denied') {
+    summaryHtml = '<div class="alert alert-danger py-2 mb-0"><i class="bi bi-slash-circle me-2"></i><strong>Blocked</strong> \u2014 domain is in the explicit deny list.</div>';
+    footerHtml = `<button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+      <button class="btn btn-outline-success" onclick="doDomainAction('remove_deny')"><i class="bi bi-shield-check me-1"></i>Remove Block</button>
+      <button class="btn btn-success" onclick="doDomainAction('allow')"><i class="bi bi-shield-fill-check me-1"></i>Allow Override</button>`;
+  } else if (effective === 'allowed') {
+    summaryHtml = '<div class="alert alert-success py-2 mb-0"><i class="bi bi-check-circle me-2"></i><strong>Allowed</strong> \u2014 domain has an explicit allow override.</div>';
+    footerHtml = `<button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+      <button class="btn btn-outline-danger" onclick="doDomainAction('remove_allow')"><i class="bi bi-shield-x me-1"></i>Remove Allow</button>
+      <button class="btn btn-danger" onclick="doDomainAction('deny')"><i class="bi bi-shield-fill-x me-1"></i>Block Instead</button>`;
+  } else {
+    const isGravityBlocked = BLOCKED_STATUSES.has(queryStatus);
+    summaryHtml = isGravityBlocked
+      ? '<div class="alert alert-warning py-2 mb-0"><i class="bi bi-shield-fill-exclamation me-2"></i><strong>Gravity blocked</strong> \u2014 blocked by an adlist. Not in any local list.</div>'
+      : '<div class="alert alert-secondary py-2 mb-0"><i class="bi bi-shield me-2"></i>Not managed locally \u2014 not in any explicit allow or deny list.</div>';
+    footerHtml = `<button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+      <button class="btn btn-outline-danger" onclick="doDomainAction('deny')"><i class="bi bi-shield-fill-x me-1"></i>Block</button>
+      <button class="btn btn-outline-success" onclick="doDomainAction('allow')"><i class="bi bi-shield-fill-check me-1"></i>Allow</button>`;
+  }
+
+  body.innerHTML = `<div class="mb-3">${denyBadge}${allowBadge}</div>
+    <p class="mb-2 small text-muted">Last query status: ${statusPill(queryStatus)}</p>
+    ${summaryHtml}`;
+  footer.innerHTML = footerHtml;
+}
+
+async function doDomainAction(action) {
+  const domain = _currentDomain;
+  const body = document.getElementById('domain-modal-body');
+  const footer = document.getElementById('domain-modal-footer');
+
+  footer.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Working\u2026';
+
+  try {
+    let resp;
+    if (action === 'deny') {
+      resp = await fetch('/api/domains/deny', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ domain }) });
+    } else if (action === 'allow') {
+      resp = await fetch('/api/domains/allow', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ domain }) });
+    } else if (action === 'remove_deny') {
+      resp = await fetch(`/api/domains/deny/${encodeURIComponent(domain)}`, { method: 'DELETE' });
+    } else if (action === 'remove_allow') {
+      resp = await fetch(`/api/domains/allow/${encodeURIComponent(domain)}`, { method: 'DELETE' });
+    } else if (action === 'clear') {
+      const [r1, r2] = await Promise.all([
+        fetch(`/api/domains/deny/${encodeURIComponent(domain)}`, { method: 'DELETE' }),
+        fetch(`/api/domains/allow/${encodeURIComponent(domain)}`, { method: 'DELETE' }),
+      ]);
+      resp = r1.ok ? r2 : r1;
     }
-  } catch (e) {
-    alert(`Error: ${e}`);
-    cell.replaceChildren(_mkDomainBtn(domain, blocking));
+
+    if (!resp || !resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${resp.status}`);
+    }
+
+    const data = await resp.json().catch(() => ({}));
+    const results = data.results || [];
+    const allOk = data.ok_count === data.total;
+
+    let html = `<div class="alert alert-${allOk ? 'success' : 'warning'} py-2 mb-2">
+      <i class="bi bi-check-circle me-1"></i>Applied to ${data.ok_count}/${data.total} instance${data.total !== 1 ? 's' : ''}</div>`;
+    if (results.length > 1) {
+      html += '<ul class="list-unstyled small mb-0">';
+      for (const r of results) {
+        html += `<li><i class="bi bi-${r.ok ? 'check text-success' : 'x text-danger'} me-1"></i>${escHtml(r.name)}`;
+        if (r.error) html += `: <span class="text-danger">${escHtml(r.error)}</span>`;
+        html += '</li>';
+      }
+      html += '</ul>';
+    }
+    body.innerHTML = html;
+    footer.innerHTML = '<button class="btn btn-primary" data-bs-dismiss="modal">Done</button>';
+
+  } catch (err) {
+    body.innerHTML = `<div class="alert alert-danger mb-0">Error: ${escHtml(String(err))}</div>`;
+    footer.innerHTML = '<button class="btn btn-secondary" data-bs-dismiss="modal">Close</button>';
   }
 }
 

@@ -102,6 +102,25 @@
     </div>
   </div>
 </div>
+
+<!-- Domain management modal -->
+<div class="modal fade" id="domainModal" tabindex="-1" aria-labelledby="domainModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="domainModalLabel">
+          <i class="bi bi-shield me-2 text-primary"></i>Manage Domain
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="mb-3 fw-semibold text-truncate" id="domain-modal-title"></p>
+        <div id="domain-modal-body"></div>
+      </div>
+      <div class="modal-footer" id="domain-modal-footer"></div>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
