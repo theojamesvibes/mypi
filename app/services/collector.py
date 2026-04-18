@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import ssl
 from datetime import datetime, timedelta, timezone
+
+import httpx
 
 from sqlalchemy import delete, func, select
 
@@ -59,6 +62,9 @@ async def _poll_stats_for(instance: PiholeInstance) -> None:
         )
     except Exception as exc:
         logger.warning("Failed to poll stats for %s: %s", instance.name, exc)
+        if isinstance(exc, (ssl.SSLError, httpx.ConnectError, httpx.RemoteProtocolError)):
+            logger.info("Connection error for %s — evicting client for next poll", instance.name)
+            await close_client(str(instance.id))
         snapshot = StatsSnapshot(
             instance_id=instance.id,
             collected_at=datetime.now(timezone.utc),
@@ -205,6 +211,9 @@ async def _poll_queries_for(instance: PiholeInstance) -> None:
 
     except Exception as exc:
         logger.warning("Failed to poll queries for %s: %s", instance.name, exc)
+        if isinstance(exc, (ssl.SSLError, httpx.ConnectError, httpx.RemoteProtocolError)):
+            logger.info("Connection error for %s — evicting client for next poll", instance.name)
+            await close_client(str(instance.id))
 
 
 async def poll_queries() -> None:

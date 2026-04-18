@@ -4,6 +4,12 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.7.6] — 2026-04-17
+
+### Fixed
+- Recurring `[SSL: SSLV3_ALERT_HANDSHAKE_FAILURE]` on Raspberry Pi 3: root cause was httpx's connection pool keeping idle connections alive for 5 seconds (default `keepalive_expiry`) while the poll interval is 10 seconds — so connections were never reused but also never cleanly closed. On a memory-constrained RPi 3, FTL's embedded web server gradually accumulated these half-open TLS connections until its thread pool was exhausted. Fixed by disabling keepalive pooling entirely (`max_keepalive_connections=0`) so every request closes the connection immediately with a proper TLS `close_notify`, giving FTL a clean teardown after each poll.
+- Added self-healing recovery: if `ssl.SSLError`, `httpx.ConnectError`, or `httpx.RemoteProtocolError` is caught in either stats or query polling, the stale client is evicted from the client manager so the next poll starts a fresh connection rather than retrying on a broken one.
+
 ## [1.7.5] — 2026-04-17
 
 ### Changed

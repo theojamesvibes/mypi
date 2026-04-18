@@ -80,7 +80,7 @@ class PiholeClient:
         self._client = httpx.AsyncClient(
             timeout=self.timeout,
             verify=settings.verify_pihole_ssl,
-            limits=httpx.Limits(max_keepalive_connections=2, max_connections=5),
+            limits=httpx.Limits(max_keepalive_connections=0, max_connections=2),
         )
 
     @property
