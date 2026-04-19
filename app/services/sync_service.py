@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
+import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal
@@ -330,6 +332,13 @@ async def run_sync(
                 ) from last_exc
             logger.info("Exported teleporter from master %s (%d bytes)", master.name, len(zip_data))
 
+            # Validate the master's export before broadcasting it. If the
+            # archive is truncated, zero-length, or corrupt, we fail the whole
+            # sync here so no replica overwrites its working config with
+            # garbage.
+            _validate_teleporter_zip(zip_data)
+            logger.info("Teleporter ZIP from master %s passed validation", master.name)
+
             # Step 3: Push to each replica concurrently, then run gravity on each.
             # The teleporter ZIP carries the master's adlists and domain lists, but the
             # compiled gravity table is rebuilt by Pi-hole FTL during a gravity run.
@@ -402,6 +411,42 @@ async def run_sync(
         # replicas after the teleporter import, so give it a moment to come back.
         _spawn(_refresh_versions_post_sync())
         return _state
+
+
+def _validate_teleporter_zip(data: bytes) -> None:
+    """Sanity-check the master's teleporter export before broadcasting it.
+
+    Pi-hole v6's teleporter endpoint is the single commit point on each
+    replica — there is no server-side staging or rollback. If the master
+    hands back a corrupt or empty archive, we would overwrite every
+    replica's working config with garbage. This check is the guard that
+    keeps a bad export from fanning out.
+
+    Minimal bytes: Pi-hole v6 teleporters contain pihole.toml plus the
+    gravity schema and are never below ~1 KB in practice; anything
+    smaller is a truncated or empty response.
+    """
+    min_bytes = 1024
+    if len(data) < min_bytes:
+        raise RuntimeError(
+            f"Teleporter export from master is only {len(data)} bytes "
+            f"(expected ≥{min_bytes}) — refusing to broadcast a likely-truncated archive"
+        )
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            bad_member = zf.testzip()
+            if bad_member is not None:
+                raise RuntimeError(
+                    f"Teleporter ZIP member '{bad_member}' failed CRC — archive is corrupt"
+                )
+            infos = zf.infolist()
+            if not infos:
+                raise RuntimeError("Teleporter ZIP contains no members")
+            total_uncompressed = sum(i.file_size for i in infos)
+            if total_uncompressed == 0:
+                raise RuntimeError("Teleporter ZIP members are all zero-length")
+    except zipfile.BadZipFile as exc:
+        raise RuntimeError(f"Teleporter export is not a valid ZIP archive: {exc}") from exc
 
 
 async def _refresh_versions_post_sync() -> None:

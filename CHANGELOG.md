@@ -4,6 +4,27 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.8.0-dev.4] — 2026-04-19
+
+Follow-up to an adversarial audit review. Two items worth fixing; the rest of the audit was already addressed by earlier hardening work.
+
+### Added
+
+- **Teleporter ZIP validation before broadcast.** `sync_service.run_sync` now calls `_validate_teleporter_zip(data)` on the master's export before any replica receives it. The check enforces a minimum byte floor (1 KB — smaller than any realistic Pi-hole v6 teleporter), opens the archive, runs `ZipFile.testzip()` for CRC integrity on every member, and rejects archives with zero members or all-zero-length members. Pi-hole v6's `/api/teleporter` is a single commit point on each replica with no server-side staging, so a corrupt export would otherwise overwrite every replica's working config. This is the guard that keeps a bad export from fanning out.
+- **Dockerfile HEALTHCHECK.** Uses the already-installed `curl` to hit `/api/health` (unauthenticated, no DB calls on the hot path). 30 s interval, 5 s timeout, 30 s start period, 3 retries.
+
+### Changed
+
+- **Container now runs as a non-root user.** A system user `app` (UID 1000, GID 1000, `/usr/sbin/nologin`, no home dir) is created in the image, application files are `COPY --chown=app:app`, and the image finishes with `USER app` so the Python process runs unprivileged. Pip install still happens as root so site-packages lands in `/usr/local` (standard Docker Python pattern).
+
+### Audit items that did **not** require changes
+
+- **Error isolation on polling** — already correct. `collector.poll_stats / poll_queries / fetch_all_instance_versions` each `asyncio.gather(...)` over per-instance coroutines whose bodies are wrapped in `try/except Exception`, so one failing Pi-hole cannot propagate and stop the others.
+- **Sensitive data exposure** — already handled. `PiholeInstance.api_password` uses the `EncryptedString` (Fernet) TypeDecorator at rest (migration `0006`). No API response schema includes the password. Every log call in `pihole_client.py` uses `self.base_url` or `instance.name`, never the password. httpx exception messages do not include request bodies, so the `_authenticate` failure log is safe.
+- **Dependency pinning** — already fully pinned. `requirements.txt` uses `==` on every entry.
+
+---
+
 ## [1.8.0-dev.3] — 2026-04-19
 
 ### Added
