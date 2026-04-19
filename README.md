@@ -248,7 +248,7 @@ instances:
 
 - Up to **10 instances** supported
 - Instances are loaded at startup and synced to the database; restart the container to pick up changes
-- `password` is the Pi-hole web interface password (Pi-hole v6 API). Leave empty (`""`) or omit entirely for instances with no password configured — MyPi detects the passwordless state automatically and connects without authentication
+- `password` is the Pi-hole web interface password (Pi-hole v6 API). Leave empty (`""`) or omit entirely for instances with no password configured — MyPi detects the passwordless state automatically and connects without authentication. **Note:** passwordless mode only works for plain-`http://` Pi-holes. With TLS enabled, Pi-hole v6's `/api/auth` rejects empty-password requests with 401 even when the web UI has no password set, so any `https://` instance must have a password configured
 - `color` is used in charts to distinguish each instance visually
 - `master: true` designates the sync source for the Pi-hole Sync feature — exactly one instance should be marked master
 
