@@ -4,6 +4,18 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.8.0-dev.3] — 2026-04-19
+
+### Added
+
+- **Dark mode on the API docs (`/docs`) page.** The Swagger UI page now follows the user's MyPi theme (light/dark/system) via the same `localStorage['mypi-theme']` key used by the rest of the UI. A custom `docs.html` template pre-paints the theme on load (mirrors `base.html` to avoid a flash), listens for `storage` events so a theme change in the dashboard tab updates the docs tab live, and follows system preference changes when the user has the theme set to `system`. Dark overrides live in a new `app/static/css/swagger-dark.css` scoped to `[data-bs-theme="dark"]` and colour-matched to the dashboard palette (`#1a1d20` / `#212529` / `#2b2f33` / `#373b3e` / `#dee2e6`). HTTP method tints (GET/POST/PUT/DELETE) are preserved for readability.
+
+### Changed
+
+- `main.py` no longer uses `fastapi.openapi.docs.get_swagger_ui_html` — `/docs` now renders the new `docs.html` Jinja template so we control the `<head>` (theme script) and can load our CSS alongside the Swagger UI CDN bundle.
+
+---
+
 ## [1.8.0-dev.2] — 2026-04-19
 
 ### Fixed
