@@ -4,6 +4,24 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.8.0-dev.5] — 2026-04-19
+
+Follow-up to Grok's full architecture and security review. Verified ~11 items as already correct (JWT cookie flags, `SECRET_KEY` enforcement, bcrypt, rate limiting, query-log indexes, etc.) and closed the three meaningful gaps that remained.
+
+### Added
+
+- **`ENABLE_API_DOCS` setting** (default `true`, preserves current behaviour). Setting `ENABLE_API_DOCS=false` returns `404` from both `/docs` (Swagger UI) and `/openapi.json`. Useful when MyPi is reachable from anything less trusted than the local LAN — both endpoints reveal the full API surface to unauthenticated callers. Wired in `app/config.py`, `app/main.py` (both the `FastAPI(openapi_url=...)` constructor arg and the `/docs` route guard), and `.env.example`.
+- **Content-Security-Policy header on every response.** Added to the existing `_security_headers` middleware in `app/main.py`. Policy:
+  `default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self' data: https://cdn.jsdelivr.net; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`.
+  `'unsafe-inline'` on `script-src` is required for the theme pre-paint script in `base.html` and `docs.html`; `cdn.jsdelivr.net` is required for Bootstrap, Chart.js, and Swagger UI. An XSS that tries to fetch from or ex-fil to an arbitrary external origin is now blocked.
+- **Dependabot configuration** (`.github/dependabot.yml`) on a weekly cadence covering `pip`, `github-actions`, and `docker` ecosystems. Dependabot PRs are labelled `dependencies` plus the relevant ecosystem label.
+
+### Changed
+
+- **README** — new “Independent reviews” section documenting the Gemini adversarial audit and Grok architecture audit, what was verified as already-correct, and what was changed in response. Environment variable table now also lists `SECURE_COOKIES`, `VERIFY_PIHOLE_SSL`, and `ENABLE_API_DOCS`.
+
+---
+
 ## [1.8.0-dev.4] — 2026-04-19
 
 Follow-up to an adversarial audit review. Two items worth fixing; the rest of the audit was already addressed by earlier hardening work.
