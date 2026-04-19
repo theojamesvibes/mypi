@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import Cookie, Depends, FastAPI, Request, Response
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -185,6 +185,10 @@ app = FastAPI(
     version=APP_VERSION,
     lifespan=lifespan,
     docs_url=None,
+    # When settings.enable_api_docs is False, disable the auto-generated
+    # OpenAPI schema endpoint. Our custom /docs route (below) also checks
+    # the flag, so both routes disappear together.
+    openapi_url="/openapi.json" if settings.enable_api_docs else None,
 )
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -196,12 +200,34 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # origin to frame it, load its content-type-sniffing, or exfiltrate its
 # referrer. Add a small set of defensive headers by default.
 # HSTS is opt-in (settings.secure_cookies) so we don't break local HTTP setups.
+_CSP_POLICY = (
+    # Restrict default fetches to same-origin. Loosen per-directive below.
+    "default-src 'self'; "
+    # Inline <script> is used for theme pre-paint in base.html and docs.html.
+    # Bootstrap, Chart.js, and Swagger UI come from jsdelivr.
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    # Bootstrap CSS + per-page inline styles.
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    # data: covers the inline SVG favicon and any data-URI icons Swagger ships.
+    "img-src 'self' data:; "
+    # Bootstrap Icons ships webfonts from jsdelivr; allow data: for base64'd glyphs.
+    "font-src 'self' data: https://cdn.jsdelivr.net; "
+    # XHR / fetch only to same origin.
+    "connect-src 'self'; "
+    # Equivalent-to-and-stricter-than X-Frame-Options: DENY.
+    "frame-ancestors 'none'; "
+    "base-uri 'self'; "
+    "form-action 'self'"
+)
+
+
 @app.middleware("http")
 async def _security_headers(request: Request, call_next):
     response = await call_next(request)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "same-origin")
+    response.headers.setdefault("Content-Security-Policy", _CSP_POLICY)
     if settings.secure_cookies:
         response.headers.setdefault(
             "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
@@ -231,6 +257,8 @@ app.include_router(version_router.router)
 async def swagger_ui(request: Request):
     # Custom template so the docs page follows the user's MyPi theme
     # (light/dark/system) via localStorage['mypi-theme'] — same logic as base.html.
+    if not settings.enable_api_docs:
+        raise HTTPException(status_code=404)
     return templates.TemplateResponse("docs.html", {"request": request})
 
 
