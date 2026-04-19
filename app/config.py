@@ -31,10 +31,13 @@ class Settings(BaseSettings):
     secure_cookies: bool = False
 
     # Verify TLS certificates when connecting to Pi-hole instances over HTTPS.
-    # Defaults to True to fail-closed against MITM; set to False in .env only
-    # if your Pi-hole uses a self-signed certificate and the network segment
-    # between MyPi and the Pi-hole is trusted.
-    verify_pihole_ssl: bool = True
+    # Defaults to False because most Pi-hole deployments use self-signed
+    # certs on a trusted LAN segment — flipping the default broke every
+    # existing self-signed deployment on the 1.8.0-dev hardening branch.
+    # If your MyPi ↔ Pi-hole path is NOT a trusted segment, set
+    # VERIFY_PIHOLE_SSL=true in .env; the 1.8.0-dev `hardening-review`
+    # CHANGELOG recommends this explicitly.
+    verify_pihole_ssl: bool = False
 
     pihole_config_path: str = "/app/pihole_instances.yml"
     max_pihole_instances: int = 10
