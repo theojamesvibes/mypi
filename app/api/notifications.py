@@ -1,10 +1,11 @@
 """Pushover notification settings API."""
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from app.auth import get_current_user
+from app.auth import get_current_user, require_mutation
+from app.limiter import limiter
 from app.models.user import User
 from app.services import pushover as pushover_service
 
@@ -40,7 +41,7 @@ async def get_settings(_: User = Depends(get_current_user)) -> dict:
 @router.put("/settings")
 async def save_settings(
     req: PushoverSettingsRequest,
-    _: User = Depends(get_current_user),
+    _: User = Depends(require_mutation),
 ) -> dict:
     existing = pushover_service.get_settings_raw()
     # Only overwrite credentials if the client submitted non-empty values;
@@ -66,7 +67,10 @@ async def save_settings(
 
 
 @router.post("/test")
-async def send_test(_: User = Depends(get_current_user)) -> dict:
+@limiter.limit("5/minute")
+async def send_test(request: Request, _: User = Depends(require_mutation)) -> dict:
+    # Rate-limited because each call consumes Pushover's per-month free quota
+    # (7500 msg/mo). An unchecked key holder could burn through it quickly.
     ok = await pushover_service.send_test()
     if not ok:
         raise HTTPException(
@@ -77,7 +81,9 @@ async def send_test(_: User = Depends(get_current_user)) -> dict:
 
 
 @router.post("/validate")
+@limiter.limit("10/minute")
 async def validate_credentials(
+    request: Request,
     req: ValidateRequest,
     _: User = Depends(get_current_user),
 ) -> dict:

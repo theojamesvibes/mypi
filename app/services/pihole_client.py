@@ -40,13 +40,6 @@ class PiholeQuery:
 
 
 @dataclass
-class PiholeTopStats:
-    top_permitted: list[dict[str, Any]] = field(default_factory=list)
-    top_blocked: list[dict[str, Any]] = field(default_factory=list)
-    top_clients: list[dict[str, Any]] = field(default_factory=list)
-
-
-@dataclass
 class ComponentVersion:
     current: str = ""
     latest: str = ""
@@ -351,50 +344,6 @@ class PiholeClient:
             unique_clients=data.get("clients", {}).get("active", 0),
             queries_cached=q.get("cached", 0),
             queries_forwarded=q.get("forwarded", 0),
-        )
-
-    async def get_history(self) -> list[PiholeHistoryBucket]:
-        """Return over-time data in 10-minute buckets."""
-        data = await self._get("/api/stats/history")
-        buckets = []
-        history = data.get("history", [])
-        for item in history:
-            ts = datetime.fromtimestamp(item.get("timestamp", 0), tz=timezone.utc)
-            buckets.append(
-                PiholeHistoryBucket(
-                    timestamp=ts,
-                    queries=item.get("total", 0),
-                    blocked=item.get("blocked", 0),
-                )
-            )
-        return buckets
-
-    async def get_top_stats(self, count: int = 10) -> PiholeTopStats:
-        permitted_data, blocked_data, clients_data = await asyncio.gather(
-            self._get("/api/stats/top_domains", params={"blocked": "false", "count": count}),
-            self._get("/api/stats/top_domains", params={"blocked": "true", "count": count}),
-            self._get("/api/stats/top_clients", params={"count": count}),
-        )
-
-        top_permitted = [
-            {"domain": domain, "count": cnt}
-            for domain, cnt in (permitted_data.get("domains", {}) or {}).items()
-        ]
-        top_blocked = [
-            {"domain": domain, "count": cnt}
-            for domain, cnt in (blocked_data.get("domains", {}) or {}).items()
-        ]
-        top_clients = []
-        for item in clients_data.get("clients", []) or []:
-            top_clients.append({
-                "client": item.get("name") or item.get("ip", ""),
-                "count": item.get("count", 0),
-            })
-
-        return PiholeTopStats(
-            top_permitted=sorted(top_permitted, key=lambda x: x["count"], reverse=True),
-            top_blocked=sorted(top_blocked, key=lambda x: x["count"], reverse=True),
-            top_clients=sorted(top_clients, key=lambda x: x["count"], reverse=True),
         )
 
     async def get_queries(self, from_ts: float | None = None, until_ts: float | None = None, length: int = 500) -> list[PiholeQuery]:

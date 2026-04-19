@@ -62,6 +62,9 @@
         <i class="bi bi-list"></i>
       </button>
       <a id="version-badge" class="badge bg-secondary topbar-version" href="https://github.com/theojamesvibes/mypi/blob/main/CHANGELOG.md" target="_blank" style="text-decoration:none;">v{{ app_version }}</a>
+      {% if 'dev' in app_version %}
+      <span class="badge bg-warning text-dark" title="Development build — not for production use">DEV</span>
+      {% endif %}
     </div>
     <div class="d-flex align-items-center gap-2">
       <span class="badge bg-secondary" id="sync-status-badge" style="display:none!important;"></span>
