@@ -6,7 +6,6 @@ from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import Cookie, Depends, FastAPI, Request, Response
-from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -229,12 +228,10 @@ app.include_router(version_router.router)
 # ── API docs ──────────────────────────────────────────────────────────────────
 
 @app.get("/docs", include_in_schema=False)
-async def swagger_ui():
-    return get_swagger_ui_html(
-        openapi_url="/openapi.json",
-        title="MyPi API",
-        swagger_favicon_url="/static/img/logo.svg",
-    )
+async def swagger_ui(request: Request):
+    # Custom template so the docs page follows the user's MyPi theme
+    # (light/dark/system) via localStorage['mypi-theme'] — same logic as base.html.
+    return templates.TemplateResponse("docs.html", {"request": request})
 
 
 # ── Web UI routes ─────────────────────────────────────────────────────────────
