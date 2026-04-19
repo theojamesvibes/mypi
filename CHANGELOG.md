@@ -18,7 +18,7 @@ This batch applies the security + efficiency review done after the mypi-ios 0.1.
 
 ### Changed
 
-- **`verify_pihole_ssl` now defaults to `True`.** Existing deployments that rely on self-signed Pi-hole certs must explicitly set `VERIFY_PIHOLE_SSL=false` in `.env`. Failing-closed is the correct posture; the prior default would silently accept a MITM on the LAN.
+- ~~**`verify_pihole_ssl` now defaults to `True`.**~~ **Reverted**: the flip broke every existing self-signed Pi-hole deployment on upgrade. Default stays `False`; if the MyPi ↔ Pi-hole path is not a trusted network segment, set `VERIFY_PIHOLE_SSL=true` in `.env` explicitly. README will document the recommendation without changing the default.
 - **Background tasks** spawned with `asyncio.create_task(...)` in `main.py`, `sync_service.py`, and `collector.py` now go through a `_spawn(...)` / `_track_task(...)` helper that stores a strong reference until completion and logs any uncaught exception. Previously the event loop only held weak references, so GC could drop a task mid-run and an exception could vanish silently.
 
 ### Fixed
