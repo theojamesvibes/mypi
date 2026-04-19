@@ -68,7 +68,7 @@ async def get_schedule(_: User = Depends(get_current_user)) -> dict:
 
 
 @router.put("/schedule")
-async def set_schedule(req: ScheduleRequest, _: User = Depends(require_mutation)) -> dict:
+async def set_schedule(req: ScheduleRequest, user: User = Depends(require_mutation)) -> dict:
     try:
         await sync_service.set_schedule(
             interval_minutes=req.interval_minutes,
@@ -81,6 +81,10 @@ async def set_schedule(req: ScheduleRequest, _: User = Depends(require_mutation)
     except Exception as exc:
         logger.exception("Failed to persist sync schedule: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to save sync schedule.")
+    logger.info(
+        "user=%s set sync schedule: interval=%dmin auto_gravity=%s",
+        user.username, req.interval_minutes, req.auto_gravity,
+    )
     return sync_service.get_schedule()
 
 
@@ -90,11 +94,12 @@ async def trigger_sync(
     request: Request,
     req: SyncRequest,
     background_tasks: BackgroundTasks,
-    _: User = Depends(require_mutation),
+    user: User = Depends(require_mutation),
 ) -> SyncStatusResponse:
     if sync_service.get_state().status == "running":
         raise HTTPException(status_code=409, detail="A sync is already in progress.")
 
+    logger.info("user=%s triggered manual sync", user.username)
     background_tasks.add_task(
         sync_service.run_sync,
         import_config=req.import_config,

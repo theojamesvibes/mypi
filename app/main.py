@@ -121,9 +121,14 @@ async def _ensure_encryption_key() -> None:
         await db.commit()
         settings.encryption_key = new_key
         pihole_models._fernet = None
+        # Don't log the raw key — application logs commonly land in
+        # journald, log-shippers, container logs, etc. Operators who need
+        # the key for portability can read it from the app_settings table.
         logger.warning(
             "ENCRYPTION_KEY was not set — a key has been auto-generated and saved to the "
-            "database. Add it to your .env for portability: ENCRYPTION_KEY=%s", new_key
+            "app_settings table (key='%s'). For portability, copy it from the database "
+            "into your .env as ENCRYPTION_KEY before redeploying.",
+            _ENCRYPTION_KEY_SETTING,
         )
 
 
@@ -144,18 +149,35 @@ async def _bootstrap() -> None:
             logger.info("Created initial admin user: %s (password change required on first login)", settings.initial_admin_user)
 
 
+async def _soft_load(name: str, coro) -> None:
+    """Run a startup load that may fail without taking the app down with it.
+
+    Used for optional services whose persisted settings are non-critical:
+    a transient DB hiccup at boot shouldn't stop FastAPI from coming up.
+    Hard-required loads (sync_service, session_settings, poll_settings)
+    stay outside this wrapper so misconfiguration is loud.
+    """
+    try:
+        await coro
+    except Exception as exc:
+        logger.warning("Startup load for %s failed (continuing): %s", name, exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import asyncio as _asyncio
+
     logger.info("MyPi version %s starting up", APP_VERSION)
     await _ensure_encryption_key()
     version_check_service.initialize(APP_VERSION)
     await _bootstrap()
     await sync_service.load_schedule()
-    await pushover_service.load_settings()
     await session_settings.load_settings()
-    await version_check_service.load_settings()
-    await pihole_version_check_service.load_settings()
     await poll_settings_service.load_settings()
+    # Optional services — failures here log a warning but don't abort startup.
+    await _soft_load("pushover", pushover_service.load_settings())
+    await _soft_load("version_check", version_check_service.load_settings())
+    await _soft_load("pihole_version_check", pihole_version_check_service.load_settings())
     poll_settings_service.set_reschedule_callback(
         lambda s: scheduler.reschedule_job("poll_queries", trigger="interval", seconds=s)
     )
@@ -177,6 +199,20 @@ async def lifespan(app: FastAPI):
     yield
     scheduler.shutdown(wait=False)
     await collector_shutdown()
+    # Give in-flight background tasks a brief grace window to finish
+    # cleanly before the process exits — otherwise a half-written DB row
+    # or a pending HTTP response can be cut off mid-flight.
+    if _background_tasks:
+        logger.info("Waiting up to 5s for %d background task(s) to finish.", len(_background_tasks))
+        try:
+            await _asyncio.wait(_background_tasks, timeout=5)
+        except Exception as exc:
+            logger.warning("Background task wait failed during shutdown: %s", exc)
+    # Close the SQLAlchemy engine so the underlying asyncpg pool releases
+    # its connections back to PostgreSQL instead of relying on TCP
+    # timeouts after the worker exits.
+    from app.database import engine
+    await engine.dispose()
 
 
 app = FastAPI(

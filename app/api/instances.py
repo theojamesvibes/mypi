@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,6 +13,8 @@ from app.database import get_db
 from app.models.pihole import PiholeInstance
 from app.models.user import User
 from app.schemas.instance import InstanceStatus
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/instances", tags=["instances"])
 
@@ -76,7 +79,7 @@ async def list_stale_instances(
 @router.delete("/{instance_id}", status_code=204)
 async def delete_instance(
     instance_id: uuid.UUID,
-    _: User = Depends(require_mutation),
+    user: User = Depends(require_mutation),
     db: AsyncSession = Depends(get_db),
 ):
     """Permanently delete a stale instance and all its historical data.
@@ -93,5 +96,7 @@ async def delete_instance(
             status_code=409,
             detail="Cannot delete an active instance. Remove it from pihole_instances.yml first.",
         )
+    inst_name = inst.name
     await db.delete(inst)
     await db.commit()
+    logger.info("user=%s permanently deleted stale instance id=%s name=%r", user.username, instance_id, inst_name)

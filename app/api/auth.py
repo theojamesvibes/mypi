@@ -113,6 +113,10 @@ async def create_api_key(
     db.add(api_key)
     await db.commit()
     await db.refresh(api_key)
+    logger.info(
+        "user=%s created API key id=%s name=%r read_only=%s",
+        current_user.username, api_key.id, api_key.name, api_key.is_read_only,
+    )
     return ApiKeyCreated(
         id=api_key.id,
         name=api_key.name,
@@ -148,6 +152,7 @@ async def revoke_api_key(
         raise HTTPException(status_code=404, detail="API key not found")
     key.is_active = False
     await db.commit()
+    logger.info("user=%s revoked API key id=%s name=%r", current_user.username, key.id, key.name)
     return {"detail": "API key revoked"}
 
 
@@ -178,6 +183,7 @@ async def change_password(
     user.hashed_password = hash_password(body.new_password)
     user.password_change_required = False
     await db.commit()
+    logger.info("user=%s changed their password", current_user.username)
 
     return {"detail": "Password changed successfully."}
 
@@ -196,7 +202,7 @@ async def get_session_timeout(_: User = Depends(get_current_user)) -> dict:
 @router.put("/session-timeout")
 async def set_session_timeout(
     body: SessionTimeoutRequest,
-    _: User = Depends(require_mutation),
+    user: User = Depends(require_mutation),
 ) -> dict:
     if body.timeout_minutes < 0:
         raise HTTPException(status_code=422, detail="timeout_minutes must be >= 0 (0 = never)")
@@ -205,4 +211,5 @@ async def set_session_timeout(
     except Exception as exc:
         logger.exception("Failed to save session timeout: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to save session timeout.")
+    logger.info("user=%s set session timeout to %d min", user.username, body.timeout_minutes)
     return {"timeout_minutes": session_settings.get_timeout_minutes()}
