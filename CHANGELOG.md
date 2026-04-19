@@ -4,6 +4,14 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.8.0-dev.2] — 2026-04-19
+
+### Fixed
+
+- **`/openapi.json` 500 error (and with it, the `/docs` Swagger UI page).** `app/api/domains.py` had `from __future__ import annotations` at the top. Combined with the new `@limiter.limit(...)` decorator wrapping the route handlers, FastAPI could not resolve the `DomainRequest` forward reference through slowapi's wrapper and fell back to treating the body param as a `Query`, which Pydantic then rejected during schema generation (`PydanticUserError: ... is not fully defined`). Removing the future import from this one file restores schema generation. The other API modules using `@limiter.limit` (`sync.py`, `notifications.py`, `auth.py`) never had the future import, which is why they were unaffected.
+
+---
+
 ## [1.8.0-dev.1] — 2026-04-19
 
 Development branch (`hardening-review`) — not a production release. A Docker image is published to `ghcr.io/theojamesvibes/mypi:hardening-review` on every push to this branch so it can be pulled and tested. The web UI shows a yellow **DEV** badge next to the version string while this build is running.

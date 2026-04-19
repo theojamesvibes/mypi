@@ -1,6 +1,4 @@
 """Domain allow/deny list management — per-instance direct API calls, no sync needed."""
-from __future__ import annotations
-
 import asyncio
 import logging
 import re
