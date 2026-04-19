@@ -4,6 +4,44 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.8.0-dev.6] — 2026-04-19
+
+Second pass of the Gemini adversarial review across `auth.py`, `config.py`, `main.py`, the `models/`, `services/`, and `api/` modules. Most findings were already addressed by earlier hardening work; this batch closes the 15 items that were both real and worth fixing. Items where Gemini was schema-blind, where the actual code already did more than the proposed fix, or where the suggestion was speculative future scope were rejected.
+
+### Added
+
+- **Optional split secrets — `JWT_SECRET_KEY` and `API_KEY_SALT`.** Both default to empty; when empty they fall back to `SECRET_KEY`, preserving current behaviour. Operators who want to rotate JWT signing keys without invalidating issued API keys (or vice versa) can now do so by setting the relevant variable. Wired in `app/config.py`, `app/auth.py` (`_jwt_key()` / `_api_key_salt()` helpers), and `.env.example`.
+- **Audit logging on every mutation endpoint.** Each mutation handler now logs `user=<username>` plus the action and target so the standard application log doubles as an audit trail. Covers `app/api/domains.py` (allow/deny add+remove on all instances), `app/api/auth.py` (API key create+revoke, change-password, set session timeout), `app/api/sync.py` (manual sync trigger + schedule update), `app/api/instances.py` (delete stale instance), `app/api/notifications.py` (Pushover settings save + test send), `app/api/poll_settings.py` (poll interval set).
+- **Pushover credentials encrypted at rest.** `app/services/pushover.py` now Fernet-encrypts `app_token` and `user_key` before persisting them to `app_settings`, using the same `_get_fernet()` key already used for `pihole_instances.api_password`. Legacy plaintext rows are detected via `InvalidToken` on load and transparently re-encrypted on the next save (no migration required).
+- **Alembic migration `0010_api_key_user_cascade.py`.** Adds `ON DELETE CASCADE` to the `api_keys.user_id` foreign key. The ORM-side relationship already declared `cascade="all, delete-orphan"`, so the in-process behaviour is unchanged — but a direct DB-level user delete (psql, data-fix script) would previously have failed with a FK violation. Schema now matches ORM intent.
+
+### Fixed
+
+- **`_readonly_flag` ContextVar reset race in `app/auth.py::get_current_user`.** The flag was reset to `False` at the *top* of the function, which meant a nested resolution from `get_current_user_optional` (when both deps are wired into the same request) could stomp the parent call's value if it ran second. Now resolved exactly once, at the *end*, based on which auth method actually authenticated the principal — eliminates the cross-call interference.
+- **Unmasked `ENCRYPTION_KEY` no longer logged.** When `_ensure_encryption_key` auto-generates a new key (no `ENCRYPTION_KEY` env var, no row in `app_settings`), the warning that prompts the operator to pin it in `.env` no longer includes the raw key in the log line. Operators now read the key from the `app_settings` table instead.
+- **YAML load failures no longer crash startup.** `app/config.py::load_instance_configs` wraps `yaml.safe_load(f)` (and the underlying file open) in a `try/except (OSError, yaml.YAMLError)`, logs a warning, and returns an empty list. A malformed `pihole_instances.yml` now starts the app with no instances configured rather than erroring out before the lifespan even runs.
+- **`api_keys.user_id` foreign key now has `ON DELETE CASCADE`** at the DB layer (model + migration `0010` above).
+- **Persistent Pi-hole clients are evicted when an instance is deactivated.** `app/services/config_loader.py::sync_instances` now collects the IDs of every instance it deactivates (removed from `pihole_instances.yml`) and calls `client_manager.close_client(...)` for each after commit. Previously the client_manager would keep an open authenticated session against a Pi-hole that was no longer part of the active set.
+- **`app/services/sync_service.py`: untracked startup `asyncio.create_task`.** `load_schedule()` re-armed the `_scheduled_loop(...)` after a restart but discarded the returned task. The bare task reference could be garbage-collected mid-sleep, AND a subsequent `set_schedule` user action could not cancel it (it would arm a *second* loop alongside the first). Now stashed in the module-level `_schedule_task` so `set_schedule` can cancel-and-replace it.
+- **`app/services/sync_service.py`: untracked `asyncio.create_task` in `notify_blocklist_count` auto-sync.** The blocklist-changed auto-sync trigger called `asyncio.create_task(run_sync(...))` and discarded the task; any uncaught exception inside `run_sync` was therefore silently swallowed. Replaced with `_spawn(...)` so failures get logged via the existing `_done` callback.
+- **`app/services/pushover.py::save_settings` updated in-memory state *before* DB verification.** If the verify-write read-back failed (DB drift, transient error, schema mismatch), the in-memory globals had already been overwritten with the incoming values while the persisted row still held the previous values — the next `load_settings()` would then silently flip the in-memory state back. The global assignment is now strictly *after* the verify block, so a verify failure raises before any in-memory drift can occur.
+- **`app/api/poll_settings.py::save_poll_settings` no longer echoes the raw exception.** The 500 response previously included `f"Failed to save poll settings: {exc}"`, which can leak DB schema names, column names, or SQL fragments to the caller. Logged via `logger.exception(...)` for the operator and a generic detail returned to the client (matches the pattern already used in `app/api/sync.py` for `set_schedule`).
+- **`app/main.py` lifespan shutdown leaves no DB connections dangling.** After the scheduler stops and the collector shuts down, the lifespan now waits up to 5 s for any tracked background tasks to finish, then calls `engine.dispose()` to release the asyncpg pool back to PostgreSQL instead of relying on TCP timeouts after the worker exits.
+- **Optional startup loads now soft-fail instead of taking the app down.** A new `_soft_load(name, coro)` wrapper in `app/main.py` guards `pushover_service.load_settings()`, `version_check_service.load_settings()`, and `pihole_version_check_service.load_settings()` — all three are non-critical (services degrade gracefully without their persisted state), so a transient DB hiccup at boot now logs a warning and continues. Hard-required loads (`sync_service.load_schedule`, `session_settings.load_settings`, `poll_settings_service.load_settings`) deliberately stay outside the wrapper so misconfiguration is still loud.
+
+### Audit items that did **not** require changes
+
+- **API-key `last_used_at` commit on every authenticated request** — kept as a commit (not a flush). The audit-trail value of having `last_used_at` survive a request failure outweighs the per-request commit cost on this workload (sub-1 rps web UI + low-frequency iOS polling).
+- **Legacy SHA-256 → HMAC-SHA256 transparent upgrade** — race claim was a false positive. The upgrade path is idempotent: two concurrent requests with the same legacy key would both attempt to set the same final hash and `key_hash_algo`, no conflict.
+- **Backfill loop in `app/services/collector.py::backfill_queries_for`** — Gemini's "fix" was strictly less capable than the existing implementation, which already does hourly window splitting + paginated reads up to 20 × 10k pages per window with a no-progress guard. Gemini was working from a truncated paste.
+- **Missing Alembic migrations / `RevokedToken` cleanup / `ON DELETE CASCADE` on `pihole_instances` / compound indexes on `query_logs` and `stats_snapshots` / TOCTOU race on `/api/sync` POST** — all already implemented (migrations 0001–0009; cleanup at `collector.py:399-401`; cascades at `models/pihole.py:94`/`:119`; compound indexes at `models/pihole.py:110`/`:135`; `asyncio.Lock` check at `sync_service.py:269-272`).
+
+### Internal
+
+- `VERSION` → `1.8.0-dev.6`. README badge updated to match.
+
+---
+
 ## [1.8.0-dev.5] — 2026-04-19
 
 Follow-up to Grok's full architecture and security review. Verified ~11 items as already correct (JWT cookie flags, `SECRET_KEY` enforcement, bcrypt, rate limiting, query-log indexes, etc.) and closed the three meaningful gaps that remained.

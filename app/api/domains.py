@@ -103,7 +103,7 @@ async def get_domain_status(
 async def add_to_deny(
     request: Request,
     req: DomainRequest,
-    _: User = Depends(require_mutation),
+    user: User = Depends(require_mutation),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Add domain to exact deny list on all instances. Removes allow override first."""
@@ -116,6 +116,7 @@ async def add_to_deny(
         await client.add_deny_exact(domain)
 
     result = await _apply_to_all(instances, _deny)
+    logger.info("user=%s added %s to deny list (ok=%d/%d)", user.username, domain, result["ok_count"], result["total"])
     if result["ok_count"] == 0:
         raise HTTPException(status_code=502, detail="Operation failed on all instances.")
     return result
@@ -126,7 +127,7 @@ async def add_to_deny(
 async def remove_from_deny(
     request: Request,
     domain: str,
-    _: User = Depends(require_mutation),
+    user: User = Depends(require_mutation),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Remove domain from exact deny list on all instances."""
@@ -135,6 +136,7 @@ async def remove_from_deny(
     instances = await _get_all_active(db)
 
     result = await _apply_to_all(instances, lambda client, inst: client.remove_deny_exact(domain))
+    logger.info("user=%s removed %s from deny list (ok=%d/%d)", user.username, domain, result["ok_count"], result["total"])
     if result["ok_count"] == 0:
         raise HTTPException(status_code=502, detail="Operation failed on all instances.")
     return result
@@ -145,7 +147,7 @@ async def remove_from_deny(
 async def add_to_allow(
     request: Request,
     req: DomainRequest,
-    _: User = Depends(require_mutation),
+    user: User = Depends(require_mutation),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Add domain to exact allow list on all instances (overrides gravity/deny). Removes deny entry first."""
@@ -158,6 +160,7 @@ async def add_to_allow(
         await client.add_allow_exact(domain)
 
     result = await _apply_to_all(instances, _allow)
+    logger.info("user=%s added %s to allow list (ok=%d/%d)", user.username, domain, result["ok_count"], result["total"])
     if result["ok_count"] == 0:
         raise HTTPException(status_code=502, detail="Operation failed on all instances.")
     return result
@@ -168,7 +171,7 @@ async def add_to_allow(
 async def remove_from_allow(
     request: Request,
     domain: str,
-    _: User = Depends(require_mutation),
+    user: User = Depends(require_mutation),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Remove domain from exact allow list on all instances."""
@@ -177,6 +180,7 @@ async def remove_from_allow(
     instances = await _get_all_active(db)
 
     result = await _apply_to_all(instances, lambda client, inst: client.remove_allow_exact(domain))
+    logger.info("user=%s removed %s from allow list (ok=%d/%d)", user.username, domain, result["ok_count"], result["total"])
     if result["ok_count"] == 0:
         raise HTTPException(status_code=502, detail="Operation failed on all instances.")
     return result

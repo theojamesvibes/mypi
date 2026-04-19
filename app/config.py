@@ -16,6 +16,12 @@ class Settings(BaseSettings):
 
     database_url: str
     secret_key: str
+    # Optional split secrets — when set, used in place of secret_key for the
+    # respective use. When empty, both fall back to secret_key (preserves
+    # current behaviour). Rotating one without the other lets an operator
+    # invalidate JWT sessions without nuking issued API keys (or vice versa).
+    jwt_secret_key: str = ""
+    api_key_salt: str = ""
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 8  # 8 hours
 
@@ -74,8 +80,16 @@ def load_instance_configs(path: str | None = None) -> list[PiholeInstanceConfig]
     p = Path(config_path)
     if not p.exists():
         return []
-    with open(p) as f:
-        data = yaml.safe_load(f)
+    try:
+        with open(p) as f:
+            data = yaml.safe_load(f)
+    except (OSError, yaml.YAMLError) as exc:
+        import logging
+        logging.getLogger(__name__).warning(
+            "Could not load Pi-hole instances from %s: %s — starting with no instances.",
+            config_path, exc,
+        )
+        return []
     if not data or "instances" not in data:
         return []
     instances = []

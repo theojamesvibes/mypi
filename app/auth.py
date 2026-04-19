@@ -32,13 +32,23 @@ def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(plain.encode(), hashed.encode())
 
 
+def _jwt_key() -> str:
+    """JWT signing key — settings.jwt_secret_key if set, else secret_key."""
+    return settings.jwt_secret_key or settings.secret_key
+
+
+def _api_key_salt() -> str:
+    """HMAC key for API-key hashing — settings.api_key_salt if set, else secret_key."""
+    return settings.api_key_salt or settings.secret_key
+
+
 def create_access_token(subject: str, expire_minutes: int | None = None) -> str:
     minutes = expire_minutes if expire_minutes is not None else settings.access_token_expire_minutes
     expire = datetime.now(timezone.utc) + timedelta(minutes=minutes)
     jti = str(uuid.uuid4())
     return jwt.encode(
         {"sub": subject, "exp": expire, "jti": jti},
-        settings.secret_key,
+        _jwt_key(),
         algorithm=settings.algorithm,
     )
 
@@ -46,7 +56,7 @@ def create_access_token(subject: str, expire_minutes: int | None = None) -> str:
 def _decode_token_claims(token: str) -> dict | None:
     """Decode a JWT and return its full claims dict, or None if invalid."""
     try:
-        return jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+        return jwt.decode(token, _jwt_key(), algorithms=[settings.algorithm])
     except JWTError:
         return None
 
@@ -57,8 +67,8 @@ def _decode_token(token: str) -> str | None:
 
 
 def hash_api_key(raw: str) -> str:
-    """HMAC-SHA256 keyed on SECRET_KEY — prevents offline cracking of a DB dump."""
-    return hmac.new(settings.secret_key.encode(), raw.encode(), hashlib.sha256).hexdigest()
+    """HMAC-SHA256 keyed on the API-key salt — prevents offline cracking of a DB dump."""
+    return hmac.new(_api_key_salt().encode(), raw.encode(), hashlib.sha256).hexdigest()
 
 
 def _hash_api_key_sha256_legacy(raw: str) -> str:
@@ -89,9 +99,11 @@ async def get_current_user(
     session_token: str | None = Cookie(default=None),
 ) -> User:
     user: User | None = None
-    # Reset on each request; `require_mutation` checks this after the
-    # principal has been identified. Only API-key auth can set it true.
-    _readonly_flag.set(False)
+    # Determined as we walk auth methods. We set `_readonly_flag` exactly
+    # once at the end so a nested resolution from `get_current_user_optional`
+    # (when both that dep and `get_current_user` resolve in the same request)
+    # cannot stomp the parent call's value.
+    is_readonly = False
 
     # ── Bearer JWT ────────────────────────────────────────────────────────────
     if authorization and authorization.startswith("Bearer "):
@@ -131,7 +143,7 @@ async def get_current_user(
                 api_key.last_used_at = datetime.now(timezone.utc)
                 await db.commit()
                 if api_key.is_read_only:
-                    _readonly_flag.set(True)
+                    is_readonly = True
 
     # ── Session cookie JWT ────────────────────────────────────────────────────
     if user is None and session_token:
@@ -146,6 +158,7 @@ async def get_current_user(
 
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    _readonly_flag.set(is_readonly)
     return user
 
 
