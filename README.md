@@ -1,6 +1,6 @@
 # MyPi
 [![build](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/docker-publish.yml?style=flat-square)](https://github.com/theojamesvibes/mypi/actions)
-[![version](https://img.shields.io/badge/version-1.8.0--dev.6-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
+[![version](https://img.shields.io/badge/version-1.8.0--dev.7-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
 [![platform](https://img.shields.io/badge/platform-linux%2Famd64%20|%20linux%2Farm64-teal?style=flat-square)](https://github.com/theojamesvibes/mypi/pkgs/container/mypi)
 
 > **⚠️ Vibe Code Disclosure**
@@ -69,7 +69,7 @@ A self-hosted dashboard that consolidates up to 10 locally running [Pi-hole](htt
 - **Version Check panel** — shows running vs latest version, last check time; version badge in topbar turns green/red; checks GitHub once per hour (can be disabled)
 
 ### API & Auth
-- Full REST API under `/api/` with auto-generated OpenAPI docs (Swagger UI at `/docs`, ReDoc at `/redoc`)
+- Full REST API under `/api/` with auto-generated OpenAPI docs (Swagger UI at `/docs`, ReDoc at `/redoc` — opt-in via `ENABLE_API_DOCS=true`)
 - Username/password login for the web UI (JWT session cookie)
 - API key auth (`X-API-Key` header) for mobile clients and automation
 - Version badge in topbar is green (up to date) or red (update available), links to GitHub releases
@@ -195,7 +195,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 | `DATA_RETENTION_DAYS` | `30` | Days of history to retain |
 | `SECURE_COOKIES` | `false` | Adds the `Secure` flag to session cookies and turns on HSTS. Enable when MyPi is behind a TLS-terminating reverse proxy. |
 | `VERIFY_PIHOLE_SSL` | `false` | Verify TLS certificates when connecting to Pi-hole instances. Leave `false` for self-signed certs on a trusted LAN. |
-| `ENABLE_API_DOCS` | `true` | Expose Swagger UI at `/docs` and the OpenAPI schema at `/openapi.json`. Set to `false` when MyPi is reachable from anything untrusted. |
+| `ENABLE_API_DOCS` | `false` | Expose Swagger UI at `/docs`, ReDoc at `/redoc`, and the OpenAPI schema at `/openapi.json`. Default flipped to `false` in 1.8.0-dev.7 — fail-closed posture. Set to `true` when you actively need the docs (local development, regenerating an iOS OpenAPI client, etc.). |
 
 ### Pi-hole instances (`pihole_instances.yml`)
 
@@ -263,7 +263,7 @@ The sync schedule and last sync result are stored in the database and survive co
 
 ## REST API
 
-The full API is available under `/api/`. Interactive documentation is at **`/docs`** (Swagger UI) and **`/redoc`**.
+The full API is available under `/api/`. Interactive documentation is at **`/docs`** (Swagger UI) and **`/redoc`** when `ENABLE_API_DOCS=true` is set in `.env` (default is `false` since 1.8.0-dev.7).
 
 ### Authentication
 
@@ -460,7 +460,7 @@ Verified ~11 items as already correct (JWT cookie flags `HttpOnly` + `Secure`-wh
 
 | Grok finding | Change |
 |---|---|
-| **`/openapi.json` exposed unauthenticated.** | Gated behind `ENABLE_API_DOCS` (default `true`, preserves current behaviour). Setting `ENABLE_API_DOCS=false` disables both `/docs` and `/openapi.json`. |
+| **`/openapi.json` exposed unauthenticated.** | Gated behind `ENABLE_API_DOCS`; default flipped to `false` in 1.8.0-dev.7 (fail-closed). Setting `ENABLE_API_DOCS=true` re-enables `/docs`, `/redoc`, and `/openapi.json` together. |
 | **No Content-Security-Policy header.** | Added to the security-headers middleware on every response. Allows `cdn.jsdelivr.net` for Bootstrap / Chart.js / Swagger UI, `'unsafe-inline'` for the theme pre-paint script, and denies framing / arbitrary external script origins. |
 | **No Dependabot configuration.** | Added `.github/dependabot.yml` on a weekly schedule covering `pip`, `github-actions`, and `docker`. |
 
