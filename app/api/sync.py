@@ -2,10 +2,11 @@ import asyncio
 
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from app.auth import get_current_user
+from app.auth import get_current_user, require_mutation
+from app.limiter import limiter
 from app.models.user import User
 from app.services import sync_service
 
@@ -67,7 +68,7 @@ async def get_schedule(_: User = Depends(get_current_user)) -> dict:
 
 
 @router.put("/schedule")
-async def set_schedule(req: ScheduleRequest, _: User = Depends(get_current_user)) -> dict:
+async def set_schedule(req: ScheduleRequest, _: User = Depends(require_mutation)) -> dict:
     try:
         await sync_service.set_schedule(
             interval_minutes=req.interval_minutes,
@@ -84,10 +85,12 @@ async def set_schedule(req: ScheduleRequest, _: User = Depends(get_current_user)
 
 
 @router.post("", response_model=SyncStatusResponse)
+@limiter.limit("10/minute")
 async def trigger_sync(
+    request: Request,
     req: SyncRequest,
     background_tasks: BackgroundTasks,
-    _: User = Depends(get_current_user),
+    _: User = Depends(require_mutation),
 ) -> SyncStatusResponse:
     if sync_service.get_state().status == "running":
         raise HTTPException(status_code=409, detail="A sync is already in progress.")

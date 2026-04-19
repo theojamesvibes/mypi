@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 _last_seen_ts: dict[str, float] = {}
 
 # Previous poll status — used to detect online→offline transitions for alerts.
+# Pruned alongside `_last_seen_ts` when an instance is removed (see
+# `poll_queries`), so this doesn't accumulate entries for deactivated
+# instances.
 _prev_status: dict[str, str] = {}
 
 # Consecutive offline polls already retried before the first alert fires.
@@ -35,6 +38,25 @@ _offline_retry_count: dict[str, int] = {}
 # Number of offline alerts already sent per instance in the current outage period.
 # Resets to 0 when the instance recovers.  Used to enforce offline_alert_max_count.
 _offline_alert_count: dict[str, int] = {}
+
+# Fire-and-forget Pushover notification tasks. asyncio keeps only weak refs
+# to bare `create_task(...)` — stash each task here and log any exception so
+# that a failed notify doesn't silently vanish.
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _spawn(coro) -> None:
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+
+    def _done(t: asyncio.Task) -> None:
+        _background_tasks.discard(t)
+        if not t.cancelled():
+            exc = t.exception()
+            if exc is not None:
+                logger.exception("collector background task failed", exc_info=exc)
+
+    task.add_done_callback(_done)
 
 
 async def _get_active_instances() -> list[PiholeInstance]:
@@ -105,7 +127,7 @@ async def _poll_stats_for(instance: PiholeInstance) -> None:
                 current = _offline_alert_count.get(key, 0)
                 if current == 0 or max_count == 0 or current < max_count:
                     _offline_alert_count[key] = current + 1
-                    asyncio.create_task(pushover_service.notify_instance_offline(instance.name))
+                    _spawn(pushover_service.notify_instance_offline(instance.name))
     elif snapshot.status == "online" and prev == "offline":
         # Recovery: alert only if we had already sent an offline alert (avoids spurious
         # "back online" pings for blips that resolved before retries were exhausted).
@@ -113,7 +135,7 @@ async def _poll_stats_for(instance: PiholeInstance) -> None:
         _offline_retry_count.pop(key, None)
         _offline_alert_count.pop(key, None)
         if already_alerted:
-            asyncio.create_task(pushover_service.notify_instance_back_online(instance.name))
+            _spawn(pushover_service.notify_instance_back_online(instance.name))
     _prev_status[key] = snapshot.status
 
     # Notify sync service if this is the master (enables auto-gravity detection)
@@ -223,6 +245,15 @@ async def poll_queries() -> None:
     for key in list(_last_seen_ts):
         if key not in active_keys:
             del _last_seen_ts[key]
+    for key in list(_prev_status):
+        if key not in active_keys:
+            del _prev_status[key]
+    for key in list(_offline_retry_count):
+        if key not in active_keys:
+            del _offline_retry_count[key]
+    for key in list(_offline_alert_count):
+        if key not in active_keys:
+            del _offline_alert_count[key]
     for key in list(_last_seen_ts):
         if key not in active_keys:
             await close_client(key)

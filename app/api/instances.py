@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.stats import _latest_snapshots_by_instance
-from app.auth import get_current_user
+from app.auth import get_current_user, require_mutation
 from app.database import get_db
 from app.models.pihole import PiholeInstance
 from app.models.user import User
@@ -76,7 +76,7 @@ async def list_stale_instances(
 @router.delete("/{instance_id}", status_code=204)
 async def delete_instance(
     instance_id: uuid.UUID,
-    _: User = Depends(get_current_user),
+    _: User = Depends(require_mutation),
     db: AsyncSession = Depends(get_db),
 ):
     """Permanently delete a stale instance and all its historical data.

@@ -4,6 +4,34 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.8.0-dev.1] — 2026-04-19
+
+Development branch (`hardening-review`) — not a production release. A Docker image is published to `ghcr.io/theojamesvibes/mypi:hardening-review` on every push to this branch so it can be pulled and tested. The web UI shows a yellow **DEV** badge next to the version string while this build is running.
+
+This batch applies the security + efficiency review done after the mypi-ios 0.1.0 ship:
+
+### Added
+
+- **Read-only API key scope.** New `is_read_only` column on `api_keys` (migration `0009`). Key creation exposes a `is_read_only: bool` field in the POST body and in the response. A new `require_mutation` dependency rejects read-only keys from every mutation endpoint with HTTP 403. Session cookies and bearer JWTs are always allowed.
+- **Security headers middleware.** `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: same-origin` on every response. `Strict-Transport-Security` is added when `SECURE_COOKIES=true` (i.e. when MyPi is known to be behind TLS).
+- **Rate limits on mutation endpoints.** `/api/sync` (10/min), `/api/domains/{deny,allow}` (30/min each), `/api/notifications/test` (5/min — protects Pushover quota), `/api/notifications/validate` (10/min), `/api/auth/change-password` (5/min — brute-force hardening).
+
+### Changed
+
+- **`verify_pihole_ssl` now defaults to `True`.** Existing deployments that rely on self-signed Pi-hole certs must explicitly set `VERIFY_PIHOLE_SSL=false` in `.env`. Failing-closed is the correct posture; the prior default would silently accept a MITM on the LAN.
+- **Background tasks** spawned with `asyncio.create_task(...)` in `main.py`, `sync_service.py`, and `collector.py` now go through a `_spawn(...)` / `_track_task(...)` helper that stores a strong reference until completion and logs any uncaught exception. Previously the event loop only held weak references, so GC could drop a task mid-run and an exception could vanish silently.
+
+### Fixed
+
+- **`/api/auth/logout` Bearer-token revocation.** The `authorization` param was declared as `Cookie(default=None)` instead of `Header(default=None)`, so logging out via `Authorization: Bearer …` never added the JTI to `revoked_tokens`. Web-UI cookie logout was unaffected.
+- **Collector dict leak.** `_prev_status`, `_offline_retry_count`, `_offline_alert_count` now pruned alongside `_last_seen_ts` when an instance is deactivated (previously only `_last_seen_ts` was cleaned; the others accumulated stale entries for removed instances).
+
+### Removed
+
+- Dead code: `PiholeClient.get_top_stats`, `PiholeClient.get_history`, `PiholeTopStats` dataclass (unused, and `get_history` referenced an undefined `PiholeHistoryBucket` class — would have raised `NameError` if ever called); `Settings.validate_encryption_key_at_startup` (superseded by `main.py:_ensure_encryption_key`); the STARTUP diagnostic block in `sync_service.load_schedule` that dumped `app_settings` and round-tripped a write on every boot.
+
+---
+
 ## [1.7.6] — 2026-04-17
 
 ### Fixed

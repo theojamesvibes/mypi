@@ -5,13 +5,14 @@ import asyncio
 import logging
 import re
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import get_current_user
+from app.auth import get_current_user, require_mutation
 from app.database import get_db
+from app.limiter import limiter
 from app.models.pihole import PiholeInstance
 from app.models.user import User
 from app.services import client_manager
@@ -100,9 +101,11 @@ async def get_domain_status(
 
 
 @router.post("/deny")
+@limiter.limit("30/minute")
 async def add_to_deny(
+    request: Request,
     req: DomainRequest,
-    _: User = Depends(get_current_user),
+    _: User = Depends(require_mutation),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Add domain to exact deny list on all instances. Removes allow override first."""
@@ -121,9 +124,11 @@ async def add_to_deny(
 
 
 @router.delete("/deny/{domain:path}")
+@limiter.limit("30/minute")
 async def remove_from_deny(
+    request: Request,
     domain: str,
-    _: User = Depends(get_current_user),
+    _: User = Depends(require_mutation),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Remove domain from exact deny list on all instances."""
@@ -138,9 +143,11 @@ async def remove_from_deny(
 
 
 @router.post("/allow")
+@limiter.limit("30/minute")
 async def add_to_allow(
+    request: Request,
     req: DomainRequest,
-    _: User = Depends(get_current_user),
+    _: User = Depends(require_mutation),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Add domain to exact allow list on all instances (overrides gravity/deny). Removes deny entry first."""
@@ -159,9 +166,11 @@ async def add_to_allow(
 
 
 @router.delete("/allow/{domain:path}")
+@limiter.limit("30/minute")
 async def remove_from_allow(
+    request: Request,
     domain: str,
-    _: User = Depends(get_current_user),
+    _: User = Depends(require_mutation),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Remove domain from exact allow list on all instances."""

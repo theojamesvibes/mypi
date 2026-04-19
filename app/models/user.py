@@ -33,6 +33,7 @@ class ApiKey(Base):
     key_hash: Mapped[str] = mapped_column(String(256), unique=True, nullable=False)
     key_hash_algo: Mapped[str] = mapped_column(String(16), nullable=False, server_default="sha256")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_read_only: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

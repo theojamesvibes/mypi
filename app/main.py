@@ -50,6 +50,28 @@ APP_VERSION = _version_file.read_text().strip() if _version_file.exists() else "
 
 scheduler = AsyncIOScheduler()
 
+# Long-lived set of fire-and-forget background tasks. The event loop only
+# holds *weak* references to tasks created with `asyncio.create_task(...)`,
+# so without keeping a strong reference here the task can be garbage-
+# collected mid-run. Every helper that spawns a one-shot task should call
+# `_track_task(...)` instead of `asyncio.create_task(...)` directly.
+_background_tasks: set = set()
+
+
+def _track_task(coro) -> None:
+    import asyncio as _asyncio
+    task = _asyncio.create_task(coro)
+    _background_tasks.add(task)
+
+    def _done(t: _asyncio.Task) -> None:
+        _background_tasks.discard(t)
+        if not t.cancelled():
+            exc = t.exception()
+            if exc is not None:
+                logger.exception("Background task failed", exc_info=exc)
+
+    task.add_done_callback(_done)
+
 
 _ENCRYPTION_KEY_SETTING = "encryption_key"
 
@@ -144,12 +166,13 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(version_check_service.check_now, "interval", hours=1, id="version_check")
     scheduler.add_job(pihole_version_check_service.check_now, "interval", hours=1, id="pihole_version_check")
     scheduler.start()
-    # Run initial checks in the background without blocking startup
-    import asyncio as _asyncio
-    _asyncio.create_task(version_check_service.check_now())
-    _asyncio.create_task(pihole_version_check_service.check_now())
-    _asyncio.create_task(fetch_all_instance_versions())
-    _asyncio.create_task(backfill_all_instances())
+    # Run initial checks in the background without blocking startup. Using
+    # `_track_task` (not bare `create_task`) keeps a strong ref so the tasks
+    # aren't GC'd and logs exceptions instead of swallowing them.
+    _track_task(version_check_service.check_now())
+    _track_task(pihole_version_check_service.check_now())
+    _track_task(fetch_all_instance_versions())
+    _track_task(backfill_all_instances())
     logger.info("Scheduler started (stats every %ds, queries every %ds).",
                 settings.stats_poll_interval, poll_settings_service.get_interval_seconds())
     yield
@@ -166,6 +189,25 @@ app = FastAPI(
 )
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+# ── Security headers ──────────────────────────────────────────────────────────
+#
+# MyPi is a self-hosted dashboard — there's no legitimate reason for another
+# origin to frame it, load its content-type-sniffing, or exfiltrate its
+# referrer. Add a small set of defensive headers by default.
+# HSTS is opt-in (settings.secure_cookies) so we don't break local HTTP setups.
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    if settings.secure_cookies:
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+        )
+    return response
 
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
