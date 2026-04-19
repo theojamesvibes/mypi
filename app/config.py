@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     pihole_config_path: str = "/app/pihole_instances.yml"
     max_pihole_instances: int = 10
 
+    # Expose FastAPI's auto-generated Swagger UI (/docs) and OpenAPI schema
+    # (/openapi.json). Both are useful for development and for driving iOS-side
+    # client generation, but they reveal the full API surface unauthenticated.
+    # Set to false when MyPi is reachable from anything untrusted.
+    enable_api_docs: bool = True
+
     stats_poll_interval: int = 60
     queries_poll_interval: int = 10
     data_retention_days: int = 30

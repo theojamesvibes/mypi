@@ -5,6 +5,8 @@
 
 > **⚠️ Vibe Code Disclosure**
 > This project was generated entirely through AI-assisted development (Claude Code / Anthropic). The code has been reviewed and iterated on collaboratively, but it has not been audited for production use. Deploy on trusted local networks only, review the code before relying on it, and proceed with the usual amount of healthy scepticism you'd apply to any AI-generated codebase.
+>
+> **Independent reviews.** Two LLM-based audits have been applied as part of the `hardening-review` branch — by **Google Gemini** (adversarial security review) and **Grok** (full architecture + security review). Both are documented in [Independent reviews](#independent-reviews) below, along with what was verified as already-correct and what was changed in response. These reviews are not a substitute for a professional audit.
 
 A self-hosted dashboard that consolidates up to 10 locally running [Pi-hole](https://pi-hole.net/) v6 instances into a single screen, paired with a REST API designed for iOS app consumption.
 
@@ -191,6 +193,9 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 | `STATS_POLL_INTERVAL` | `60` | Seconds between stats polls |
 | `QUERIES_POLL_INTERVAL` | `10` | Seconds between query log polls |
 | `DATA_RETENTION_DAYS` | `30` | Days of history to retain |
+| `SECURE_COOKIES` | `false` | Adds the `Secure` flag to session cookies and turns on HSTS. Enable when MyPi is behind a TLS-terminating reverse proxy. |
+| `VERIFY_PIHOLE_SSL` | `false` | Verify TLS certificates when connecting to Pi-hole instances. Leave `false` for self-signed certs on a trusted LAN. |
+| `ENABLE_API_DOCS` | `true` | Expose Swagger UI at `/docs` and the OpenAPI schema at `/openapi.json`. Set to `false` when MyPi is reachable from anything untrusted. |
 
 ### Pi-hole instances (`pihole_instances.yml`)
 
@@ -431,6 +436,33 @@ uvicorn app.main:app --reload --port 8080
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
+
+---
+
+## Independent reviews
+
+MyPi has been reviewed by two external LLM-based audits as part of the `hardening-review` branch. Each review was triaged by Claude Code against the live source: items already correct were recorded as verified, items with real gaps were fixed. Neither review is a substitute for a professional audit.
+
+### Google Gemini — adversarial security review (2026-04-19)
+
+Focused on four areas. Outcome:
+
+| Gemini ask | Outcome |
+|---|---|
+| **Teleporter atomic operations** — does a mid-broadcast failure leave a replica broken? | Pi-hole v6's `/api/teleporter` is a single commit point with no server-side staging, so upload-then-swap is not possible on the Pi-hole side. Addressed on the MyPi side: the master's ZIP export is now validated client-side (min size, valid archive, per-member CRC, non-empty members) before any replica receives it — see `sync_service._validate_teleporter_zip`. |
+| **Error isolation in polling** — does one slow Pi-hole block the others? | Verified correct. `collector.poll_stats` / `poll_queries` / `fetch_all_instance_versions` all `asyncio.gather(*[...])` over per-instance coroutines, each wrapped in `try/except Exception`. |
+| **Sensitive data exposure** — can a token leak to logs, API responses, or the frontend? | Verified correct. `PiholeInstance.api_password` uses Fernet encryption at rest (`EncryptedString`, migration `0006`). No API response schema exposes passwords. Every log call uses `self.base_url` or `instance.name`, never the password. |
+| **Dependency / Docker hardening** — pinning and non-root runtime. | `requirements.txt` was already fully pinned with `==`. Container now runs as a non-root user (UID 1000) and has a `HEALTHCHECK` against `/api/health`. |
+
+### Grok — full architecture and security review (2026-04-19)
+
+Verified ~11 items as already correct (JWT cookie flags `HttpOnly` + `Secure`-when-TLS + `SameSite=Lax`; `SECRET_KEY` required at boot; bcrypt; rate limiting on mutation endpoints; encrypted Pushover creds; query-log indexes; etc.). Three meaningful gaps led to additional hardening in `1.8.0-dev.5`:
+
+| Grok finding | Change |
+|---|---|
+| **`/openapi.json` exposed unauthenticated.** | Gated behind `ENABLE_API_DOCS` (default `true`, preserves current behaviour). Setting `ENABLE_API_DOCS=false` disables both `/docs` and `/openapi.json`. |
+| **No Content-Security-Policy header.** | Added to the security-headers middleware on every response. Allows `cdn.jsdelivr.net` for Bootstrap / Chart.js / Swagger UI, `'unsafe-inline'` for the theme pre-paint script, and denies framing / arbitrary external script origins. |
+| **No Dependabot configuration.** | Added `.github/dependabot.yml` on a weekly schedule covering `pip`, `github-actions`, and `docker`. |
 
 ---
 
