@@ -221,10 +221,12 @@ app = FastAPI(
     version=APP_VERSION,
     lifespan=lifespan,
     docs_url=None,
-    # When settings.enable_api_docs is False, disable the auto-generated
-    # OpenAPI schema endpoint. Our custom /docs route (below) also checks
-    # the flag, so both routes disappear together.
+    # When settings.enable_api_docs is False, disable both the OpenAPI
+    # schema endpoint and ReDoc (FastAPI auto-mounts /redoc otherwise,
+    # which would 500 without the schema). Our custom /docs route below
+    # checks the same flag, so all three routes disappear together.
     openapi_url="/openapi.json" if settings.enable_api_docs else None,
+    redoc_url="/redoc" if settings.enable_api_docs else None,
 )
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -273,6 +275,7 @@ async def _security_headers(request: Request, call_next):
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
 templates.env.globals["app_version"] = APP_VERSION
+templates.env.globals["enable_api_docs"] = settings.enable_api_docs
 
 # API routers
 app.include_router(auth_router.router)
