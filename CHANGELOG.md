@@ -4,6 +4,18 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.8.0-dev.7] — 2026-04-19
+
+Pre-1.8.0 stabilisation pass. Single behaviour change ahead of the soak window.
+
+### Changed
+
+- **`ENABLE_API_DOCS` default flipped to `false`.** Recommended by Grok in the post-dev.6 review pass — fail-closed posture for the upcoming 1.8.0 stable. Setting `ENABLE_API_DOCS=true` in `.env` re-enables `/docs` (Swagger UI), `/redoc`, and `/openapi.json` as a unit; leaving it unset gives all three a 404. Wired in `app/config.py`, `app/main.py` (both `openapi_url=` and `redoc_url=` are now gated — previously `redoc_url` defaulted to `/redoc` and would have served a broken page once the schema endpoint was disabled), `app/templates/settings.html` (the API card hides the `/docs` and `/redoc` links and shows a hint about the env var instead), `.env.example`, and the `README.md` env-var table + REST API section.
+
+  **Upgrade note for anyone driving the iOS OpenAPI client off this server:** add `ENABLE_API_DOCS=true` to your `.env` before pulling 1.8.0-dev.7 — the schema endpoint will otherwise 404 and client regeneration will fail.
+
+---
+
 ## [1.8.0-dev.6] — 2026-04-19
 
 Second pass of the Gemini adversarial review across `auth.py`, `config.py`, `main.py`, the `models/`, `services/`, and `api/` modules. Most findings were already addressed by earlier hardening work; this batch closes the 15 items that were both real and worth fixing. Items where Gemini was schema-blind, where the actual code already did more than the proposed fix, or where the suggestion was speculative future scope were rejected.
