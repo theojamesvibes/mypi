@@ -41,7 +41,7 @@ async def get_settings(_: User = Depends(get_current_user)) -> dict:
 @router.put("/settings")
 async def save_settings(
     req: PushoverSettingsRequest,
-    _: User = Depends(require_mutation),
+    user: User = Depends(require_mutation),
 ) -> dict:
     existing = pushover_service.get_settings_raw()
     # Only overwrite credentials if the client submitted non-empty values;
@@ -63,14 +63,16 @@ async def save_settings(
     except Exception as exc:
         logger.exception("Failed to persist Pushover settings: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to save notification settings.")
+    logger.info("user=%s updated Pushover settings (enabled=%s)", user.username, req.enabled)
     return pushover_service.get_settings()
 
 
 @router.post("/test")
 @limiter.limit("5/minute")
-async def send_test(request: Request, _: User = Depends(require_mutation)) -> dict:
+async def send_test(request: Request, user: User = Depends(require_mutation)) -> dict:
     # Rate-limited because each call consumes Pushover's per-month free quota
     # (7500 msg/mo). An unchecked key holder could burn through it quickly.
+    logger.info("user=%s sent Pushover test notification", user.username)
     ok = await pushover_service.send_test()
     if not ok:
         raise HTTPException(

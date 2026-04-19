@@ -191,9 +191,13 @@ async def load_schedule() -> None:
     else:
         logger.info("No persisted sync result found in DB.")
 
-    # Re-arm interval task if schedule was active
+    # Re-arm interval task if schedule was active. Stash the task in
+    # _schedule_task so set_schedule(...) can cancel it on reconfiguration
+    # (without this, a startup-armed loop and a user-armed loop would run
+    # concurrently after the first PUT /api/sync/schedule).
     if _schedule_minutes > 0:
-        asyncio.create_task(_scheduled_loop(_schedule_minutes))
+        global _schedule_task
+        _schedule_task = asyncio.create_task(_scheduled_loop(_schedule_minutes))
         logger.info("Re-armed sync schedule: every %d minutes.", _schedule_minutes)
 
 
@@ -251,7 +255,9 @@ async def notify_blocklist_count(count: int) -> None:
         )
         _last_blocklist_count = count
         if not _lock.locked():
-            asyncio.create_task(run_sync(**_sync_opts))
+            # _spawn keeps a strong ref + logs uncaught exceptions; bare
+            # asyncio.create_task drops the result and risks GC mid-run.
+            _spawn(run_sync(**_sync_opts))
     else:
         _last_blocklist_count = count
 

@@ -5,12 +5,35 @@ import json
 import logging
 
 import httpx
+from cryptography.fernet import InvalidToken
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.database import AsyncSessionLocal
+from app.models.pihole import _get_fernet
 from app.models.settings import AppSetting
 
 logger = logging.getLogger(__name__)
+
+
+def _encrypt(value: str) -> str:
+    """Fernet-encrypt a credential string. Empty values pass through."""
+    if not value:
+        return value
+    return _get_fernet().encrypt(value.encode()).decode()
+
+
+def _decrypt(value: str) -> str:
+    """Decrypt a Fernet token. Treats invalid tokens as legacy plaintext.
+
+    Settings written before this commit landed are stored as plain text; we
+    return them as-is so the next save_settings call re-encrypts them.
+    """
+    if not value:
+        return value
+    try:
+        return _get_fernet().decrypt(value.encode()).decode()
+    except InvalidToken:
+        return value
 
 _PUSHOVER_SEND_URL = "https://api.pushover.net/1/messages.json"
 _PUSHOVER_VALIDATE_URL = "https://api.pushover.net/1/users/validate.json"
@@ -115,8 +138,8 @@ async def load_settings() -> None:
 
     try:
         data = json.loads(row.value)
-        _app_token = data.get("app_token", "")
-        _user_key = data.get("user_key", "")
+        _app_token = _decrypt(data.get("app_token", ""))
+        _user_key = _decrypt(data.get("user_key", ""))
         _enabled = data.get("enabled", False)
         _alert_sync_failure = data.get("alert_sync_failure", True)
         _alert_instance_offline = data.get("alert_instance_offline", True)
@@ -149,21 +172,9 @@ async def save_settings(
     global _alert_sync_failure, _alert_instance_offline, _alert_high_block_rate, _alert_no_logs
     global _block_rate_threshold_pct, _no_logs_minutes, _offline_alert_max_count, _offline_alert_retries
 
-    _app_token = app_token
-    _user_key = user_key
-    _enabled = enabled
-    _alert_sync_failure = alert_sync_failure
-    _alert_instance_offline = alert_instance_offline
-    _alert_high_block_rate = alert_high_block_rate
-    _alert_no_logs = alert_no_logs
-    _block_rate_threshold_pct = block_rate_threshold_pct
-    _no_logs_minutes = no_logs_minutes
-    _offline_alert_max_count = offline_alert_max_count
-    _offline_alert_retries = offline_alert_retries
-
     payload = json.dumps({
-        "app_token": app_token,
-        "user_key": user_key,
+        "app_token": _encrypt(app_token),
+        "user_key": _encrypt(user_key),
         "enabled": enabled,
         "alert_sync_failure": alert_sync_failure,
         "alert_instance_offline": alert_instance_offline,
@@ -192,6 +203,23 @@ async def save_settings(
                 f"DB write verification failed for Pushover settings: "
                 f"committed but read-back returned {'nothing' if row is None else 'wrong value'}"
             )
+
+    # Update in-memory state only after the DB write has been verified.
+    # If verification raises, the next load_settings() restores the truth
+    # from disk and we don't end up with in-memory state diverging from
+    # what's persisted.
+    _app_token = app_token
+    _user_key = user_key
+    _enabled = enabled
+    _alert_sync_failure = alert_sync_failure
+    _alert_instance_offline = alert_instance_offline
+    _alert_high_block_rate = alert_high_block_rate
+    _alert_no_logs = alert_no_logs
+    _block_rate_threshold_pct = block_rate_threshold_pct
+    _no_logs_minutes = no_logs_minutes
+    _offline_alert_max_count = offline_alert_max_count
+    _offline_alert_retries = offline_alert_retries
+
     logger.info("Pushover settings persisted and verified in DB.")
 
 
