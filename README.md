@@ -163,6 +163,22 @@ docker compose up -d
 
 > **Important — stop timeouts:** The provided `docker-compose.yml` sets `stop_grace_period` on both services (`60s` for Postgres, `30s` for the app). Do not remove these. Without them Docker sends `SIGKILL` after only 10 seconds, which can interrupt a Postgres checkpoint mid-write and corrupt the database — requiring a table rebuild to recover.
 
+> **Important — passing environment variables to the container:** Compose's `.env` file is used for `${VAR}` substitution inside `docker-compose.yml`, **not** automatically injected into the container. The security-relevant vars (`SECURE_COOKIES`, `VERIFY_PIHOLE_SSL`, `ENABLE_API_DOCS`, `JWT_SECRET_KEY`, `API_KEY_SALT`, `ENCRYPTION_KEY`) must either be listed explicitly under `environment:` **or** passed through with `env_file:`. If you customise the compose file, the safest pattern is:
+>
+> ```yaml
+>   app:
+>     image: ghcr.io/theojamesvibes/mypi:latest
+>     env_file:
+>       - .env                    # pass every var from .env into the container
+>     environment:
+>       # keep only values that need compose-level substitution or validation
+>       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-mypi}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-mypi}
+>       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+>       PIHOLE_CONFIG_PATH: /app/pihole_instances.yml
+> ```
+>
+> Without `env_file:`, setting `SECURE_COOKIES=true` in `.env` has no effect — cookies will be issued without the `Secure` flag and HSTS will not be sent, even behind a TLS reverse proxy.
+
 Docker pulls the pre-built image automatically. The dashboard is available at **http://localhost:8080** (or whichever `APP_PORT` you set in `.env`).
 
 Log in with username `admin` (or `INITIAL_ADMIN_USER` if overridden) and password `changeme`. You will be required to set a new password immediately before accessing the dashboard.
