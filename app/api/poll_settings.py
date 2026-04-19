@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app.auth import get_current_user
+from app.auth import get_current_user, require_mutation
 from app.models.user import User
 from app.services import poll_settings as poll_settings_service
 
@@ -21,7 +21,7 @@ async def get_poll_settings(_: User = Depends(get_current_user)) -> dict:
 @router.put("/")
 async def save_poll_settings(
     req: PollSettingsRequest,
-    _: User = Depends(get_current_user),
+    _: User = Depends(require_mutation),
 ) -> dict:
     if req.interval_seconds < 5:
         raise HTTPException(status_code=422, detail="interval_seconds must be at least 5.")

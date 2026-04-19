@@ -30,9 +30,11 @@ class Settings(BaseSettings):
     # so session cookies carry the Secure flag.  Leave false for plain-HTTP local access.
     secure_cookies: bool = False
 
-    # Set to true to verify TLS certificates when connecting to Pi-hole instances over HTTPS.
-    # Leave false (default) if your Pi-hole uses a self-signed certificate.
-    verify_pihole_ssl: bool = False
+    # Verify TLS certificates when connecting to Pi-hole instances over HTTPS.
+    # Defaults to True to fail-closed against MITM; set to False in .env only
+    # if your Pi-hole uses a self-signed certificate and the network segment
+    # between MyPi and the Pi-hole is trusted.
+    verify_pihole_ssl: bool = True
 
     pihole_config_path: str = "/app/pihole_instances.yml"
     max_pihole_instances: int = 10
@@ -47,27 +49,6 @@ class Settings(BaseSettings):
         if not v.startswith("postgresql"):
             raise ValueError("DATABASE_URL must be a PostgreSQL URL")
         return v
-
-    def validate_encryption_key_at_startup(self) -> None:
-        """Call this during app startup (not at import time) so Alembic migrations
-        can run without ENCRYPTION_KEY being set.  Raises RuntimeError if the key
-        is missing or invalid, which causes a clean startup failure with a clear message."""
-        generate_hint = (
-            "python3 -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
-        )
-        if not self.encryption_key:
-            raise RuntimeError(
-                "ENCRYPTION_KEY is not set. Add it to your .env file.\n"
-                f"Generate one with: {generate_hint}"
-            )
-        from cryptography.fernet import Fernet
-        try:
-            Fernet(self.encryption_key.encode())
-        except Exception:
-            raise RuntimeError(
-                "ENCRYPTION_KEY is not a valid Fernet key.\n"
-                f"Generate a new one with: {generate_hint}"
-            )
 
 
 class PiholeInstanceConfig:

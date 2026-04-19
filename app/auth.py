@@ -4,10 +4,11 @@ import hashlib
 import hmac
 import secrets
 import uuid
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
-from fastapi import Cookie, Depends, Header, HTTPException, status
+from fastapi import Cookie, Depends, Header, HTTPException, Request, status
 from jose import JWTError, jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_db
 from app.models.user import ApiKey, RevokedToken, User
+
+# Per-request marker: True when the current principal was authenticated via a
+# read-only API key. `require_mutation` raises 403 when this is set. Stored
+# in a ContextVar so FastAPI's dependency graph doesn't need to thread an
+# extra argument through every handler signature.
+_readonly_flag: ContextVar[bool] = ContextVar("mypi_auth_readonly", default=False)
 
 
 def hash_password(password: str) -> str:
@@ -82,6 +89,9 @@ async def get_current_user(
     session_token: str | None = Cookie(default=None),
 ) -> User:
     user: User | None = None
+    # Reset on each request; `require_mutation` checks this after the
+    # principal has been identified. Only API-key auth can set it true.
+    _readonly_flag.set(False)
 
     # ── Bearer JWT ────────────────────────────────────────────────────────────
     if authorization and authorization.startswith("Bearer "):
@@ -120,6 +130,8 @@ async def get_current_user(
             if user:
                 api_key.last_used_at = datetime.now(timezone.utc)
                 await db.commit()
+                if api_key.is_read_only:
+                    _readonly_flag.set(True)
 
     # ── Session cookie JWT ────────────────────────────────────────────────────
     if user is None and session_token:
@@ -147,3 +159,18 @@ async def get_current_user_optional(
         return await get_current_user(db=db, authorization=authorization, x_api_key=x_api_key, session_token=session_token)
     except HTTPException:
         return None
+
+
+def require_mutation(_: User = Depends(get_current_user)) -> User:
+    """Dependency: accept the call only if the principal can mutate state.
+
+    Read-only API keys fail here with 403. Session cookies and bearer JWTs
+    are always allowed — the read-only flag is set exclusively when an
+    API key is used.
+    """
+    if _readonly_flag.get():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This API key is read-only and cannot perform mutations.",
+        )
+    return _

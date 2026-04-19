@@ -46,6 +46,26 @@ _auto_gravity: bool = False
 _schedule_task: asyncio.Task | None = None
 _last_blocklist_count: int | None = None
 
+# Fire-and-forget background tasks spawned from this module. asyncio only
+# keeps weak references to tasks, so without stashing them here they can be
+# GC'd mid-run. `_spawn` adds a task to this set and removes it on completion,
+# logging any uncaught exception.
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _spawn(coro) -> None:
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+
+    def _done(t: asyncio.Task) -> None:
+        _background_tasks.discard(t)
+        if not t.cancelled():
+            exc = t.exception()
+            if exc is not None:
+                logger.exception("sync_service background task failed", exc_info=exc)
+
+    task.add_done_callback(_done)
+
 _sync_opts: dict = {
     "import_config": True,
     "import_gravity": True,
@@ -119,50 +139,12 @@ async def load_schedule() -> None:
     """Load persisted schedule and last sync result from DB (called at startup)."""
     global _schedule_minutes, _auto_gravity, _sync_opts, _state
 
-    # ── Startup diagnostic: dump entire app_settings table via raw SQL ─────────
-    try:
-        async with AsyncSessionLocal() as db:
-            rows = (await db.execute(text("SELECT key, value FROM app_settings"))).all()
-        if rows:
-            logger.warning("STARTUP: app_settings table contains %d row(s): %s",
-                           len(rows), [r[0] for r in rows])
-        else:
-            logger.warning("STARTUP: app_settings table is EMPTY — no persisted settings found")
-    except Exception as exc:
-        logger.error("STARTUP: could not read app_settings table: %s — "
-                     "check that migration 0004 ran and DB is accessible", exc)
-        return
-
-    # ── Verify DB is writable by round-tripping a test key ────────────────────
-    try:
-        test_val = "startup_write_test"
-        async with AsyncSessionLocal() as db:
-            await db.execute(
-                text("INSERT INTO app_settings (key, value) VALUES (:k, :v) "
-                     "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"),
-                {"k": "_startup_test", "v": test_val},
-            )
-            await db.commit()
-        async with AsyncSessionLocal() as db:
-            result = (await db.execute(
-                text("SELECT value FROM app_settings WHERE key = '_startup_test'")
-            )).scalar_one_or_none()
-        if result != test_val:
-            logger.error("STARTUP: DB write/read-back test FAILED — wrote %r, read back %r. "
-                         "Settings will NOT persist.", test_val, result)
-            return
-        logger.warning("STARTUP: DB write/read-back test passed — database is writable")
-    except Exception as exc:
-        logger.error("STARTUP: DB write test raised exception: %s", exc)
-        return
-
-    # ── Load actual settings ───────────────────────────────────────────────────
     try:
         async with AsyncSessionLocal() as db:
             schedule_row = await db.get(AppSetting, "sync_schedule")
             result_row = await db.get(AppSetting, "sync_last_result")
     except Exception as exc:
-        logger.error("STARTUP: failed to load settings from DB: %s", exc)
+        logger.error("Failed to load sync settings from DB: %s", exc)
         return
 
     # Restore schedule
@@ -411,14 +393,14 @@ async def run_sync(
                 results=results,
             )
 
-        asyncio.create_task(_persist_sync_state(_state))
+        _spawn(_persist_sync_state(_state))
         if _state.status == "error":
-            asyncio.create_task(
+            _spawn(
                 pushover_service.notify_sync_failure(_state.error or "One or more replicas failed to sync")
             )
         # Refresh Pi-hole version info after sync — FTL may have restarted on
         # replicas after the teleporter import, so give it a moment to come back.
-        asyncio.create_task(_refresh_versions_post_sync())
+        _spawn(_refresh_versions_post_sync())
         return _state
 
 
