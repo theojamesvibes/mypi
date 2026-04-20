@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import secrets
 import uuid
 from contextvars import ContextVar
@@ -16,6 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_db
 from app.models.user import ApiKey, RevokedToken, User
+
+logger = logging.getLogger(__name__)
 
 # Per-request marker: True when the current principal was authenticated via a
 # read-only API key. `require_mutation` raises 403 when this is set. Stored
@@ -93,6 +96,7 @@ async def _is_token_revoked(db: AsyncSession, jti: str) -> bool:
 
 
 async def get_current_user(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     authorization: str | None = Header(default=None),
     x_api_key: str | None = Header(default=None),
@@ -144,6 +148,7 @@ async def get_current_user(
                 await db.commit()
                 if api_key.is_read_only:
                     is_readonly = True
+                logger.info('api-key "%s" → %s %s', api_key.name, request.method, request.url.path)
 
     # ── Session cookie JWT ────────────────────────────────────────────────────
     if user is None and session_token:
@@ -163,13 +168,20 @@ async def get_current_user(
 
 
 async def get_current_user_optional(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     authorization: str | None = Header(default=None),
     x_api_key: str | None = Header(default=None),
     session_token: str | None = Cookie(default=None),
 ) -> User | None:
     try:
-        return await get_current_user(db=db, authorization=authorization, x_api_key=x_api_key, session_token=session_token)
+        return await get_current_user(
+            request=request,
+            db=db,
+            authorization=authorization,
+            x_api_key=x_api_key,
+            session_token=session_token,
+        )
     except HTTPException:
         return None
 

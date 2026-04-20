@@ -4,6 +4,14 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.8.0-dev.13] — 2026-04-20
+
+### Added
+
+- **API-key traffic is now tagged in the log (`app/auth.py::get_current_user`).** Every request that authenticates via `X-API-Key` emits one INFO line naming the key — e.g. `api-key "ios-beta" → GET /api/stats/summary`. Web-UI requests (session cookie) and Bearer JWT requests produce no extra log line, so the signal is bounded to automation traffic. Motivated by the mypi-ios companion app entering beta: being able to tell iOS/automation calls apart from browser calls without grepping headers makes debugging the mobile client considerably less painful.
+
+---
+
 ## [1.8.0-dev.12] — 2026-04-20
 
 ### Changed
