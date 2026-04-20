@@ -256,6 +256,15 @@ instances:
 
 Both `http://` and `https://` URLs are supported. If your Pi-hole is configured with HTTPS (including a self-signed certificate), simply use `https://` in the `url` field — MyPi accepts self-signed certificates without any additional configuration. Using HTTPS is recommended when your Pi-hole is reachable over a network segment you don't fully control.
 
+#### Low-traffic or hot-standby Pi-holes
+
+Pi-holes that sit behind a VIP as a standby, or otherwise receive very little DNS traffic, can occasionally flap in MyPi's view. Pi-hole v6's embedded webserver (CivetWeb) closes idle keepalive TCP sockets on a short timeout; between 60 s stats polls the socket can go stale, so the next poll's first request fails (`ConnectError` / `RemoteProtocolError`) before MyPi reconnects. This is not a Pi-hole-side block — session counts and `webserver.api.max_sessions` are not involved, and Pi-hole v6 does not expose a CivetWeb keepalive knob.
+
+MyPi absorbs this with a per-instance circuit breaker (3 consecutive failures → 5 min cooldown, tunable via `CIRCUIT_FAIL_THRESHOLD` / `CIRCUIT_COOLDOWN_SECONDS`), but a full cooldown window can still cross the offline-alert threshold and page you. If that happens on a genuinely idle standby, you have two levers — both in **Settings → Notifications**:
+
+- **Raise the offline-alert retry count** so a single cooldown window (≈5 missed polls) can't on its own trigger a Pushover alert. A value of 8–10 turns the breaker into a silent absorber for transient idle-socket flaps while still paging on a real outage.
+- **Lengthen `STATS_POLL_INTERVAL` / `QUERIES_POLL_INTERVAL`** for the whole fleet if idle-socket flaps are widespread — less useful when only a subset of instances are low-traffic, since it slows recovery detection for everyone.
+
 ---
 
 ## Pi-hole Sync
