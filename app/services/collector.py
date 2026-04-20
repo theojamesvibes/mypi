@@ -17,7 +17,7 @@ from app.models.user import RevokedToken
 from app.services import pihole_version_check
 from app.services import pushover as pushover_service
 from app.services import sync_service
-from app.services.client_manager import close_client, close_all_clients, get_client, save_sid
+from app.services.client_manager import close_client, close_all_clients, close_instance, get_client, save_sid
 
 logger = logging.getLogger(__name__)
 
@@ -115,9 +115,8 @@ async def _poll_stats_for(instance: PiholeInstance) -> None:
     try:
         if not _breaker_allows(key, instance.name):
             raise _CircuitOpen
-        client = await get_client(instance)
+        client = await get_client(instance, channel="stats")
         summary = await client.get_summary()
-        await save_sid(instance.id, client.sid)
         snapshot = StatsSnapshot(
             instance_id=instance.id,
             collected_at=datetime.now(timezone.utc),
@@ -140,8 +139,8 @@ async def _poll_stats_for(instance: PiholeInstance) -> None:
     except Exception as exc:
         logger.warning("Failed to poll stats for %s: %s", instance.name, exc)
         if isinstance(exc, (ssl.SSLError, httpx.ConnectError, httpx.RemoteProtocolError)):
-            logger.info("Connection error for %s — evicting client for next poll", instance.name)
-            await close_client(key)
+            logger.info("Connection error for %s (stats) — evicting client for next poll", instance.name)
+            await close_client(instance.id, channel="stats")
             _breaker_failure(key, instance.name)
         snapshot = StatsSnapshot(
             instance_id=instance.id,
@@ -243,10 +242,9 @@ async def _poll_queries_for(instance: PiholeInstance) -> None:
     try:
         if not _breaker_allows(instance_key, instance.name):
             return
-        client = await get_client(instance)
+        client = await get_client(instance, channel="queries")
         queries = await client.get_queries(from_ts=from_ts, length=500)
 
-        await save_sid(instance.id, client.sid)
         logger.info("Got %d queries from %s", len(queries), instance.name)
         _breaker_success(instance_key, instance.name)
 
@@ -293,8 +291,8 @@ async def _poll_queries_for(instance: PiholeInstance) -> None:
     except Exception as exc:
         logger.warning("Failed to poll queries for %s: %s", instance.name, exc)
         if isinstance(exc, (ssl.SSLError, httpx.ConnectError, httpx.RemoteProtocolError)):
-            logger.info("Connection error for %s — evicting client for next poll", instance.name)
-            await close_client(instance_key)
+            logger.info("Connection error for %s (queries) — evicting client for next poll", instance.name)
+            await close_client(instance.id, channel="queries")
             _breaker_failure(instance_key, instance.name)
 
 
@@ -322,7 +320,7 @@ async def poll_queries() -> None:
             del _cooldown_until[key]
     for key in list(_last_seen_ts):
         if key not in active_keys:
-            await close_client(key)
+            await close_instance(key)
 
     await asyncio.gather(*[_poll_queries_for(inst) for inst in instances])
 

@@ -4,6 +4,20 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.8.0-dev.11] — 2026-04-20
+
+### Fixed
+
+- **Decoupled stats and queries polling onto independent PiholeClient channels (`app/services/client_manager.py`, `app/services/collector.py`).** dev.10 re-enabled HTTP keepalive, which fixed pihole3's RPi3 wedge but coupled stats and queries onto the same TCP/TLS connection. When that single connection went bad — a civetweb/FTL idle-timeout, a brief network blip — *both* poll paths failed in the same tick, double-counting the per-instance circuit breaker (visible in the dev.10 logs as breaker trips firing at `(3 consecutive failures)` and `(4 consecutive failures)` within the same millisecond). That regression caused pihole1, which had been healthy for weeks, to start flapping.
+
+  `client_manager.get_client` now accepts a `channel` argument and keys its registry by `(instance_id, channel)`. The collector opens separate `stats` and `queries` channels per instance; sync, domain lookups, version checks, and backfill continue to share the `default` channel. The eviction path closes only the failing channel, and the breaker per-instance counter only advances when both paths are failing — which is exactly the signal the breaker is meant to detect. Only the `default` channel restores/persists `pihole_instances.session_sid` to the DB; stats/queries channels auth fresh on first use so they don't race each other to overwrite the canonical SID.
+
+  Net effect: a single bad connection can only take out one poll type; the other keeps polling and its success resets the breaker. Transient blips stop being logged as flaps, and the keepalive benefit from dev.10 is preserved for pihole3.
+
+- **`client_manager.close_client(instance_id, channel=...)` now closes a single channel**; new `client_manager.close_instance(instance_id)` closes all channels for an instance (used by `config_loader` on instance removal and by the `poll_queries` deactivation-prune path).
+
+---
+
 ## [1.8.0-dev.10] — 2026-04-20
 
 ### Fixed
