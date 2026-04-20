@@ -18,11 +18,13 @@ class TokenResponse(BaseModel):
 
 class ApiKeyCreate(BaseModel):
     name: str = Field(..., max_length=128)
+    is_read_only: bool = False
 
 
 class ApiKeyResponse(BaseModel):
     id: uuid.UUID
     name: str
+    is_read_only: bool = False
     created_at: datetime
     last_used_at: datetime | None = None
 

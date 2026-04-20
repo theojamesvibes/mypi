@@ -1,10 +1,12 @@
 # MyPi
 [![build](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/docker-publish.yml?style=flat-square)](https://github.com/theojamesvibes/mypi/actions)
-[![version](https://img.shields.io/badge/version-1.7.6-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
+[![version](https://img.shields.io/badge/version-1.8.0-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
 [![platform](https://img.shields.io/badge/platform-linux%2Famd64%20|%20linux%2Farm64-teal?style=flat-square)](https://github.com/theojamesvibes/mypi/pkgs/container/mypi)
 
 > **⚠️ Vibe Code Disclosure**
 > This project was generated entirely through AI-assisted development (Claude Code / Anthropic). The code has been reviewed and iterated on collaboratively, but it has not been audited for production use. Deploy on trusted local networks only, review the code before relying on it, and proceed with the usual amount of healthy scepticism you'd apply to any AI-generated codebase.
+>
+> **Independent reviews.** Two LLM-based audits have been applied as part of the `hardening-review` branch — by **Google Gemini** (adversarial security review) and **Grok** (full architecture + security review). Both are documented in [Independent reviews](#independent-reviews) below, along with what was verified as already-correct and what was changed in response. These reviews are not a substitute for a professional audit.
 
 A self-hosted dashboard that consolidates up to 10 locally running [Pi-hole](https://pi-hole.net/) v6 instances into a single screen, paired with a REST API designed for iOS app consumption.
 
@@ -67,10 +69,21 @@ A self-hosted dashboard that consolidates up to 10 locally running [Pi-hole](htt
 - **Version Check panel** — shows running vs latest version, last check time; version badge in topbar turns green/red; checks GitHub once per hour (can be disabled)
 
 ### API & Auth
-- Full REST API under `/api/` with auto-generated OpenAPI docs (Swagger UI at `/docs`, ReDoc at `/redoc`)
+- Full REST API under `/api/` with auto-generated OpenAPI docs (Swagger UI at `/docs`, ReDoc at `/redoc` — opt-in via `ENABLE_API_DOCS=true`)
 - Username/password login for the web UI (JWT session cookie)
 - API key auth (`X-API-Key` header) for mobile clients and automation
+- **Read-only API keys** — mark a key read-only on creation; the `require_mutation` dependency rejects it from every mutation endpoint with `403`. Session cookies and bearer JWTs are always full-access
 - Version badge in topbar is green (up to date) or red (update available), links to GitHub releases
+
+### Security & Hardening
+- **Security headers on every response** — `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: same-origin`, a Content-Security-Policy that denies framing and arbitrary external script origins, and `Strict-Transport-Security` when `SECURE_COOKIES=true`
+- **Rate limits on mutation endpoints** — `/api/sync` (10/min), `/api/domains/{deny,allow}` (30/min each), `/api/notifications/test` (5/min), `/api/notifications/validate` (10/min), `/api/auth/change-password` (5/min)
+- **Audit logging on mutations** — every mutation handler logs `user=<username>` plus the action and target, so the application log doubles as an audit trail
+- **Encrypted secrets at rest** — Pi-hole API passwords and Pushover credentials are Fernet-encrypted in PostgreSQL using `ENCRYPTION_KEY`
+- **Optional split secrets** — `JWT_SECRET_KEY` and `API_KEY_SALT` let you rotate JWT signing keys without invalidating API keys (or vice versa); both fall back to `SECRET_KEY` when unset
+- **Per-instance circuit breaker** — a flap-prone Pi-hole is absorbed locally: after N consecutive connection failures, polling for that instance is suspended for a cooldown window, then one probe either closes the breaker or re-arms it. Defaults: 3 failures, 300 s cooldown, 2 s dedup (stats+queries share one connection). Tunable via `CIRCUIT_FAIL_THRESHOLD` / `CIRCUIT_COOLDOWN_SECONDS` / `CIRCUIT_DEDUP_SECONDS`
+- **Container runs as non-root** (UID 1000, no shell); image ships with a `HEALTHCHECK` against `/api/health`
+- **Dependabot** on a weekly schedule covers `pip`, `github-actions`, and `docker` ecosystems
 
 ---
 
@@ -161,6 +174,22 @@ docker compose up -d
 
 > **Important — stop timeouts:** The provided `docker-compose.yml` sets `stop_grace_period` on both services (`60s` for Postgres, `30s` for the app). Do not remove these. Without them Docker sends `SIGKILL` after only 10 seconds, which can interrupt a Postgres checkpoint mid-write and corrupt the database — requiring a table rebuild to recover.
 
+> **Important — passing environment variables to the container:** Compose's `.env` file is used for `${VAR}` substitution inside `docker-compose.yml`, **not** automatically injected into the container. The security-relevant vars (`SECURE_COOKIES`, `VERIFY_PIHOLE_SSL`, `ENABLE_API_DOCS`, `JWT_SECRET_KEY`, `API_KEY_SALT`, `ENCRYPTION_KEY`) must either be listed explicitly under `environment:` **or** passed through with `env_file:`. If you customise the compose file, the safest pattern is:
+>
+> ```yaml
+>   app:
+>     image: ghcr.io/theojamesvibes/mypi:latest
+>     env_file:
+>       - .env                    # pass every var from .env into the container
+>     environment:
+>       # keep only values that need compose-level substitution or validation
+>       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-mypi}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-mypi}
+>       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+>       PIHOLE_CONFIG_PATH: /app/pihole_instances.yml
+> ```
+>
+> Without `env_file:`, setting `SECURE_COOKIES=true` in `.env` has no effect — cookies will be issued without the `Secure` flag and HSTS will not be sent, even behind a TLS reverse proxy.
+
 Docker pulls the pre-built image automatically. The dashboard is available at **http://localhost:8080** (or whichever `APP_PORT` you set in `.env`).
 
 Log in with username `admin` (or `INITIAL_ADMIN_USER` if overridden) and password `changeme`. You will be required to set a new password immediately before accessing the dashboard.
@@ -191,6 +220,16 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 | `STATS_POLL_INTERVAL` | `60` | Seconds between stats polls |
 | `QUERIES_POLL_INTERVAL` | `10` | Seconds between query log polls |
 | `DATA_RETENTION_DAYS` | `30` | Days of history to retain |
+| `SECURE_COOKIES` | `false` | Adds the `Secure` flag to session cookies and turns on HSTS. Enable when MyPi is behind a TLS-terminating reverse proxy. |
+| `VERIFY_PIHOLE_SSL` | `false` | Verify TLS certificates when connecting to Pi-hole instances. Leave `false` for self-signed certs on a trusted LAN. |
+| `ENABLE_API_DOCS` | `false` | Expose Swagger UI at `/docs`, ReDoc at `/redoc`, and the OpenAPI schema at `/openapi.json`. Default flipped to `false` in 1.8.0 — fail-closed posture. Set to `true` when you actively need the docs (local development, regenerating an iOS OpenAPI client, etc.). |
+| `JWT_SECRET_KEY` | *(falls back to `SECRET_KEY`)* | Separate signing key for session JWTs. Set alongside `API_KEY_SALT` if you want to rotate one without invalidating the other. |
+| `API_KEY_SALT` | *(falls back to `SECRET_KEY`)* | Separate HMAC salt for stored API keys. |
+| `ENCRYPTION_KEY` | *(auto-generated on first boot)* | Fernet key used to encrypt Pi-hole API passwords and Pushover credentials at rest. Auto-generated and persisted to the database if unset; pin it in `.env` for portability. |
+| `CIRCUIT_FAIL_THRESHOLD` | `3` | Consecutive connection failures against one Pi-hole before the per-instance circuit breaker trips. |
+| `CIRCUIT_COOLDOWN_SECONDS` | `300` | How long polling is suspended for a tripped instance before the next probe. |
+| `CIRCUIT_DEDUP_SECONDS` | `2.0` | Window in which a stats+queries failure on the shared connection counts as one event. |
+| `AUTH_BACKOFF_SECONDS` | `300` | How long to pause `/api/auth` attempts after a `429 Too Many Requests` from a Pi-hole. Lower it if your fleet has a higher `webserver.api.max_sessions` and a 5-minute blackout is too long. |
 
 ### Pi-hole instances (`pihole_instances.yml`)
 
@@ -227,13 +266,22 @@ instances:
 
 - Up to **10 instances** supported
 - Instances are loaded at startup and synced to the database; restart the container to pick up changes
-- `password` is the Pi-hole web interface password (Pi-hole v6 API). Leave empty (`""`) or omit entirely for instances with no password configured — MyPi detects the passwordless state automatically and connects without authentication
+- `password` is the Pi-hole web interface password (Pi-hole v6 API). Leave empty (`""`) or omit entirely for instances with no password configured — MyPi detects the passwordless state automatically and connects without authentication. **Note:** passwordless mode only works for plain-`http://` Pi-holes. With TLS enabled, Pi-hole v6's `/api/auth` rejects empty-password requests with 401 even when the web UI has no password set, so any `https://` instance must have a password configured
 - `color` is used in charts to distinguish each instance visually
 - `master: true` designates the sync source for the Pi-hole Sync feature — exactly one instance should be marked master
 
 #### HTTP vs HTTPS
 
 Both `http://` and `https://` URLs are supported. If your Pi-hole is configured with HTTPS (including a self-signed certificate), simply use `https://` in the `url` field — MyPi accepts self-signed certificates without any additional configuration. Using HTTPS is recommended when your Pi-hole is reachable over a network segment you don't fully control.
+
+#### Low-traffic or hot-standby Pi-holes
+
+Pi-holes that sit behind a VIP as a standby, or otherwise receive very little DNS traffic, can occasionally flap in MyPi's view. Pi-hole v6's embedded webserver (CivetWeb) closes idle keepalive TCP sockets on a short timeout; between 60 s stats polls the socket can go stale, so the next poll's first request fails (`ConnectError` / `RemoteProtocolError`) before MyPi reconnects. This is not a Pi-hole-side block — session counts and `webserver.api.max_sessions` are not involved, and Pi-hole v6 does not expose a CivetWeb keepalive knob.
+
+MyPi absorbs this with a per-instance circuit breaker (3 consecutive failures → 5 min cooldown, tunable via `CIRCUIT_FAIL_THRESHOLD` / `CIRCUIT_COOLDOWN_SECONDS`), but a full cooldown window can still cross the offline-alert threshold and page you. If that happens on a genuinely idle standby, you have two levers — both in **Settings → Notifications**:
+
+- **Raise the offline-alert retry count** so a single cooldown window (≈5 missed polls) can't on its own trigger a Pushover alert. A value of 8–10 turns the breaker into a silent absorber for transient idle-socket flaps while still paging on a real outage.
+- **Lengthen `STATS_POLL_INTERVAL` / `QUERIES_POLL_INTERVAL`** for the whole fleet if idle-socket flaps are widespread — less useful when only a subset of instances are low-traffic, since it slows recovery detection for everyone.
 
 ---
 
@@ -258,7 +306,7 @@ The sync schedule and last sync result are stored in the database and survive co
 
 ## REST API
 
-The full API is available under `/api/`. Interactive documentation is at **`/docs`** (Swagger UI) and **`/redoc`**.
+The full API is available under `/api/`. Interactive documentation is at **`/docs`** (Swagger UI) and **`/redoc`** when `ENABLE_API_DOCS=true` is set in `.env` (default is `false` since 1.8.0-dev.7).
 
 ### Authentication
 
@@ -431,6 +479,33 @@ uvicorn app.main:app --reload --port 8080
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
+
+---
+
+## Independent reviews
+
+MyPi has been reviewed by two external LLM-based audits as part of the `hardening-review` branch. Each review was triaged by Claude Code against the live source: items already correct were recorded as verified, items with real gaps were fixed. Neither review is a substitute for a professional audit.
+
+### Google Gemini — adversarial security review (2026-04-19)
+
+Focused on four areas. Outcome:
+
+| Gemini ask | Outcome |
+|---|---|
+| **Teleporter atomic operations** — does a mid-broadcast failure leave a replica broken? | Pi-hole v6's `/api/teleporter` is a single commit point with no server-side staging, so upload-then-swap is not possible on the Pi-hole side. Addressed on the MyPi side: the master's ZIP export is now validated client-side (min size, valid archive, per-member CRC, non-empty members) before any replica receives it — see `sync_service._validate_teleporter_zip`. |
+| **Error isolation in polling** — does one slow Pi-hole block the others? | Verified correct. `collector.poll_stats` / `poll_queries` / `fetch_all_instance_versions` all `asyncio.gather(*[...])` over per-instance coroutines, each wrapped in `try/except Exception`. |
+| **Sensitive data exposure** — can a token leak to logs, API responses, or the frontend? | Verified correct. `PiholeInstance.api_password` uses Fernet encryption at rest (`EncryptedString`, migration `0006`). No API response schema exposes passwords. Every log call uses `self.base_url` or `instance.name`, never the password. |
+| **Dependency / Docker hardening** — pinning and non-root runtime. | `requirements.txt` was already fully pinned with `==`. Container now runs as a non-root user (UID 1000) and has a `HEALTHCHECK` against `/api/health`. |
+
+### Grok — full architecture and security review (2026-04-19)
+
+Verified ~11 items as already correct (JWT cookie flags `HttpOnly` + `Secure`-when-TLS + `SameSite=Lax`; `SECRET_KEY` required at boot; bcrypt; rate limiting on mutation endpoints; encrypted Pushover creds; query-log indexes; etc.). Three meaningful gaps led to additional hardening in `1.8.0-dev.5`:
+
+| Grok finding | Change |
+|---|---|
+| **`/openapi.json` exposed unauthenticated.** | Gated behind `ENABLE_API_DOCS`; default flipped to `false` in 1.8.0-dev.7 (fail-closed). Setting `ENABLE_API_DOCS=true` re-enables `/docs`, `/redoc`, and `/openapi.json` together. |
+| **No Content-Security-Policy header.** | Added to the security-headers middleware on every response. Allows `cdn.jsdelivr.net` for Bootstrap / Chart.js / Swagger UI, `'unsafe-inline'` for the theme pre-paint script, and denies framing / arbitrary external script origins. |
+| **No Dependabot configuration.** | Added `.github/dependabot.yml` on a weekly schedule covering `pip`, `github-actions`, and `docker`. |
 
 ---
 

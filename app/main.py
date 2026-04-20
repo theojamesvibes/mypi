@@ -5,8 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import Cookie, Depends, FastAPI, Request, Response
-from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -49,6 +48,28 @@ _version_file = Path(__file__).parent.parent / "VERSION"
 APP_VERSION = _version_file.read_text().strip() if _version_file.exists() else "dev"
 
 scheduler = AsyncIOScheduler()
+
+# Long-lived set of fire-and-forget background tasks. The event loop only
+# holds *weak* references to tasks created with `asyncio.create_task(...)`,
+# so without keeping a strong reference here the task can be garbage-
+# collected mid-run. Every helper that spawns a one-shot task should call
+# `_track_task(...)` instead of `asyncio.create_task(...)` directly.
+_background_tasks: set = set()
+
+
+def _track_task(coro) -> None:
+    import asyncio as _asyncio
+    task = _asyncio.create_task(coro)
+    _background_tasks.add(task)
+
+    def _done(t: _asyncio.Task) -> None:
+        _background_tasks.discard(t)
+        if not t.cancelled():
+            exc = t.exception()
+            if exc is not None:
+                logger.exception("Background task failed", exc_info=exc)
+
+    task.add_done_callback(_done)
 
 
 _ENCRYPTION_KEY_SETTING = "encryption_key"
@@ -100,9 +121,14 @@ async def _ensure_encryption_key() -> None:
         await db.commit()
         settings.encryption_key = new_key
         pihole_models._fernet = None
+        # Don't log the raw key — application logs commonly land in
+        # journald, log-shippers, container logs, etc. Operators who need
+        # the key for portability can read it from the app_settings table.
         logger.warning(
             "ENCRYPTION_KEY was not set — a key has been auto-generated and saved to the "
-            "database. Add it to your .env for portability: ENCRYPTION_KEY=%s", new_key
+            "app_settings table (key='%s'). For portability, copy it from the database "
+            "into your .env as ENCRYPTION_KEY before redeploying.",
+            _ENCRYPTION_KEY_SETTING,
         )
 
 
@@ -123,18 +149,35 @@ async def _bootstrap() -> None:
             logger.info("Created initial admin user: %s (password change required on first login)", settings.initial_admin_user)
 
 
+async def _soft_load(name: str, coro) -> None:
+    """Run a startup load that may fail without taking the app down with it.
+
+    Used for optional services whose persisted settings are non-critical:
+    a transient DB hiccup at boot shouldn't stop FastAPI from coming up.
+    Hard-required loads (sync_service, session_settings, poll_settings)
+    stay outside this wrapper so misconfiguration is loud.
+    """
+    try:
+        await coro
+    except Exception as exc:
+        logger.warning("Startup load for %s failed (continuing): %s", name, exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import asyncio as _asyncio
+
     logger.info("MyPi version %s starting up", APP_VERSION)
     await _ensure_encryption_key()
     version_check_service.initialize(APP_VERSION)
     await _bootstrap()
     await sync_service.load_schedule()
-    await pushover_service.load_settings()
     await session_settings.load_settings()
-    await version_check_service.load_settings()
-    await pihole_version_check_service.load_settings()
     await poll_settings_service.load_settings()
+    # Optional services — failures here log a warning but don't abort startup.
+    await _soft_load("pushover", pushover_service.load_settings())
+    await _soft_load("version_check", version_check_service.load_settings())
+    await _soft_load("pihole_version_check", pihole_version_check_service.load_settings())
     poll_settings_service.set_reschedule_callback(
         lambda s: scheduler.reschedule_job("poll_queries", trigger="interval", seconds=s)
     )
@@ -144,17 +187,32 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(version_check_service.check_now, "interval", hours=1, id="version_check")
     scheduler.add_job(pihole_version_check_service.check_now, "interval", hours=1, id="pihole_version_check")
     scheduler.start()
-    # Run initial checks in the background without blocking startup
-    import asyncio as _asyncio
-    _asyncio.create_task(version_check_service.check_now())
-    _asyncio.create_task(pihole_version_check_service.check_now())
-    _asyncio.create_task(fetch_all_instance_versions())
-    _asyncio.create_task(backfill_all_instances())
+    # Run initial checks in the background without blocking startup. Using
+    # `_track_task` (not bare `create_task`) keeps a strong ref so the tasks
+    # aren't GC'd and logs exceptions instead of swallowing them.
+    _track_task(version_check_service.check_now())
+    _track_task(pihole_version_check_service.check_now())
+    _track_task(fetch_all_instance_versions())
+    _track_task(backfill_all_instances())
     logger.info("Scheduler started (stats every %ds, queries every %ds).",
                 settings.stats_poll_interval, poll_settings_service.get_interval_seconds())
     yield
     scheduler.shutdown(wait=False)
     await collector_shutdown()
+    # Give in-flight background tasks a brief grace window to finish
+    # cleanly before the process exits — otherwise a half-written DB row
+    # or a pending HTTP response can be cut off mid-flight.
+    if _background_tasks:
+        logger.info("Waiting up to 5s for %d background task(s) to finish.", len(_background_tasks))
+        try:
+            await _asyncio.wait(_background_tasks, timeout=5)
+        except Exception as exc:
+            logger.warning("Background task wait failed during shutdown: %s", exc)
+    # Close the SQLAlchemy engine so the underlying asyncpg pool releases
+    # its connections back to PostgreSQL instead of relying on TCP
+    # timeouts after the worker exits.
+    from app.database import engine
+    await engine.dispose()
 
 
 app = FastAPI(
@@ -163,13 +221,61 @@ app = FastAPI(
     version=APP_VERSION,
     lifespan=lifespan,
     docs_url=None,
+    # When settings.enable_api_docs is False, disable both the OpenAPI
+    # schema endpoint and ReDoc (FastAPI auto-mounts /redoc otherwise,
+    # which would 500 without the schema). Our custom /docs route below
+    # checks the same flag, so all three routes disappear together.
+    openapi_url="/openapi.json" if settings.enable_api_docs else None,
+    redoc_url="/redoc" if settings.enable_api_docs else None,
 )
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+
+# ── Security headers ──────────────────────────────────────────────────────────
+#
+# MyPi is a self-hosted dashboard — there's no legitimate reason for another
+# origin to frame it, load its content-type-sniffing, or exfiltrate its
+# referrer. Add a small set of defensive headers by default.
+# HSTS is opt-in (settings.secure_cookies) so we don't break local HTTP setups.
+_CSP_POLICY = (
+    # Restrict default fetches to same-origin. Loosen per-directive below.
+    "default-src 'self'; "
+    # Inline <script> is used for theme pre-paint in base.html and docs.html.
+    # Bootstrap, Chart.js, and Swagger UI come from jsdelivr.
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    # Bootstrap CSS + per-page inline styles.
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    # data: covers the inline SVG favicon and any data-URI icons Swagger ships.
+    "img-src 'self' data:; "
+    # Bootstrap Icons ships webfonts from jsdelivr; allow data: for base64'd glyphs.
+    "font-src 'self' data: https://cdn.jsdelivr.net; "
+    # XHR / fetch only to same origin.
+    "connect-src 'self'; "
+    # Equivalent-to-and-stricter-than X-Frame-Options: DENY.
+    "frame-ancestors 'none'; "
+    "base-uri 'self'; "
+    "form-action 'self'"
+)
+
+
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    response.headers.setdefault("Content-Security-Policy", _CSP_POLICY)
+    if settings.secure_cookies:
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+        )
+    return response
+
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
 templates.env.globals["app_version"] = APP_VERSION
+templates.env.globals["enable_api_docs"] = settings.enable_api_docs
 
 # API routers
 app.include_router(auth_router.router)
@@ -187,12 +293,12 @@ app.include_router(version_router.router)
 # ── API docs ──────────────────────────────────────────────────────────────────
 
 @app.get("/docs", include_in_schema=False)
-async def swagger_ui():
-    return get_swagger_ui_html(
-        openapi_url="/openapi.json",
-        title="MyPi API",
-        swagger_favicon_url="/static/img/logo.svg",
-    )
+async def swagger_ui(request: Request):
+    # Custom template so the docs page follows the user's MyPi theme
+    # (light/dark/system) via localStorage['mypi-theme'] — same logic as base.html.
+    if not settings.enable_api_docs:
+        raise HTTPException(status_code=404)
+    return templates.TemplateResponse("docs.html", {"request": request})
 
 
 # ── Web UI routes ─────────────────────────────────────────────────────────────

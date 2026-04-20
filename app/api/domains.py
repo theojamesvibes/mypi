@@ -1,17 +1,16 @@
 """Domain allow/deny list management — per-instance direct API calls, no sync needed."""
-from __future__ import annotations
-
 import asyncio
 import logging
 import re
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import get_current_user
+from app.auth import get_current_user, require_mutation
 from app.database import get_db
+from app.limiter import limiter
 from app.models.pihole import PiholeInstance
 from app.models.user import User
 from app.services import client_manager
@@ -100,9 +99,11 @@ async def get_domain_status(
 
 
 @router.post("/deny")
+@limiter.limit("30/minute")
 async def add_to_deny(
+    request: Request,
     req: DomainRequest,
-    _: User = Depends(get_current_user),
+    user: User = Depends(require_mutation),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Add domain to exact deny list on all instances. Removes allow override first."""
@@ -115,15 +116,18 @@ async def add_to_deny(
         await client.add_deny_exact(domain)
 
     result = await _apply_to_all(instances, _deny)
+    logger.info("user=%s added %s to deny list (ok=%d/%d)", user.username, domain, result["ok_count"], result["total"])
     if result["ok_count"] == 0:
         raise HTTPException(status_code=502, detail="Operation failed on all instances.")
     return result
 
 
 @router.delete("/deny/{domain:path}")
+@limiter.limit("30/minute")
 async def remove_from_deny(
+    request: Request,
     domain: str,
-    _: User = Depends(get_current_user),
+    user: User = Depends(require_mutation),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Remove domain from exact deny list on all instances."""
@@ -132,15 +136,18 @@ async def remove_from_deny(
     instances = await _get_all_active(db)
 
     result = await _apply_to_all(instances, lambda client, inst: client.remove_deny_exact(domain))
+    logger.info("user=%s removed %s from deny list (ok=%d/%d)", user.username, domain, result["ok_count"], result["total"])
     if result["ok_count"] == 0:
         raise HTTPException(status_code=502, detail="Operation failed on all instances.")
     return result
 
 
 @router.post("/allow")
+@limiter.limit("30/minute")
 async def add_to_allow(
+    request: Request,
     req: DomainRequest,
-    _: User = Depends(get_current_user),
+    user: User = Depends(require_mutation),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Add domain to exact allow list on all instances (overrides gravity/deny). Removes deny entry first."""
@@ -153,15 +160,18 @@ async def add_to_allow(
         await client.add_allow_exact(domain)
 
     result = await _apply_to_all(instances, _allow)
+    logger.info("user=%s added %s to allow list (ok=%d/%d)", user.username, domain, result["ok_count"], result["total"])
     if result["ok_count"] == 0:
         raise HTTPException(status_code=502, detail="Operation failed on all instances.")
     return result
 
 
 @router.delete("/allow/{domain:path}")
+@limiter.limit("30/minute")
 async def remove_from_allow(
+    request: Request,
     domain: str,
-    _: User = Depends(get_current_user),
+    user: User = Depends(require_mutation),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Remove domain from exact allow list on all instances."""
@@ -170,6 +180,7 @@ async def remove_from_allow(
     instances = await _get_all_active(db)
 
     result = await _apply_to_all(instances, lambda client, inst: client.remove_allow_exact(domain))
+    logger.info("user=%s removed %s from allow list (ok=%d/%d)", user.username, domain, result["ok_count"], result["total"])
     if result["ok_count"] == 0:
         raise HTTPException(status_code=502, detail="Operation failed on all instances.")
     return result

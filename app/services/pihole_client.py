@@ -10,6 +10,8 @@ from typing import Any
 
 import httpx
 
+from app.config import settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -40,13 +42,6 @@ class PiholeQuery:
 
 
 @dataclass
-class PiholeTopStats:
-    top_permitted: list[dict[str, Any]] = field(default_factory=list)
-    top_blocked: list[dict[str, Any]] = field(default_factory=list)
-    top_clients: list[dict[str, Any]] = field(default_factory=list)
-
-
-@dataclass
 class ComponentVersion:
     current: str = ""
     latest: str = ""
@@ -60,7 +55,10 @@ class PiholeVersionInfo:
     web: ComponentVersion = field(default_factory=ComponentVersion)
 
 
-AUTH_BACKOFF_SECONDS = 300  # don't retry auth for 5 minutes after a 429
+# Sourced from Settings so the backoff can be tuned per-deployment (e.g. a
+# Pi-hole fleet with a higher webserver.api.max_sessions might want a shorter
+# window).  Default matches the hard-coded value that preceded 1.8.0-dev.16.
+AUTH_BACKOFF_SECONDS = settings.auth_backoff_seconds
 
 
 class PiholeClient:
@@ -73,14 +71,28 @@ class PiholeClient:
         self._client: httpx.AsyncClient | None = None
         self._auth_blocked_until: float = 0.0
         self._auth_lock: asyncio.Lock = asyncio.Lock()
+        # monotonic timestamp of the last "auth in cooldown" WARN — used to
+        # rate-limit the reminder to once per minute while backoff is active.
+        self._last_backoff_warn: float = 0.0
 
     async def open(self) -> None:
-        """Open the underlying HTTP client. Call once and reuse the instance."""
+        """Open the underlying HTTP client. Call once and reuse the instance.
+
+        Connection keepalive is enabled so repeat polls reuse the same TCP/TLS
+        connection.  The 1.7.6 hardening shipped with `max_keepalive_connections=0`
+        to prevent half-open connection accumulation, but the self-healing
+        eviction in `collector.py` on `ssl.SSLError | ConnectError |
+        RemoteProtocolError` already handles dead connections — killing
+        keepalive turned out to be belt-and-suspenders that forced a fresh TLS
+        handshake on every request.  On slow hardware (Raspberry Pi 3) the
+        resulting handshake churn periodically wedged FTL's TLS stack, so we
+        rely on the eviction path alone and let httpx reuse connections.
+        """
         from app.config import settings
         self._client = httpx.AsyncClient(
             timeout=self.timeout,
             verify=settings.verify_pihole_ssl,
-            limits=httpx.Limits(max_keepalive_connections=0, max_connections=2),
+            limits=httpx.Limits(max_keepalive_connections=2, max_connections=2),
         )
 
     @property
@@ -91,12 +103,28 @@ class PiholeClient:
     def sid(self, value: str | None) -> None:
         self._sid = value
 
-    async def close(self) -> None:
+    async def close(self, *, logout: bool = False) -> None:
+        # Only issue DELETE /api/auth when the caller is truly done with this
+        # session (shutdown, instance removed from YAML).  Transient
+        # connection-error evictions must NOT logout — the SID is still valid
+        # on Pi-hole's side and the next poll can reuse it; destroying it here
+        # forces an unnecessary re-auth every minute on flap-prone hardware.
+        if logout and self._client and self._sid:
+            try:
+                await self._client.delete(
+                    f"{self.base_url}/api/auth",
+                    headers=self._headers(),
+                    timeout=5.0,
+                )
+            except Exception as exc:
+                logger.debug("Session logout for %s failed (non-fatal): %s", self.base_url, exc)
         if self._client:
             await self._client.aclose()
         self._client = None
-        self._sid = None
+        if logout:
+            self._sid = None
         self._no_auth = False
+        self._last_backoff_warn = 0.0
 
     async def __aenter__(self) -> "PiholeClient":
         await self.open()
@@ -115,7 +143,19 @@ class PiholeClient:
             now = time.monotonic()
             if now < self._auth_blocked_until:
                 remaining = int(self._auth_blocked_until - now)
-                logger.debug("Auth blocked for %s — %ds remaining", self.base_url, remaining)
+                # The initial 429 is logged at WARN the moment backoff arms,
+                # but an operator tailing the log later in the window only sees
+                # the downstream generic "Authentication failed".  Surface a
+                # reminder at WARN every minute while the cooldown is active
+                # so the cause stays discoverable; in between, keep at DEBUG.
+                if now - self._last_backoff_warn >= 60.0:
+                    logger.warning(
+                        "Auth to %s is in cooldown — %ds remaining before next attempt",
+                        self.base_url, remaining,
+                    )
+                    self._last_backoff_warn = now
+                else:
+                    logger.debug("Auth blocked for %s — %ds remaining", self.base_url, remaining)
                 return False
             try:
                 resp = await self._client.post(
@@ -138,8 +178,24 @@ class PiholeClient:
                         "Rate limited by %s — pausing auth for %ds",
                         self.base_url, AUTH_BACKOFF_SECONDS,
                     )
+                else:
+                    # Non-200 non-429 — surface the status and a short body snippet
+                    # so operators can tell a wrong password (401) from a server
+                    # error (5xx) without having to crank the log level.
+                    snippet = resp.text[:200] if resp.content else ""
+                    logger.warning(
+                        "Pi-hole auth to %s returned HTTP %d: %s",
+                        self.base_url, resp.status_code, snippet,
+                    )
             except httpx.HTTPError as exc:
-                logger.debug("Pi-hole auth failed for %s: %s", self.base_url, exc)
+                # Connection-level failures during auth (SSL handshake, timeout,
+                # read error) used to be hidden at DEBUG — operators only saw
+                # the generic downstream "Authentication failed" ConnectionError.
+                # Surface the real cause so slow/flaky hardware is diagnosable.
+                logger.warning(
+                    "Pi-hole auth to %s failed at transport layer: %s: %s",
+                    self.base_url, type(exc).__name__, exc,
+                )
             return False
 
     def _headers(self) -> dict[str, str]:
@@ -351,50 +407,6 @@ class PiholeClient:
             unique_clients=data.get("clients", {}).get("active", 0),
             queries_cached=q.get("cached", 0),
             queries_forwarded=q.get("forwarded", 0),
-        )
-
-    async def get_history(self) -> list[PiholeHistoryBucket]:
-        """Return over-time data in 10-minute buckets."""
-        data = await self._get("/api/stats/history")
-        buckets = []
-        history = data.get("history", [])
-        for item in history:
-            ts = datetime.fromtimestamp(item.get("timestamp", 0), tz=timezone.utc)
-            buckets.append(
-                PiholeHistoryBucket(
-                    timestamp=ts,
-                    queries=item.get("total", 0),
-                    blocked=item.get("blocked", 0),
-                )
-            )
-        return buckets
-
-    async def get_top_stats(self, count: int = 10) -> PiholeTopStats:
-        permitted_data, blocked_data, clients_data = await asyncio.gather(
-            self._get("/api/stats/top_domains", params={"blocked": "false", "count": count}),
-            self._get("/api/stats/top_domains", params={"blocked": "true", "count": count}),
-            self._get("/api/stats/top_clients", params={"count": count}),
-        )
-
-        top_permitted = [
-            {"domain": domain, "count": cnt}
-            for domain, cnt in (permitted_data.get("domains", {}) or {}).items()
-        ]
-        top_blocked = [
-            {"domain": domain, "count": cnt}
-            for domain, cnt in (blocked_data.get("domains", {}) or {}).items()
-        ]
-        top_clients = []
-        for item in clients_data.get("clients", []) or []:
-            top_clients.append({
-                "client": item.get("name") or item.get("ip", ""),
-                "count": item.get("count", 0),
-            })
-
-        return PiholeTopStats(
-            top_permitted=sorted(top_permitted, key=lambda x: x["count"], reverse=True),
-            top_blocked=sorted(top_blocked, key=lambda x: x["count"], reverse=True),
-            top_clients=sorted(top_clients, key=lambda x: x["count"], reverse=True),
         )
 
     async def get_queries(self, from_ts: float | None = None, until_ts: float | None = None, length: int = 500) -> list[PiholeQuery]:

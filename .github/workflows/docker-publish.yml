@@ -2,7 +2,7 @@ name: Build and publish Docker image
 
 on:
   push:
-    branches: [main]
+    branches: [main, "hardening-review"]
     tags: ["v*"]
   workflow_dispatch:
 
@@ -37,6 +37,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            type=ref,event=branch
             type=sha,prefix=sha-,format=short
 
       - name: Set up Docker Buildx
