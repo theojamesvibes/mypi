@@ -4,6 +4,14 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.8.0-dev.16] — 2026-04-20
+
+### Changed
+
+- **Circuit-breaker and auth-backoff tunables are now environment variables (`app/config.py`, `app/services/collector.py`, `app/services/pihole_client.py`, `.env.example`).** Previously `_CIRCUIT_FAIL_THRESHOLD` (3), `_CIRCUIT_COOLDOWN` (300 s), `_CIRCUIT_DEDUP_WINDOW` (2 s), and `AUTH_BACKOFF_SECONDS` (300 s) were module-level constants — operators had to rebuild the image to retune a flap-prone Pi-hole. They're now `CIRCUIT_FAIL_THRESHOLD`, `CIRCUIT_COOLDOWN_SECONDS`, `CIRCUIT_DEDUP_SECONDS`, and `AUTH_BACKOFF_SECONDS` on `Settings`, loaded from `.env` via pydantic-settings. Defaults are identical to the previous hard-coded values so behaviour is unchanged unless an override is set. Motivated by Grok's dev.15 audit — zero new behaviour, pure knob exposure.
+
+---
+
 ## [1.8.0-dev.15] — 2026-04-20
 
 ### Fixed
