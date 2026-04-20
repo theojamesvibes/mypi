@@ -53,8 +53,11 @@ _background_tasks: set[asyncio.Task] = set()
 # every handshake until restarted; hammering it at the normal cadence only
 # prolongs the wedge.  Stats and queries share the same breaker state keyed
 # by instance id — they hit the same FTL.
-_CIRCUIT_FAIL_THRESHOLD = 3
-_CIRCUIT_COOLDOWN = timedelta(minutes=5)
+# Tunables are sourced from Settings (env-overridable) so operators can
+# retune a flap-prone Pi-hole without a rebuild.  Defaults match the hard-coded
+# values that preceded 1.8.0-dev.16.
+_CIRCUIT_FAIL_THRESHOLD = settings.circuit_fail_threshold
+_CIRCUIT_COOLDOWN = timedelta(seconds=settings.circuit_cooldown_seconds)
 # Stats and queries polls are scheduled concurrently and hit the same FTL over
 # the same persistent TCP/TLS connection.  When that connection goes bad both
 # polls fail in the same tick.  Without dedup, each tick would advance the
@@ -62,7 +65,7 @@ _CIRCUIT_COOLDOWN = timedelta(minutes=5)
 # is what made pihole1 flap under dev.10).  Any failures within this window
 # of the last counted failure are treated as the same event and don't
 # increment.
-_CIRCUIT_DEDUP_WINDOW = 2.0  # seconds
+_CIRCUIT_DEDUP_WINDOW = settings.circuit_dedup_seconds
 _consec_failures: dict[str, int] = {}
 _cooldown_until: dict[str, datetime] = {}
 _last_failure_at: dict[str, float] = {}

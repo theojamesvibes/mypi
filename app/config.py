@@ -60,6 +60,19 @@ class Settings(BaseSettings):
     queries_poll_interval: int = 10
     data_retention_days: int = 30
 
+    # Per-instance circuit breaker — suspends polling for a wedged Pi-hole
+    # after N consecutive failures, for M seconds, instead of hammering it at
+    # the normal cadence.  Failures within the dedup window of the previous
+    # failure count as the same event (stats+queries share the connection).
+    circuit_fail_threshold: int = 3
+    circuit_cooldown_seconds: int = 300
+    circuit_dedup_seconds: float = 2.0
+
+    # PiholeClient auth backoff — on 429 from /api/auth, don't retry for this
+    # many seconds.  Protects Pi-hole from auth hammering when its session
+    # table is saturated; surfaces as a periodic WARN in the log.
+    auth_backoff_seconds: int = 300
+
     @field_validator("database_url")
     @classmethod
     def validate_database_url(cls, v: str) -> str:

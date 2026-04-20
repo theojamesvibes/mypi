@@ -10,6 +10,8 @@ from typing import Any
 
 import httpx
 
+from app.config import settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -53,7 +55,10 @@ class PiholeVersionInfo:
     web: ComponentVersion = field(default_factory=ComponentVersion)
 
 
-AUTH_BACKOFF_SECONDS = 300  # don't retry auth for 5 minutes after a 429
+# Sourced from Settings so the backoff can be tuned per-deployment (e.g. a
+# Pi-hole fleet with a higher webserver.api.max_sessions might want a shorter
+# window).  Default matches the hard-coded value that preceded 1.8.0-dev.16.
+AUTH_BACKOFF_SECONDS = settings.auth_backoff_seconds
 
 
 class PiholeClient:
