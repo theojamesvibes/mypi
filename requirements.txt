@@ -9,7 +9,7 @@ pydantic-settings==2.7.0
 pyyaml==6.0.3
 python-jose[cryptography]==3.3.0
 bcrypt==4.3.0
-python-multipart==0.0.20
+python-multipart==0.0.26
 jinja2==3.1.6
 apscheduler==3.10.4
 cryptography==44.0.0
