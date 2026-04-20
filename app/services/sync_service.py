@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
+import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal
@@ -45,6 +47,26 @@ _schedule_minutes: int = 0
 _auto_gravity: bool = False
 _schedule_task: asyncio.Task | None = None
 _last_blocklist_count: int | None = None
+
+# Fire-and-forget background tasks spawned from this module. asyncio only
+# keeps weak references to tasks, so without stashing them here they can be
+# GC'd mid-run. `_spawn` adds a task to this set and removes it on completion,
+# logging any uncaught exception.
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _spawn(coro) -> None:
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+
+    def _done(t: asyncio.Task) -> None:
+        _background_tasks.discard(t)
+        if not t.cancelled():
+            exc = t.exception()
+            if exc is not None:
+                logger.exception("sync_service background task failed", exc_info=exc)
+
+    task.add_done_callback(_done)
 
 _sync_opts: dict = {
     "import_config": True,
@@ -119,50 +141,12 @@ async def load_schedule() -> None:
     """Load persisted schedule and last sync result from DB (called at startup)."""
     global _schedule_minutes, _auto_gravity, _sync_opts, _state
 
-    # ── Startup diagnostic: dump entire app_settings table via raw SQL ─────────
-    try:
-        async with AsyncSessionLocal() as db:
-            rows = (await db.execute(text("SELECT key, value FROM app_settings"))).all()
-        if rows:
-            logger.warning("STARTUP: app_settings table contains %d row(s): %s",
-                           len(rows), [r[0] for r in rows])
-        else:
-            logger.warning("STARTUP: app_settings table is EMPTY — no persisted settings found")
-    except Exception as exc:
-        logger.error("STARTUP: could not read app_settings table: %s — "
-                     "check that migration 0004 ran and DB is accessible", exc)
-        return
-
-    # ── Verify DB is writable by round-tripping a test key ────────────────────
-    try:
-        test_val = "startup_write_test"
-        async with AsyncSessionLocal() as db:
-            await db.execute(
-                text("INSERT INTO app_settings (key, value) VALUES (:k, :v) "
-                     "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"),
-                {"k": "_startup_test", "v": test_val},
-            )
-            await db.commit()
-        async with AsyncSessionLocal() as db:
-            result = (await db.execute(
-                text("SELECT value FROM app_settings WHERE key = '_startup_test'")
-            )).scalar_one_or_none()
-        if result != test_val:
-            logger.error("STARTUP: DB write/read-back test FAILED — wrote %r, read back %r. "
-                         "Settings will NOT persist.", test_val, result)
-            return
-        logger.warning("STARTUP: DB write/read-back test passed — database is writable")
-    except Exception as exc:
-        logger.error("STARTUP: DB write test raised exception: %s", exc)
-        return
-
-    # ── Load actual settings ───────────────────────────────────────────────────
     try:
         async with AsyncSessionLocal() as db:
             schedule_row = await db.get(AppSetting, "sync_schedule")
             result_row = await db.get(AppSetting, "sync_last_result")
     except Exception as exc:
-        logger.error("STARTUP: failed to load settings from DB: %s", exc)
+        logger.error("Failed to load sync settings from DB: %s", exc)
         return
 
     # Restore schedule
@@ -207,9 +191,13 @@ async def load_schedule() -> None:
     else:
         logger.info("No persisted sync result found in DB.")
 
-    # Re-arm interval task if schedule was active
+    # Re-arm interval task if schedule was active. Stash the task in
+    # _schedule_task so set_schedule(...) can cancel it on reconfiguration
+    # (without this, a startup-armed loop and a user-armed loop would run
+    # concurrently after the first PUT /api/sync/schedule).
     if _schedule_minutes > 0:
-        asyncio.create_task(_scheduled_loop(_schedule_minutes))
+        global _schedule_task
+        _schedule_task = asyncio.create_task(_scheduled_loop(_schedule_minutes))
         logger.info("Re-armed sync schedule: every %d minutes.", _schedule_minutes)
 
 
@@ -267,7 +255,9 @@ async def notify_blocklist_count(count: int) -> None:
         )
         _last_blocklist_count = count
         if not _lock.locked():
-            asyncio.create_task(run_sync(**_sync_opts))
+            # _spawn keeps a strong ref + logs uncaught exceptions; bare
+            # asyncio.create_task drops the result and risks GC mid-run.
+            _spawn(run_sync(**_sync_opts))
     else:
         _last_blocklist_count = count
 
@@ -348,6 +338,13 @@ async def run_sync(
                 ) from last_exc
             logger.info("Exported teleporter from master %s (%d bytes)", master.name, len(zip_data))
 
+            # Validate the master's export before broadcasting it. If the
+            # archive is truncated, zero-length, or corrupt, we fail the whole
+            # sync here so no replica overwrites its working config with
+            # garbage.
+            _validate_teleporter_zip(zip_data)
+            logger.info("Teleporter ZIP from master %s passed validation", master.name)
+
             # Step 3: Push to each replica concurrently, then run gravity on each.
             # The teleporter ZIP carries the master's adlists and domain lists, but the
             # compiled gravity table is rebuilt by Pi-hole FTL during a gravity run.
@@ -411,15 +408,51 @@ async def run_sync(
                 results=results,
             )
 
-        asyncio.create_task(_persist_sync_state(_state))
+        _spawn(_persist_sync_state(_state))
         if _state.status == "error":
-            asyncio.create_task(
+            _spawn(
                 pushover_service.notify_sync_failure(_state.error or "One or more replicas failed to sync")
             )
         # Refresh Pi-hole version info after sync — FTL may have restarted on
         # replicas after the teleporter import, so give it a moment to come back.
-        asyncio.create_task(_refresh_versions_post_sync())
+        _spawn(_refresh_versions_post_sync())
         return _state
+
+
+def _validate_teleporter_zip(data: bytes) -> None:
+    """Sanity-check the master's teleporter export before broadcasting it.
+
+    Pi-hole v6's teleporter endpoint is the single commit point on each
+    replica — there is no server-side staging or rollback. If the master
+    hands back a corrupt or empty archive, we would overwrite every
+    replica's working config with garbage. This check is the guard that
+    keeps a bad export from fanning out.
+
+    Minimal bytes: Pi-hole v6 teleporters contain pihole.toml plus the
+    gravity schema and are never below ~1 KB in practice; anything
+    smaller is a truncated or empty response.
+    """
+    min_bytes = 1024
+    if len(data) < min_bytes:
+        raise RuntimeError(
+            f"Teleporter export from master is only {len(data)} bytes "
+            f"(expected ≥{min_bytes}) — refusing to broadcast a likely-truncated archive"
+        )
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            bad_member = zf.testzip()
+            if bad_member is not None:
+                raise RuntimeError(
+                    f"Teleporter ZIP member '{bad_member}' failed CRC — archive is corrupt"
+                )
+            infos = zf.infolist()
+            if not infos:
+                raise RuntimeError("Teleporter ZIP contains no members")
+            total_uncompressed = sum(i.file_size for i in infos)
+            if total_uncompressed == 0:
+                raise RuntimeError("Teleporter ZIP members are all zero-length")
+    except zipfile.BadZipFile as exc:
+        raise RuntimeError(f"Teleporter export is not a valid ZIP archive: {exc}") from exc
 
 
 async def _refresh_versions_post_sync() -> None:
