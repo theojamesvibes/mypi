@@ -4,6 +4,60 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.8.0] — 2026-04-20
+
+1.8.0 closes the `hardening-review` branch. The `dev.1` … `dev.16` entries below capture the full per-iteration detail; this top-level summary is what changed versus **1.7.6**.
+
+### Added
+- **Read-only API keys** — `api_keys.is_read_only` column (migration `0009`); `require_mutation` dependency rejects read-only keys from every mutation endpoint with `403`.
+- **Security headers middleware** — `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: same-origin`, Content-Security-Policy, and `Strict-Transport-Security` (when `SECURE_COOKIES=true`).
+- **Rate limits on mutation endpoints** — `/api/sync` (10/min), `/api/domains/{deny,allow}` (30/min each), `/api/notifications/test` (5/min), `/api/notifications/validate` (10/min), `/api/auth/change-password` (5/min).
+- **Audit logging on every mutation handler** — `user=<username>` + action + target, across domains, auth, sync, instances, notifications, and poll settings.
+- **Pushover credentials encrypted at rest** using the same Fernet key already protecting Pi-hole API passwords; legacy plaintext rows detected and transparently re-encrypted on next save.
+- **Optional split secrets** — `JWT_SECRET_KEY` and `API_KEY_SALT` let operators rotate JWT signing or API key HMAC independently; both fall back to `SECRET_KEY`.
+- **Teleporter ZIP validation** — master's export is CRC-checked and sanity-validated client-side before any replica receives it (Pi-hole v6 has no server-side staging — a bad export would otherwise overwrite every replica).
+- **Per-instance circuit breaker** — a flap-prone Pi-hole is suspended for a cooldown after N consecutive connection failures; one probe poll closes it on success or re-arms it on failure. Stats and queries share breaker state keyed by instance id. Tunable via `CIRCUIT_FAIL_THRESHOLD` / `CIRCUIT_COOLDOWN_SECONDS` / `CIRCUIT_DEDUP_SECONDS`; `AUTH_BACKOFF_SECONDS` exposes the 429-retry cooldown.
+- **Clean session logout** — `PiholeClient.close(logout=True)` now issues `DELETE /api/auth` on shutdown / instance removal so SID slots are released immediately (prevents `webserver.api.max_sessions` saturation across repeated restarts).
+- **Periodic backoff-reminder WARN** once per 60 s while the auth backoff is active, so operators can see *why* an instance isn't reauthenticating.
+- **API-key traffic tagged in the log** — every request authenticated via `X-API-Key` emits one INFO line naming the key; cookie/Bearer traffic is silent.
+- **Dark mode on `/docs`** (Swagger UI) — follows the dashboard theme live, including system-preference changes.
+- **Dependabot** on a weekly schedule covering `pip`, `github-actions`, and `docker`.
+- **Dockerfile hardening** — image runs as unprivileged user `app` (UID 1000); `HEALTHCHECK` against `/api/health` via `curl`.
+
+### Changed
+- **`ENABLE_API_DOCS` default flipped to `false`** — fail-closed. Set `ENABLE_API_DOCS=true` in `.env` to re-enable `/docs`, `/redoc`, and `/openapi.json` together (e.g. for regenerating an iOS OpenAPI client).
+- **HTTP keepalive re-enabled on the Pi-hole client** (`max_keepalive_connections=2`) — the 1.7.6 `keepalive=0` override was redundant with the self-healing eviction path and expensive on slow hardware (2 TLS handshakes/min/instance wedged FTL's civetweb TLS stack periodically on a Raspberry Pi 3).
+- **Background tasks tracked** — every `asyncio.create_task` spawned from `main.py`, `sync_service.py`, and `collector.py` is now stashed in a module-level set so uncaught exceptions log instead of vanishing, and schedule loops can be cancelled and replaced cleanly.
+- **Circuit-breaker + auth-backoff tunables exposed as environment variables** so operators can retune a flap-prone Pi-hole without rebuilding.
+
+### Fixed
+- `/openapi.json` 500 caused by `from __future__ import annotations` + slowapi wrappers in `app/api/domains.py`.
+- `/api/auth/logout` Bearer-token revocation — the `Authorization` param was declared as `Cookie` instead of `Header`, so Bearer logouts never added the JTI to `revoked_tokens`.
+- Collector dict leak — `_prev_status`, `_offline_retry_count`, `_offline_alert_count` now pruned alongside `_last_seen_ts` on instance deactivation.
+- `_readonly_flag` ContextVar reset race in `app/auth.py::get_current_user`.
+- `YAML load failures` no longer crash startup — a malformed `pihole_instances.yml` now starts the app with no instances instead of erroring before lifespan runs.
+- `api_keys.user_id` FK now has `ON DELETE CASCADE` at the DB layer (migration `0010`).
+- Persistent Pi-hole clients are evicted when an instance is removed from the YAML.
+- Sync service no longer leaks untracked scheduled-loop or auto-sync tasks; schedule reloads cancel and replace cleanly.
+- `pushover.save_settings` no longer updates in-memory state before DB verify.
+- Sidebar "API Docs" link hidden when `ENABLE_API_DOCS=false` (dev.7 missed the persistent nav entry).
+- `poll_settings.save_poll_settings` no longer echoes raw exceptions (schema/column leak vector).
+- App lifespan now disposes the asyncpg engine on shutdown so the connection pool is released cleanly.
+- Eviction-triggered `DELETE /api/auth` regression from dev.14 fixed in dev.15 — `close()` now takes a `logout` kwarg and only truly-done paths pass `logout=True`.
+
+### Removed
+- Dead code: `PiholeClient.get_top_stats`, `PiholeClient.get_history`, `PiholeTopStats`, `Settings.validate_encryption_key_at_startup`, and the `load_schedule` startup diagnostic that re-wrote `app_settings` on every boot.
+
+### Independent reviews
+
+1.8.0 incorporates fixes identified by two external LLM-based audits — **Google Gemini** (adversarial security review) and **Grok** (full architecture + security review). See README → *Independent reviews* for the items verified as already-correct and the items changed in response.
+
+### Known, accepted behaviour
+
+- **Low-traffic / hot-standby Pi-holes may occasionally flap.** Pi-hole v6's CivetWeb closes idle keepalive sockets on a short timeout that is not exposed in the Pi-hole UI or `.toml`. The circuit breaker absorbs the flap locally; if the 5-minute cooldown crosses the offline-alert threshold, raise the offline-alert retry count in Settings → Notifications. See README → *Low-traffic or hot-standby Pi-holes*.
+
+---
+
 ## [1.8.0-dev.16] — 2026-04-20
 
 ### Changed
