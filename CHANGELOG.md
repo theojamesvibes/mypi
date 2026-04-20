@@ -4,6 +4,22 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.8.0-dev.12] — 2026-04-20
+
+### Changed
+
+- **Reverted the dev.11 channel split in `app/services/client_manager.py` — back to one `PiholeClient` per instance.** The channel-per-poll-type design fixed dev.10's breaker double-count but introduced a worse failure on slow hardware: every dev.11 eviction triggered *two* simultaneous `POST /api/auth` calls (stats + queries) against the same FTL. pihole3's Raspberry Pi 3 couldn't serve two concurrent argon2 password verifications + TLS handshakes — both auths failed, both channels stayed in an "Authentication failed" loop, and the instance flapped within ~30 minutes of a fresh RPi reboot. pihole1/pihole2 tolerated the auth storm on faster hardware; pihole3 did not. One session per instance (dev.10 structure) is what actually worked on this hardware.
+
+### Added
+
+- **Circuit-breaker failure dedup in `app/services/collector.py` (`_CIRCUIT_DEDUP_WINDOW = 2.0` seconds).** This is the 5-line fix for the original dev.10 problem the channel split was trying to solve. Stats and queries are scheduled concurrently and share the persistent TCP/TLS connection — when it goes bad both polls fail in the same tick. `_breaker_failure` now treats any failure within 2 s of the last counted failure as the same underlying event and doesn't increment the counter. The breaker still trips on three genuinely independent failure events, just not on the same connection dying once. Without this, pihole1 was flapping under dev.10 because a single transient idle-close counted as 2 toward the threshold of 3.
+
+### Fixed
+
+- **Auth failures are now logged at WARNING with the actual cause (`app/services/pihole_client.py::_authenticate`).** Previously a 4xx/5xx auth response was silently dropped and an httpx transport error (SSL handshake, timeout, connection reset during auth) was logged at DEBUG — operators only ever saw the generic downstream `ConnectionError: Authentication failed for <url>`. Now each branch logs the HTTP status + response snippet or the exception type + message, so the next time pihole3 wedges we'll see *why* auth failed instead of having to guess. This is how we would have diagnosed the dev.11 auth storm in minutes instead of an hour.
+
+---
+
 ## [1.8.0-dev.11] — 2026-04-20
 
 ### Fixed

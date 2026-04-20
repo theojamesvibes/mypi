@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import load_instance_configs
 from app.models.pihole import PiholeInstance
-from app.services.client_manager import close_instance
+from app.services.client_manager import close_client
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ async def sync_instances(db: AsyncSession) -> None:
     # is no longer part of the active set.
     for key in deactivated_keys:
         try:
-            await close_instance(key)
+            await close_client(key)
         except Exception as exc:
             logger.warning("Failed to close client for deactivated instance %s: %s", key, exc)
 
