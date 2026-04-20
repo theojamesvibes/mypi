@@ -344,7 +344,7 @@ async def poll_queries() -> None:
             del _last_failure_at[key]
     for key in list(_last_seen_ts):
         if key not in active_keys:
-            await close_client(key)
+            await close_client(key, logout=True)
 
     await asyncio.gather(*[_poll_queries_for(inst) for inst in instances])
 

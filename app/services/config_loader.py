@@ -61,7 +61,7 @@ async def sync_instances(db: AsyncSession) -> None:
     # is no longer part of the active set.
     for key in deactivated_keys:
         try:
-            await close_client(key)
+            await close_client(key, logout=True)
         except Exception as exc:
             logger.warning("Failed to close client for deactivated instance %s: %s", key, exc)
 

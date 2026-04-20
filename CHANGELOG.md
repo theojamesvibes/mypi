@@ -4,6 +4,14 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.8.0-dev.15] — 2026-04-20
+
+### Fixed
+
+- **Stop issuing `DELETE /api/auth` on connection-error evictions (`app/services/pihole_client.py::close`, `app/services/client_manager.py::close_client`).** dev.14 made `PiholeClient.close()` unconditionally issue `DELETE /api/auth` before tearing down httpx. That was the right fix for the shutdown path (release Pi-hole session slots immediately) but it also fired on the collector's connection-error eviction path — and eviction there fires once per minute on pihole3's flap-prone keepalive. Each eviction destroyed a SID that was still valid on Pi-hole's side, so the next poll would come back, restore the SID from DB, get a `401`, and have to re-auth. Logs at 15:26–15:28 showed the pattern clearly: eviction → DELETE → restored SID → `401` → `POST /api/auth` → `200`, every minute. `close()` now takes a keyword-only `logout` flag (default `False`). Only the shutdown (`close_all_clients`), config-loader removal (`config_loader.py`), and active-set pruning (`collector.py` watermark cleanup) paths pass `logout=True`. Connection-error evictions in `poll_stats`/`poll_queries` keep the default — drop the broken TCP connection and the stale local state, but leave the SID intact for the next poll to reuse. The logout path also now clears the persisted SID in the DB (`save_sid(..., None)`) so a later startup doesn't try a known-dead one.
+
+---
+
 ## [1.8.0-dev.14] — 2026-04-20
 
 ### Fixed
