@@ -4,6 +4,31 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.8.1] — 2026-04-20
+
+First Dependabot sweep after activating `.github/dependabot.yml` in 1.8.0. No code changes — all bumps came in as Dependabot PRs, each CI-green before merge. Higher-risk majors (fastapi, bcrypt, cryptography, uvicorn, python 3.14) are held open as PRs for separate review.
+
+### Changed
+
+- **Python dependencies (`requirements.txt`):**
+  - `pydantic` 2.10.3 → 2.13.3
+  - `pydantic-settings` 2.7.0 → 2.14.0
+  - `sqlalchemy` 2.0.36 → 2.0.49
+  - `alembic` 1.14.0 → 1.18.4
+  - `asyncpg` 0.30.0 → 0.31.0
+  - `python-jose` 3.3.0 → 3.5.0
+  - `python-multipart` 0.0.20 → 0.0.26
+  - `jinja2` 3.1.4 → 3.1.6
+  - `pyyaml` 6.0.2 → 6.0.3
+- **GitHub Actions (`.github/workflows/docker-publish.yml`):**
+  - `actions/checkout` 4.2.2 → 6.0.2
+  - `docker/setup-buildx-action` 3.10.0 → 4.0.0
+  - `docker/build-push-action` 6.15.0 → 7.1.0
+  - `docker/login-action` 3.3.0 → 4.1.0
+  - `docker/metadata-action` 5.6.1 → 6.0.0
+
+---
+
 ## [1.8.0] — 2026-04-20
 
 1.8.0 closes the `hardening-review` branch. The `dev.1` … `dev.16` entries below capture the full per-iteration detail; this top-level summary is what changed versus **1.7.6**.
