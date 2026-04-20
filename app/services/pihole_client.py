@@ -98,13 +98,13 @@ class PiholeClient:
     def sid(self, value: str | None) -> None:
         self._sid = value
 
-    async def close(self) -> None:
-        # Best-effort session logout so Pi-hole releases our session slot
-        # immediately instead of waiting out its inactivity timeout.  Without
-        # this, repeated MyPi restarts leak sessions into Pi-hole's
-        # `webserver.api.max_sessions` pool and eventually trigger 429 on
-        # re-auth.  Failure is non-fatal — shutdown must always complete.
-        if self._client and self._sid:
+    async def close(self, *, logout: bool = False) -> None:
+        # Only issue DELETE /api/auth when the caller is truly done with this
+        # session (shutdown, instance removed from YAML).  Transient
+        # connection-error evictions must NOT logout — the SID is still valid
+        # on Pi-hole's side and the next poll can reuse it; destroying it here
+        # forces an unnecessary re-auth every minute on flap-prone hardware.
+        if logout and self._client and self._sid:
             try:
                 await self._client.delete(
                     f"{self.base_url}/api/auth",
@@ -116,7 +116,8 @@ class PiholeClient:
         if self._client:
             await self._client.aclose()
         self._client = None
-        self._sid = None
+        if logout:
+            self._sid = None
         self._no_auth = False
         self._last_backoff_warn = 0.0
 
