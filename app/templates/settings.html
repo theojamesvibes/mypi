@@ -462,9 +462,15 @@
         <div class="card-header"><i class="bi bi-code-slash me-1"></i>REST API</div>
         <div class="card-body">
           <p class="mb-1 small">The MyPi API is available at <code>/api/</code>.
+             {% if enable_api_docs %}
              Full interactive documentation is at
              <a href="/docs" target="_blank">/docs</a> (Swagger UI) and
-             <a href="/redoc" target="_blank">/redoc</a>.</p>
+             <a href="/redoc" target="_blank">/redoc</a>.
+             {% else %}
+             Interactive documentation is disabled by default — set
+             <code>ENABLE_API_DOCS=true</code> in <code>.env</code> to expose
+             <code>/docs</code> and <code>/redoc</code>.
+             {% endif %}</p>
           <p class="mb-0 small text-muted">Use <code>Authorization: Bearer &lt;token&gt;</code> or
              <code>X-API-Key: &lt;key&gt;</code> to authenticate API requests.</p>
         </div>

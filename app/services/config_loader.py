@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import load_instance_configs
 from app.models.pihole import PiholeInstance
+from app.services.client_manager import close_client
 
 logger = logging.getLogger(__name__)
 
@@ -46,10 +47,22 @@ async def sync_instances(db: AsyncSession) -> None:
     # Deactivate instances that were removed from config
     result = await db.execute(select(PiholeInstance))
     all_instances = result.scalars().all()
+    deactivated_keys: list[str] = []
     for inst in all_instances:
-        if inst.name not in config_names:
+        if inst.name not in config_names and inst.is_active:
             inst.is_active = False
+            deactivated_keys.append(str(inst.id))
             logger.info("Deactivated removed Pi-hole instance: %s", inst.name)
 
     await db.commit()
+
+    # Evict any persistent clients for instances we just deactivated. Without
+    # this, client_manager would keep a session open against a Pi-hole that
+    # is no longer part of the active set.
+    for key in deactivated_keys:
+        try:
+            await close_client(key, logout=True)
+        except Exception as exc:
+            logger.warning("Failed to close client for deactivated instance %s: %s", key, exc)
+
     logger.info("Pi-hole instance sync complete. %d instance(s) active.", len(configs))
