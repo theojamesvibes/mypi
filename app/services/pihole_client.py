@@ -142,8 +142,24 @@ class PiholeClient:
                         "Rate limited by %s — pausing auth for %ds",
                         self.base_url, AUTH_BACKOFF_SECONDS,
                     )
+                else:
+                    # Non-200 non-429 — surface the status and a short body snippet
+                    # so operators can tell a wrong password (401) from a server
+                    # error (5xx) without having to crank the log level.
+                    snippet = resp.text[:200] if resp.content else ""
+                    logger.warning(
+                        "Pi-hole auth to %s returned HTTP %d: %s",
+                        self.base_url, resp.status_code, snippet,
+                    )
             except httpx.HTTPError as exc:
-                logger.debug("Pi-hole auth failed for %s: %s", self.base_url, exc)
+                # Connection-level failures during auth (SSL handshake, timeout,
+                # read error) used to be hidden at DEBUG — operators only saw
+                # the generic downstream "Authentication failed" ConnectionError.
+                # Surface the real cause so slow/flaky hardware is diagnosable.
+                logger.warning(
+                    "Pi-hole auth to %s failed at transport layer: %s: %s",
+                    self.base_url, type(exc).__name__, exc,
+                )
             return False
 
     def _headers(self) -> dict[str, str]:
