@@ -4,6 +4,16 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.8.0-dev.10] — 2026-04-20
+
+### Fixed
+
+- **Re-enabled HTTP keepalive on the Pi-hole client (`app/services/pihole_client.py::open`).** The 1.7.6 hardening shipped `max_keepalive_connections=0`, which forced a fresh TCP + TLS handshake on every request. That was belt-and-suspenders on top of the self-healing eviction path in `app/services/collector.py` (which already swaps a dead client on `ssl.SSLError | ConnectError | RemoteProtocolError`). On slow hardware — a Raspberry Pi 3 running Pi-hole/FTL — the resulting 2 TLS handshakes per minute per instance periodically wedged FTL's civetweb TLS stack and produced the `SSLV3_ALERT_HANDSHAKE_FAILURE` recurrence the dev.8 circuit breaker was added to absorb. Bumped the limit to `max_keepalive_connections=2` so the persistent PiholeClient reuses its TCP/TLS connection across polls; the eviction path and the dev.8 breaker remain as safety nets if a connection does go bad.
+
+  **Why this is the right fix and not a regression:** the original 1.7.6 bug was half-open connections accumulating; the eviction-on-error path shipped in the *same* commit is what actually closes that loop. The `keepalive=0` override was redundant, and in this soak window we learned it has a real cost on slow targets.
+
+---
+
 ## [1.8.0-dev.9] — 2026-04-20
 
 ### Fixed

@@ -68,12 +68,23 @@ class PiholeClient:
         self._auth_lock: asyncio.Lock = asyncio.Lock()
 
     async def open(self) -> None:
-        """Open the underlying HTTP client. Call once and reuse the instance."""
+        """Open the underlying HTTP client. Call once and reuse the instance.
+
+        Connection keepalive is enabled so repeat polls reuse the same TCP/TLS
+        connection.  The 1.7.6 hardening shipped with `max_keepalive_connections=0`
+        to prevent half-open connection accumulation, but the self-healing
+        eviction in `collector.py` on `ssl.SSLError | ConnectError |
+        RemoteProtocolError` already handles dead connections — killing
+        keepalive turned out to be belt-and-suspenders that forced a fresh TLS
+        handshake on every request.  On slow hardware (Raspberry Pi 3) the
+        resulting handshake churn periodically wedged FTL's TLS stack, so we
+        rely on the eviction path alone and let httpx reuse connections.
+        """
         from app.config import settings
         self._client = httpx.AsyncClient(
             timeout=self.timeout,
             verify=settings.verify_pihole_ssl,
-            limits=httpx.Limits(max_keepalive_connections=0, max_connections=2),
+            limits=httpx.Limits(max_keepalive_connections=2, max_connections=2),
         )
 
     @property
