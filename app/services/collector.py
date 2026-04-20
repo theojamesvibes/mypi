@@ -44,6 +44,51 @@ _offline_alert_count: dict[str, int] = {}
 # that a failed notify doesn't silently vanish.
 _background_tasks: set[asyncio.Task] = set()
 
+# Per-instance circuit breaker.  After N consecutive SSL/connection failures
+# against one Pi-hole, skip polls for that instance until the cooldown expires.
+# The first poll after cooldown is a "probe" — success closes the breaker,
+# another failure re-arms it.  Motivated by Pi-hole FTL on slow hardware
+# (Raspberry Pi 3) occasionally wedging its TLS session table and rejecting
+# every handshake until restarted; hammering it at the normal cadence only
+# prolongs the wedge.  Stats and queries share the same breaker state keyed
+# by instance id — they hit the same FTL.
+_CIRCUIT_FAIL_THRESHOLD = 3
+_CIRCUIT_COOLDOWN = timedelta(minutes=5)
+_consec_failures: dict[str, int] = {}
+_cooldown_until: dict[str, datetime] = {}
+
+
+class _CircuitOpen(Exception):
+    """Raised internally when the per-instance breaker is in cooldown."""
+
+
+def _breaker_allows(key: str, name: str) -> bool:
+    until = _cooldown_until.get(key)
+    if until is None:
+        return True
+    if datetime.now(timezone.utc) >= until:
+        logger.info("Circuit breaker probe for %s (cooldown elapsed)", name)
+        return True
+    return False
+
+
+def _breaker_success(key: str, name: str) -> None:
+    if key in _cooldown_until or _consec_failures.get(key):
+        logger.info("Circuit breaker closed for %s after successful poll", name)
+    _consec_failures.pop(key, None)
+    _cooldown_until.pop(key, None)
+
+
+def _breaker_failure(key: str, name: str) -> None:
+    count = _consec_failures.get(key, 0) + 1
+    _consec_failures[key] = count
+    if count >= _CIRCUIT_FAIL_THRESHOLD:
+        _cooldown_until[key] = datetime.now(timezone.utc) + _CIRCUIT_COOLDOWN
+        logger.warning(
+            "Circuit breaker tripped for %s (%d consecutive failures) — "
+            "cooling down for %s", name, count, _CIRCUIT_COOLDOWN,
+        )
+
 
 def _spawn(coro) -> None:
     task = asyncio.create_task(coro)
@@ -66,7 +111,10 @@ async def _get_active_instances() -> list[PiholeInstance]:
 
 
 async def _poll_stats_for(instance: PiholeInstance) -> None:
+    key = str(instance.id)
     try:
+        if not _breaker_allows(key, instance.name):
+            raise _CircuitOpen
         client = await get_client(instance)
         summary = await client.get_summary()
         await save_sid(instance.id, client.sid)
@@ -82,11 +130,19 @@ async def _poll_stats_for(instance: PiholeInstance) -> None:
             queries_cached=summary.queries_cached,
             queries_forwarded=summary.queries_forwarded,
         )
+        _breaker_success(key, instance.name)
+    except _CircuitOpen:
+        snapshot = StatsSnapshot(
+            instance_id=instance.id,
+            collected_at=datetime.now(timezone.utc),
+            status="offline",
+        )
     except Exception as exc:
         logger.warning("Failed to poll stats for %s: %s", instance.name, exc)
         if isinstance(exc, (ssl.SSLError, httpx.ConnectError, httpx.RemoteProtocolError)):
             logger.info("Connection error for %s — evicting client for next poll", instance.name)
-            await close_client(str(instance.id))
+            await close_client(key)
+            _breaker_failure(key, instance.name)
         snapshot = StatsSnapshot(
             instance_id=instance.id,
             collected_at=datetime.now(timezone.utc),
@@ -185,11 +241,14 @@ async def _poll_queries_for(instance: PiholeInstance) -> None:
     from_ts = _last_seen_ts.get(instance_key)
     logger.info("Polling queries for %s (from_ts=%s)", instance.name, from_ts)
     try:
+        if not _breaker_allows(instance_key, instance.name):
+            return
         client = await get_client(instance)
         queries = await client.get_queries(from_ts=from_ts, length=500)
 
         await save_sid(instance.id, client.sid)
         logger.info("Got %d queries from %s", len(queries), instance.name)
+        _breaker_success(instance_key, instance.name)
 
         if not queries:
             return
@@ -235,7 +294,8 @@ async def _poll_queries_for(instance: PiholeInstance) -> None:
         logger.warning("Failed to poll queries for %s: %s", instance.name, exc)
         if isinstance(exc, (ssl.SSLError, httpx.ConnectError, httpx.RemoteProtocolError)):
             logger.info("Connection error for %s — evicting client for next poll", instance.name)
-            await close_client(str(instance.id))
+            await close_client(instance_key)
+            _breaker_failure(instance_key, instance.name)
 
 
 async def poll_queries() -> None:
@@ -254,6 +314,12 @@ async def poll_queries() -> None:
     for key in list(_offline_alert_count):
         if key not in active_keys:
             del _offline_alert_count[key]
+    for key in list(_consec_failures):
+        if key not in active_keys:
+            del _consec_failures[key]
+    for key in list(_cooldown_until):
+        if key not in active_keys:
+            del _cooldown_until[key]
     for key in list(_last_seen_ts):
         if key not in active_keys:
             await close_client(key)
@@ -415,3 +481,5 @@ async def shutdown() -> None:
     _last_seen_ts.clear()
     _offline_retry_count.clear()
     _offline_alert_count.clear()
+    _consec_failures.clear()
+    _cooldown_until.clear()

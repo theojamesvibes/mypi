@@ -4,6 +4,20 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.8.0-dev.8] — 2026-04-20
+
+Reliability fix for slow/flaky Pi-hole instances observed during the 1.8.0 soak.
+
+### Added
+
+- **Per-instance circuit breaker in `app/services/collector.py`.** After 3 consecutive SSL/connection failures against a single Pi-hole, polling for that instance is suspended for 5 minutes; the first poll after cooldown is a probe that either closes the breaker on success or re-arms it on failure. Stats and queries share the same breaker state keyed by instance id (they hit the same FTL). The breaker only gates the network call — stats still writes an `offline` `StatsSnapshot` while the breaker is open, so the UI stays truthful and the existing Pushover retry-then-alert flow continues to work unchanged.
+
+  **Why:** the 1.7.6 self-healing eviction + `max_keepalive_connections=0` fix stops MyPi from accumulating half-open connections, but it cannot un-wedge a Pi-hole's FTL TLS session table once FTL itself gets stuck (reproduces periodically on a Raspberry Pi 3). Hammering at the normal cadence only prolongs the wedge; cooldowns give FTL room to recycle state and dramatically reduce the log-flood + online/offline flapping in the UI. Thresholds (`_CIRCUIT_FAIL_THRESHOLD = 3`, `_CIRCUIT_COOLDOWN = 5 min`) are module-level constants for now — can be promoted to env vars later if tuning proves necessary during soak.
+
+  Wired alongside the existing client-eviction path, pruned in `poll_queries()` when an instance is deactivated, and cleared in `shutdown()`.
+
+---
+
 ## [1.8.0-dev.7] — 2026-04-19
 
 Pre-1.8.0 stabilisation pass. Single behaviour change ahead of the soak window.
