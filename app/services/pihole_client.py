@@ -66,6 +66,9 @@ class PiholeClient:
         self._client: httpx.AsyncClient | None = None
         self._auth_blocked_until: float = 0.0
         self._auth_lock: asyncio.Lock = asyncio.Lock()
+        # monotonic timestamp of the last "auth in cooldown" WARN — used to
+        # rate-limit the reminder to once per minute while backoff is active.
+        self._last_backoff_warn: float = 0.0
 
     async def open(self) -> None:
         """Open the underlying HTTP client. Call once and reuse the instance.
@@ -96,11 +99,26 @@ class PiholeClient:
         self._sid = value
 
     async def close(self) -> None:
+        # Best-effort session logout so Pi-hole releases our session slot
+        # immediately instead of waiting out its inactivity timeout.  Without
+        # this, repeated MyPi restarts leak sessions into Pi-hole's
+        # `webserver.api.max_sessions` pool and eventually trigger 429 on
+        # re-auth.  Failure is non-fatal — shutdown must always complete.
+        if self._client and self._sid:
+            try:
+                await self._client.delete(
+                    f"{self.base_url}/api/auth",
+                    headers=self._headers(),
+                    timeout=5.0,
+                )
+            except Exception as exc:
+                logger.debug("Session logout for %s failed (non-fatal): %s", self.base_url, exc)
         if self._client:
             await self._client.aclose()
         self._client = None
         self._sid = None
         self._no_auth = False
+        self._last_backoff_warn = 0.0
 
     async def __aenter__(self) -> "PiholeClient":
         await self.open()
@@ -119,7 +137,19 @@ class PiholeClient:
             now = time.monotonic()
             if now < self._auth_blocked_until:
                 remaining = int(self._auth_blocked_until - now)
-                logger.debug("Auth blocked for %s — %ds remaining", self.base_url, remaining)
+                # The initial 429 is logged at WARN the moment backoff arms,
+                # but an operator tailing the log later in the window only sees
+                # the downstream generic "Authentication failed".  Surface a
+                # reminder at WARN every minute while the cooldown is active
+                # so the cause stays discoverable; in between, keep at DEBUG.
+                if now - self._last_backoff_warn >= 60.0:
+                    logger.warning(
+                        "Auth to %s is in cooldown — %ds remaining before next attempt",
+                        self.base_url, remaining,
+                    )
+                    self._last_backoff_warn = now
+                else:
+                    logger.debug("Auth blocked for %s — %ds remaining", self.base_url, remaining)
                 return False
             try:
                 resp = await self._client.post(

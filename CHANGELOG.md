@@ -4,6 +4,18 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.8.0-dev.14] — 2026-04-20
+
+### Fixed
+
+- **Clean session logout on client shutdown (`app/services/pihole_client.py::close`).** `PiholeClient.close()` now issues `DELETE /api/auth` with the current SID before tearing down the httpx client, so the session slot is released back to FTL immediately. Previously a MyPi restart (or any `client_manager.close_client` path) walked away silently and left the SID to expire on its own inactivity timeout. Across repeated restarts this accumulated stale sessions against Pi-hole's `webserver.api.max_sessions` (default 16) and eventually saturated the limit — which is exactly how a second MyPi deployment hit a `429 Too Many Requests` from its master (`mnpihole1`) mid-sync today and then stayed stuck in the auth backoff for the next 5 minutes. The DELETE is best-effort (5 s timeout, wrapped in try/except) — if the Pi-hole is already gone we still proceed with the local teardown.
+
+### Added
+
+- **Periodic backoff-reminder WARN while auth is in cooldown (`app/services/pihole_client.py::_authenticate`).** When a 429 triggers the 300-second `AUTH_BACKOFF_SECONDS` window, subsequent `_authenticate` calls are silently skipped — operators joining the log mid-window only saw the generic downstream `Authentication failed` and had no visibility into *why*. Now the first skip in each 60-second slice emits a WARN naming the instance and the remaining cooldown seconds (`Auth to <url> is in cooldown — Ns remaining before next attempt`). Still rate-limited to one WARN per minute so a stuck instance doesn't flood the log. Motivated by the same mnpihole1 incident — once the 429 landed, 5 minutes of downstream failures gave no hint that the client itself was deliberately not retrying.
+
+---
+
 ## [1.8.0-dev.13] — 2026-04-20
 
 ### Added
