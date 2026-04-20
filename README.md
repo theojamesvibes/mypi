@@ -1,6 +1,6 @@
 # MyPi
 [![build](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/docker-publish.yml?style=flat-square)](https://github.com/theojamesvibes/mypi/actions)
-[![version](https://img.shields.io/badge/version-1.8.0--dev.16-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
+[![version](https://img.shields.io/badge/version-1.8.0-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
 [![platform](https://img.shields.io/badge/platform-linux%2Famd64%20|%20linux%2Farm64-teal?style=flat-square)](https://github.com/theojamesvibes/mypi/pkgs/container/mypi)
 
 > **⚠️ Vibe Code Disclosure**
@@ -72,7 +72,18 @@ A self-hosted dashboard that consolidates up to 10 locally running [Pi-hole](htt
 - Full REST API under `/api/` with auto-generated OpenAPI docs (Swagger UI at `/docs`, ReDoc at `/redoc` — opt-in via `ENABLE_API_DOCS=true`)
 - Username/password login for the web UI (JWT session cookie)
 - API key auth (`X-API-Key` header) for mobile clients and automation
+- **Read-only API keys** — mark a key read-only on creation; the `require_mutation` dependency rejects it from every mutation endpoint with `403`. Session cookies and bearer JWTs are always full-access
 - Version badge in topbar is green (up to date) or red (update available), links to GitHub releases
+
+### Security & Hardening
+- **Security headers on every response** — `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: same-origin`, a Content-Security-Policy that denies framing and arbitrary external script origins, and `Strict-Transport-Security` when `SECURE_COOKIES=true`
+- **Rate limits on mutation endpoints** — `/api/sync` (10/min), `/api/domains/{deny,allow}` (30/min each), `/api/notifications/test` (5/min), `/api/notifications/validate` (10/min), `/api/auth/change-password` (5/min)
+- **Audit logging on mutations** — every mutation handler logs `user=<username>` plus the action and target, so the application log doubles as an audit trail
+- **Encrypted secrets at rest** — Pi-hole API passwords and Pushover credentials are Fernet-encrypted in PostgreSQL using `ENCRYPTION_KEY`
+- **Optional split secrets** — `JWT_SECRET_KEY` and `API_KEY_SALT` let you rotate JWT signing keys without invalidating API keys (or vice versa); both fall back to `SECRET_KEY` when unset
+- **Per-instance circuit breaker** — a flap-prone Pi-hole is absorbed locally: after N consecutive connection failures, polling for that instance is suspended for a cooldown window, then one probe either closes the breaker or re-arms it. Defaults: 3 failures, 300 s cooldown, 2 s dedup (stats+queries share one connection). Tunable via `CIRCUIT_FAIL_THRESHOLD` / `CIRCUIT_COOLDOWN_SECONDS` / `CIRCUIT_DEDUP_SECONDS`
+- **Container runs as non-root** (UID 1000, no shell); image ships with a `HEALTHCHECK` against `/api/health`
+- **Dependabot** on a weekly schedule covers `pip`, `github-actions`, and `docker` ecosystems
 
 ---
 
@@ -211,7 +222,14 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 | `DATA_RETENTION_DAYS` | `30` | Days of history to retain |
 | `SECURE_COOKIES` | `false` | Adds the `Secure` flag to session cookies and turns on HSTS. Enable when MyPi is behind a TLS-terminating reverse proxy. |
 | `VERIFY_PIHOLE_SSL` | `false` | Verify TLS certificates when connecting to Pi-hole instances. Leave `false` for self-signed certs on a trusted LAN. |
-| `ENABLE_API_DOCS` | `false` | Expose Swagger UI at `/docs`, ReDoc at `/redoc`, and the OpenAPI schema at `/openapi.json`. Default flipped to `false` in 1.8.0-dev.7 — fail-closed posture. Set to `true` when you actively need the docs (local development, regenerating an iOS OpenAPI client, etc.). |
+| `ENABLE_API_DOCS` | `false` | Expose Swagger UI at `/docs`, ReDoc at `/redoc`, and the OpenAPI schema at `/openapi.json`. Default flipped to `false` in 1.8.0 — fail-closed posture. Set to `true` when you actively need the docs (local development, regenerating an iOS OpenAPI client, etc.). |
+| `JWT_SECRET_KEY` | *(falls back to `SECRET_KEY`)* | Separate signing key for session JWTs. Set alongside `API_KEY_SALT` if you want to rotate one without invalidating the other. |
+| `API_KEY_SALT` | *(falls back to `SECRET_KEY`)* | Separate HMAC salt for stored API keys. |
+| `ENCRYPTION_KEY` | *(auto-generated on first boot)* | Fernet key used to encrypt Pi-hole API passwords and Pushover credentials at rest. Auto-generated and persisted to the database if unset; pin it in `.env` for portability. |
+| `CIRCUIT_FAIL_THRESHOLD` | `3` | Consecutive connection failures against one Pi-hole before the per-instance circuit breaker trips. |
+| `CIRCUIT_COOLDOWN_SECONDS` | `300` | How long polling is suspended for a tripped instance before the next probe. |
+| `CIRCUIT_DEDUP_SECONDS` | `2.0` | Window in which a stats+queries failure on the shared connection counts as one event. |
+| `AUTH_BACKOFF_SECONDS` | `300` | How long to pause `/api/auth` attempts after a `429 Too Many Requests` from a Pi-hole. Lower it if your fleet has a higher `webserver.api.max_sessions` and a 5-minute blackout is too long. |
 
 ### Pi-hole instances (`pihole_instances.yml`)
 
