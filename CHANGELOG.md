@@ -4,6 +4,14 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.8.0-dev.9] — 2026-04-20
+
+### Fixed
+
+- **Sidebar "API Docs" link no longer renders when `ENABLE_API_DOCS=false`.** The dev.7 gating covered the Settings page card but missed the persistent nav link in `app/templates/base.html`, so every authenticated page still showed a sidebar entry that 404'd on click. Now wrapped in `{% if enable_api_docs %}` — matches the Jinja global already wired in `app/main.py` and the existing gate in `app/templates/settings.html`.
+
+---
+
 ## [1.8.0-dev.8] — 2026-04-20
 
 Reliability fix for slow/flaky Pi-hole instances observed during the 1.8.0 soak.

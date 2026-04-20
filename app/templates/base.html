@@ -43,9 +43,11 @@
     <li class="nav-item {% if request.url.path == '/settings' %}active{% endif %}">
       <a href="/settings"><i class="bi bi-gear"></i><span> Settings</span></a>
     </li>
+    {% if enable_api_docs %}
     <li class="nav-item">
       <a href="/docs" target="_blank"><i class="bi bi-code-slash"></i><span> API Docs</span></a>
     </li>
+    {% endif %}
   </ul>
   <div class="sidebar-footer">
     <a href="/logout" class="btn btn-sm btn-outline-secondary w-100">
