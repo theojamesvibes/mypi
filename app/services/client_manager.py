@@ -7,6 +7,7 @@ than creating throwaway sessions on every operation.
 from __future__ import annotations
 
 import logging
+import uuid
 
 from app.database import AsyncSessionLocal
 from app.models.pihole import PiholeInstance
@@ -48,13 +49,26 @@ async def save_sid(instance_id: object, sid: str | None) -> None:
             await db.commit()
 
 
-async def close_client(instance_key: str) -> None:
+async def close_client(instance_key: str, *, logout: bool = False) -> None:
+    """Close and drop the cached client for *instance_key*.
+
+    ``logout=False`` (default) is the transient-eviction path: the SID stays
+    valid on Pi-hole and the next :func:`get_client` will reuse it from the DB.
+    ``logout=True`` is for shutdown or instance removal — issue DELETE /api/auth
+    so Pi-hole releases the session slot, then clear the persisted SID so a
+    later startup doesn't try a stale one.
+    """
     client = _clients.pop(instance_key, None)
     if client:
-        await client.close()
+        await client.close(logout=logout)
+    if logout:
+        try:
+            await save_sid(uuid.UUID(instance_key), None)
+        except Exception as exc:
+            logger.debug("Clearing persisted SID for %s failed (non-fatal): %s", instance_key, exc)
 
 
 async def close_all_clients() -> None:
     """Call on shutdown to cleanly close all persistent HTTP clients."""
     for key in list(_clients):
-        await close_client(key)
+        await close_client(key, logout=True)
