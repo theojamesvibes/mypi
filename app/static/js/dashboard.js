@@ -1279,9 +1279,7 @@ async function loadPushoverSettings() {
   set('po-enabled', data.enabled);
   set('po-alert-sync-failure', data.alert_sync_failure);
   set('po-alert-offline', data.alert_instance_offline);
-  set('po-alert-no-logs', data.alert_no_logs);
   set('po-alert-block-rate', data.alert_high_block_rate);
-  set('po-no-logs-minutes', data.no_logs_minutes);
   set('po-block-rate-pct', data.block_rate_threshold_pct);
   set('po-offline-retries', data.offline_alert_retries ?? 1);
   set('po-offline-max-count', data.offline_alert_max_count ?? 1);
@@ -1295,9 +1293,7 @@ async function savePushoverSettings() {
     enabled: get('po-enabled')?.checked ?? false,
     alert_sync_failure: get('po-alert-sync-failure')?.checked ?? true,
     alert_instance_offline: get('po-alert-offline')?.checked ?? true,
-    alert_no_logs: get('po-alert-no-logs')?.checked ?? true,
     alert_high_block_rate: get('po-alert-block-rate')?.checked ?? false,
-    no_logs_minutes: parseInt(get('po-no-logs-minutes')?.value || '30'),
     block_rate_threshold_pct: parseFloat(get('po-block-rate-pct')?.value || '50'),
     offline_alert_retries: parseInt(get('po-offline-retries')?.value || '1'),
     offline_alert_max_count: parseInt(get('po-offline-max-count')?.value || '1'),

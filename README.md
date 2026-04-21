@@ -1,6 +1,6 @@
 # MyPi
 [![build](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/docker-publish.yml?style=flat-square)](https://github.com/theojamesvibes/mypi/actions)
-[![version](https://img.shields.io/badge/version-1.9.0-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
+[![version](https://img.shields.io/badge/version-1.9.1-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
 [![platform](https://img.shields.io/badge/platform-linux%2Famd64%20|%20linux%2Farm64-teal?style=flat-square)](https://github.com/theojamesvibes/mypi/pkgs/container/mypi)
 
 > **⚠️ Vibe Code Disclosure**
@@ -51,7 +51,7 @@ A self-hosted dashboard that consolidates up to 10 locally running [Pi-hole](htt
 
 ### Pushover Notifications
 - Push alerts to any device via [Pushover](https://pushover.net) (iOS, Android, desktop)
-- Configurable alerts: sync failure, instance offline/back online, no logs received, high block rate
+- Configurable alerts: sync failure, instance offline/back online, high block rate
 - **High block rate** alert requires ≥7 days of data to establish a baseline before firing
 - No-logs and block-rate thresholds are configurable in Settings
 - Credentials (App Token + User Key) stored encrypted in PostgreSQL, survive restarts
@@ -231,6 +231,18 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 | `CIRCUIT_DEDUP_SECONDS` | `2.0` | Window in which a stats+queries failure on the shared connection counts as one event. |
 | `AUTH_BACKOFF_SECONDS` | `300` | How long to pause `/api/auth` attempts after a `429 Too Many Requests` from a Pi-hole. Lower it if your fleet has a higher `webserver.api.max_sessions` and a 5-minute blackout is too long. |
 
+#### Circuit-breaker tuning profiles
+
+The breaker defaults (`3 / 300 / 2.0`) are tuned for a stable home/lab fleet. If your environment is lossier or more sensitive, the three knobs compose into these rough profiles:
+
+| Profile | `CIRCUIT_FAIL_THRESHOLD` | `CIRCUIT_COOLDOWN_SECONDS` | `CIRCUIT_DEDUP_SECONDS` | When to pick it |
+|---|---|---|---|---|
+| **Aggressive** | `2` | `120` | `2.0` | You want a flappy Pi-hole isolated quickly and probed back in sooner. Expect more transition-alert noise. |
+| **Stable** *(default)* | `3` | `300` | `2.0` | Three independent failure events before isolation; 5-minute cooldown. Balanced for most fleets. |
+| **Lenient** | `5` | `600` | `3.0` | Tolerates more transient blips before isolating; useful on a noisy LAN or WAN-reachable Pi-holes. Slower to surface a real outage. |
+
+These scale **independently** of `STATS_POLL_INTERVAL` / `QUERIES_POLL_INTERVAL` — transport instability isn't proportional to how often you check for it, so the breaker values are deliberately not auto-scaled with the poll cadence.
+
 ### Pi-hole instances (`pihole_instances.yml`)
 
 ```yaml
@@ -291,6 +303,8 @@ MyPi mitigates this on **three** layers:
 1. **Self-heal on the stats/queries polls** — the collector evicts the persistent client on `ssl.SSLError` / `httpx.ConnectError` / `httpx.RemoteProtocolError` and the next poll opens a fresh connection.
 2. **Self-heal on the sync path** (added in 1.9.0) — `_sync_replica` evicts and retries the teleporter POST once on the same error classes. Before 1.9.0, a single half-open socket during sync would fail the replica outright and fire a Pushover.
 3. **Per-instance circuit breaker** — 3 consecutive failures → 5 min cooldown on that instance (tunable via `CIRCUIT_FAIL_THRESHOLD` / `CIRCUIT_COOLDOWN_SECONDS`).
+
+> **Note on `max_keepalive_connections=2`.** The HTTP client is deliberately configured with keepalive enabled (`max_keepalive_connections=2` in `app/services/pihole_client.py::open`) rather than forced-close. The 1.7.6 release briefly ran `max_keepalive_connections=0`, which traded slightly fewer half-opens for **two TLS handshakes per minute per instance**. On slow hardware (specifically a Raspberry Pi 3 running civetweb/mbedTLS) this periodically wedged FTL's TLS session table, producing recurring `SSLV3_ALERT_HANDSHAKE_FAILURE` episodes. Re-enabling keepalive in dev.10 fixed it. The self-heal layers above exist to absorb the residual idle-close symptom without paying that handshake tax — do not disable keepalive without re-reading the `hardening-review` CHANGELOG first.
 
 If flaps still reach you after that, two levers:
 
@@ -483,7 +497,7 @@ uvicorn app.main:app --reload --port 8080
 - [x] Pi-hole config sync (master → replicas via teleporter API)
 - [x] Configurable auto-sync schedule and gravity-change detection
 - [x] Drill-down modals on top blocked domains and top clients
-- [x] Pushover push notifications (sync failure, offline, no logs, high block rate)
+- [x] Pushover push notifications (sync failure, offline, high block rate)
 - [x] Topbar sync status badge (green/yellow/red) on every page
 - [x] Dark / Light / System theme with no flash on load
 - [x] Block / Unblock domains from the query log (master deny list + replica sync)
