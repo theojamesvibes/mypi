@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import Integer, and_, case, distinct, func, select, text
+from sqlalchemy import and_, case, distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
@@ -165,16 +165,14 @@ async def get_history(
         since_dt = datetime.now(timezone.utc) - timedelta(hours=hours)
     since = since_dt
 
-    # Count actual query_log rows per bucket — bucket size is configurable so
-    # the chart stays readable across very short (15 min) and long (30 day) windows.
-    bucket_col = (
-        func.date_trunc("hour", QueryLog.timestamp) +
-        func.make_interval(
-            0, 0, 0, 0, 0,
-            func.floor(
-                func.extract("minute", QueryLog.timestamp) / bucket_minutes
-            ).cast(Integer) * bucket_minutes,
-        )
+    # Count actual query_log rows per bucket.  Use date_bin (PG 14+) so buckets
+    # honour the full bucket_minutes stride — including >60 min strides that the
+    # old date_trunc("hour") + minute-modulo expression silently truncated back
+    # to hourly.
+    bucket_col = func.date_bin(
+        func.make_interval(0, 0, 0, 0, 0, bucket_minutes),
+        QueryLog.timestamp,
+        datetime(1970, 1, 1, tzinfo=timezone.utc),
     ).label("bucket")
 
     q = (
@@ -186,8 +184,8 @@ async def get_history(
             ).label("blocked"),
         )
         .where(QueryLog.timestamp >= since)
-        .group_by(text("1"))
-        .order_by(text("1"))
+        .group_by(bucket_col)
+        .order_by(bucket_col)
     )
     if instance_id:
         q = q.where(QueryLog.instance_id == instance_id)

@@ -51,6 +51,19 @@ function fmtTimeShort(iso) {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+function fmtChartLabel(iso, bucketMinutes, spanHours) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (bucketMinutes >= 1440) {
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  }
+  if (spanHours > 24) {
+    return d.toLocaleDateString([], { month: 'numeric', day: 'numeric' }) + ' ' +
+           d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
 const BLOCKED_STATUSES = new Set([
   'GRAVITY', 'REGEX', 'BLACKLIST',
   'EXTERNAL_BLOCKED_IP', 'EXTERNAL_BLOCKED_NULL', 'EXTERNAL_BLOCKED_NXDOMAIN',
@@ -83,24 +96,28 @@ async function apiFetch(url) {
 
 function getTimeParams() {
   const val = document.getElementById('time-range')?.value || '24';
-  let since = null, hours = null, bucketMinutes = 10;
+  let since = null, hours = null, bucketMinutes = 10, spanHours = 24;
   if (val === '15m') {
     since = new Date(Date.now() - 15 * 60 * 1000).toISOString();
     bucketMinutes = 1;
+    spanHours = 0.25;
   } else if (val === '1h') {
     since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
     bucketMinutes = 5;
+    spanHours = 1;
   } else if (val === 'today') {
     const d = new Date(); d.setHours(0, 0, 0, 0);
     since = d.toISOString();
     bucketMinutes = 30;
+    spanHours = (Date.now() - d.getTime()) / 3600000;
   } else {
     hours = parseInt(val);
-    if (hours >= 168) bucketMinutes = 60;
-    else if (hours >= 48) bucketMinutes = 30;
-    else bucketMinutes = 10;
+    spanHours = hours;
+    if (hours >= 168) bucketMinutes = 1440;     // 7d / 30d → 1-day buckets
+    else if (hours >= 48) bucketMinutes = 120;  // 48h → 2-hour buckets
+    else bucketMinutes = 10;                    // ≤24h → 10-minute buckets
   }
-  return { since, hours, bucketMinutes };
+  return { since, hours, bucketMinutes, spanHours };
 }
 
 function buildTimeQS(extra) {
@@ -115,7 +132,7 @@ function buildTimeQS(extra) {
 let _masterUrl = '';
 
 async function loadDashboard() {
-  const { since, hours, bucketMinutes } = getTimeParams();
+  const { since, hours, bucketMinutes, spanHours } = getTimeParams();
   const tp = since ? `since=${encodeURIComponent(since)}` : `hours=${hours}`;
 
   try {
@@ -172,7 +189,7 @@ async function loadDashboard() {
     if (lu) lu.textContent = 'Updated ' + new Date().toLocaleTimeString();
 
     // Queries over time chart
-    renderQueriesChart(history.buckets);
+    renderQueriesChart(history.buckets, bucketMinutes, spanHours);
 
     // Query type chart (from summary instances)
     renderTypeChart(summary.totals);
@@ -192,8 +209,8 @@ async function loadDashboard() {
   }
 }
 
-function renderQueriesChart(buckets) {
-  const labels = buckets.map(b => fmtTimeShort(b.timestamp));
+function renderQueriesChart(buckets, bucketMinutes = 10, spanHours = 24) {
+  const labels = buckets.map(b => fmtChartLabel(b.timestamp, bucketMinutes, spanHours));
   const queries = buckets.map(b => b.queries);
   const blocked = buckets.map(b => b.blocked);
 

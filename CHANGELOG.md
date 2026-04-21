@@ -4,6 +4,19 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.9.2] — 2026-04-20
+
+Bugfix: the dashboard "Queries over time" chart rendered incorrectly for every time range past 24 hours. Two issues compounded.
+
+### Fixed
+- **`/api/stats/history` bucketing silently ignored strides >60 minutes.** The old bucket expression was `date_trunc("hour", timestamp) + make_interval(mins => floor(extract('minute', timestamp) / bucket_minutes) * bucket_minutes)`. For any `bucket_minutes` between 61 and 1440, `floor(minute / bucket_minutes)` is always 0, so buckets collapsed back to hourly — 48 bars for 48 h, 168 bars for 7 d, 720 bars for 30 d. Replaced with PostgreSQL `date_bin('N minutes', timestamp, epoch)` (PG 14+, so safe on the required PG 18), which honours the full stride and produces correctly-aligned bucket boundaries. File: `app/api/stats.py`.
+- **Dashboard chart bucket sizing + labels now match the selected range.** `getTimeParams` in `app/static/js/dashboard.js` now requests 2-hour buckets for `Last 48 hours` (24 bars) and 1-day buckets for `Last 7 days` / `Last 30 days` (7 / 30 bars). Added `fmtChartLabel`: daily buckets show `MMM DD`, sub-daily buckets on a multi-day window show `M/D HH:MM`, intraday buckets keep the existing `HH:MM`. Fixes the "labels wrap around with no date context" complaint on any range past 24 h.
+
+### Migration notes
+- None. No schema change, no config change. Clear browser cache or hard-refresh the dashboard after deploying so the updated `dashboard.js` loads.
+
+---
+
 ## [1.9.1] — 2026-04-20
 
 Follow-up to 1.9.0 after independent reviews from Gemini and Grok. Both converged on removing the dead `alert_no_logs` wiring; they diverged on proactive connection recycling, which is deliberately **not** shipped here (see note below). No behaviour change beyond the dead-UI removal and doc polish.
