@@ -5,11 +5,13 @@ import asyncio
 import io
 import json
 import logging
+import ssl
 import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal
 
+import httpx
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -17,7 +19,13 @@ from app.database import AsyncSessionLocal
 from app.models.pihole import PiholeInstance
 from app.models.settings import AppSetting
 from app.services import pushover as pushover_service
-from app.services.client_manager import get_client, save_sid
+from app.services.client_manager import close_client, get_client, save_sid
+
+# Transient socket failures that the collector already self-heals by evicting
+# the persistent client.  Sync's _sync_replica uses the same class list to
+# retry post_teleporter once on idle-keepalive half-opens — the dominant
+# symptom on low-traffic replicas (VIP hot spares, dormant boxes).
+_TRANSIENT_SYNC_ERRORS = (ssl.SSLError, httpx.ConnectError, httpx.RemoteProtocolError)
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +35,7 @@ class InstanceSyncResult:
     name: str
     status: Literal["success", "error"]
     error: str | None = None
+    is_hot_spare: bool = False
 
 
 @dataclass
@@ -130,7 +139,15 @@ async def _persist_sync_state(state: SyncState) -> None:
             "started_at": state.started_at.isoformat() if state.started_at else None,
             "master": state.master,
             "error": state.error,
-            "results": [{"name": r.name, "status": r.status, "error": r.error} for r in state.results],
+            "results": [
+                {
+                    "name": r.name,
+                    "status": r.status,
+                    "error": r.error,
+                    "is_hot_spare": r.is_hot_spare,
+                }
+                for r in state.results
+            ],
         }
         await _db_upsert("sync_last_result", json.dumps(payload))
     except Exception as exc:
@@ -181,7 +198,12 @@ async def load_schedule() -> None:
                 master=data.get("master"),
                 error=data.get("error"),
                 results=[
-                    InstanceSyncResult(name=r["name"], status=r["status"], error=r.get("error"))
+                    InstanceSyncResult(
+                        name=r["name"],
+                        status=r["status"],
+                        error=r.get("error"),
+                        is_hot_spare=r.get("is_hot_spare", False),
+                    )
                     for r in data.get("results", [])
                 ],
             )
@@ -351,15 +373,37 @@ async def run_sync(
             # Without running gravity on replicas after import, their domain counts stay
             # stale and diverge from the master.
             async def _sync_replica(replica: PiholeInstance) -> InstanceSyncResult:
+                key = str(replica.id)
                 try:
-                    replica_client = await get_client(replica)
-                    await replica_client.post_teleporter(
-                        zip_data,
-                        import_config=import_config,
-                        import_gravity=import_gravity,
-                        import_dhcp_leases=import_dhcp_leases,
-                    )
-                    await save_sid(replica.id, replica_client.sid)
+                    try:
+                        replica_client = await get_client(replica)
+                        await replica_client.post_teleporter(
+                            zip_data,
+                            import_config=import_config,
+                            import_gravity=import_gravity,
+                            import_dhcp_leases=import_dhcp_leases,
+                        )
+                        await save_sid(replica.id, replica_client.sid)
+                    except _TRANSIENT_SYNC_ERRORS as exc:
+                        # Idle keepalive half-open: the persistent TCP socket
+                        # was closed server-side between uses and the first
+                        # request on it failed.  Classic on VIP hot spares and
+                        # low-traffic replicas.  Evict and retry once with a
+                        # fresh client — same self-heal the collector does.
+                        logger.warning(
+                            "Transient connection error syncing to %s (%s: %s) — "
+                            "evicting client and retrying once",
+                            replica.name, type(exc).__name__, exc,
+                        )
+                        await close_client(key)
+                        replica_client = await get_client(replica)
+                        await replica_client.post_teleporter(
+                            zip_data,
+                            import_config=import_config,
+                            import_gravity=import_gravity,
+                            import_dhcp_leases=import_dhcp_leases,
+                        )
+                        await save_sid(replica.id, replica_client.sid)
                     logger.info("Teleporter import to %s succeeded", replica.name)
 
                     if import_gravity:
@@ -380,10 +424,17 @@ async def run_sync(
                             logger.warning("Gravity on replica %s failed (non-fatal): %s", replica.name, g_exc)
 
                     logger.info("Sync to %s succeeded", replica.name)
-                    return InstanceSyncResult(name=replica.name, status="success")
+                    return InstanceSyncResult(
+                        name=replica.name, status="success", is_hot_spare=replica.is_hot_spare,
+                    )
                 except Exception as exc:
                     logger.warning("Sync to %s failed: %s", replica.name, exc)
-                    return InstanceSyncResult(name=replica.name, status="error", error=str(exc))
+                    return InstanceSyncResult(
+                        name=replica.name,
+                        status="error",
+                        error=str(exc),
+                        is_hot_spare=replica.is_hot_spare,
+                    )
 
             results = list(await asyncio.gather(*[_sync_replica(r) for r in replicas]))
 
@@ -410,9 +461,28 @@ async def run_sync(
 
         _spawn(_persist_sync_state(_state))
         if _state.status == "error":
-            _spawn(
-                pushover_service.notify_sync_failure(_state.error or "One or more replicas failed to sync")
-            )
+            failed = [r for r in _state.results if r.status == "error"]
+            if _state.error:
+                # Master-level failure (no teleporter exported, no master
+                # configured, etc.) — hot-spare filter does not apply.
+                _spawn(pushover_service.notify_sync_failure(_state.error))
+            elif any(not r.is_hot_spare for r in failed):
+                # At least one non-hot-spare replica failed — page with the
+                # full list (including any hot spares that also failed) so
+                # the operator sees the whole picture.
+                body = "; ".join(
+                    f"{r.name}: {r.error or 'unknown error'}" for r in failed
+                )
+                _spawn(pushover_service.notify_sync_failure(body))
+            elif failed:
+                # Only hot-spare replicas failed.  Record in sync_last_result
+                # (UI still shows it) but suppress Pushover — a dormant VIP
+                # standby failing post-retry isn't worth paging about.  Stats
+                # poll will still page if the spare is actually offline.
+                logger.info(
+                    "Sync failures on hot-spare replica(s) only — Pushover suppressed: %s",
+                    ", ".join(r.name for r in failed),
+                )
         # Refresh Pi-hole version info after sync — FTL may have restarted on
         # replicas after the teleporter import, so give it a moment to come back.
         _spawn(_refresh_versions_post_sync())
