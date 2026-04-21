@@ -26,10 +26,25 @@ instances:
   #   password: ""
   #   color: "#9b59b6"   # purple
 
+  # Dormant VIP secondary (hot spare): fully online and pollable, but
+  # receives no DNS traffic while the primary holds the VIP.  Marking it
+  # hot_spare: true suppresses sync-failure Pushover alerts from this node
+  # (its idle keepalive flap no longer pages you).  It does NOT change the
+  # stats-poll offline alert — a hot spare going genuinely unreachable
+  # still fires the normal offline notification.
+  # - name: "Standby"
+  #   url: "http://192.168.1.105"
+  #   password: "your-pihole-password"
+  #   color: "#95a5a6"   # gray
+  #   hot_spare: true
+
 # Up to 10 instances supported.
 # Colors are used in charts to distinguish each Pi-hole visually.
 #
-# password: corresponds to the Pi-hole web interface password (Pi-hole v6 API).
+# password:  corresponds to the Pi-hole web interface password (Pi-hole v6 API).
 #            Leave empty ("") or omit entirely for instances with no password set.
 # master:    designates the sync source for Pi-hole Sync. Exactly one instance
 #            should be marked master: true. Omit or set false on all replicas.
+# hot_spare: marks a replica as a dormant VIP secondary. Sync failures on a
+#            hot spare (after one in-sync retry) are recorded and shown in the
+#            UI but do not fire Pushover. Cannot be combined with master: true.

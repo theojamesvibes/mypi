@@ -82,12 +82,21 @@ class Settings(BaseSettings):
 
 
 class PiholeInstanceConfig:
-    def __init__(self, name: str, url: str, password: str, color: str, master: bool = False):
+    def __init__(
+        self,
+        name: str,
+        url: str,
+        password: str,
+        color: str,
+        master: bool = False,
+        hot_spare: bool = False,
+    ):
         self.name = name
         self.url = url.rstrip("/")
         self.password = password
         self.color = color
         self.master = master
+        self.hot_spare = hot_spare
 
 
 def load_instance_configs(path: str | None = None) -> list[PiholeInstanceConfig]:
@@ -116,13 +125,24 @@ def load_instance_configs(path: str | None = None) -> list[PiholeInstanceConfig]
             len(raw), settings.max_pihole_instances,
         )
     for item in raw[:settings.max_pihole_instances]:
+        is_master = bool(item.get("master", False))
+        is_hot_spare = bool(item.get("hot_spare", False))
+        if is_master and is_hot_spare:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Instance %r is marked both master and hot_spare; ignoring hot_spare "
+                "(a master cannot be a dormant standby).",
+                item.get("name"),
+            )
+            is_hot_spare = False
         instances.append(
             PiholeInstanceConfig(
                 name=item["name"],
                 url=item["url"],
                 password=item.get("password", ""),
                 color=item.get("color", "#3c8dbc"),
-                master=bool(item.get("master", False)),
+                master=is_master,
+                hot_spare=is_hot_spare,
             )
         )
     return instances

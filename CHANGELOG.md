@@ -4,6 +4,23 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.9.0] — 2026-04-20
+
+Targets the "dormant VIP secondary flap" reported under the 1.8.x soak: a Pi-hole sitting behind a shared VIP as a hot standby receives no DNS traffic while the primary holds the address. Its persistent keepalive socket to MyPi therefore sits idle between 60 s polls, and CivetWeb closes idle keepalive TCP connections on a short timeout. The stats/queries collector already self-heals that symptom by evicting the client and retrying on the next tick; **the sync path did not** — a single half-open socket during sync failed the replica outright and fired a generic Pushover.
+
+### Added
+- **`hot_spare: true` field in `pihole_instances.yml`.** Marks a replica as a dormant VIP secondary. If **all** failing replicas in a sync are hot spares, the Pushover is suppressed; the result is still recorded in `sync_last_result` and shown in the UI. If any non-hot-spare replica fails in the same sync, Pushover fires with the full list (including any hot-spare failures) so the operator sees the complete picture. The flag does **not** change the stats-poll offline alert — a hot spare is expected to be online, so a genuine outage still pages. Cannot be combined with `master: true` (logged + ignored).
+- **`is_hot_spare` column** in `pihole_instances` (migration `0011`). Also surfaced on `GET /api/instances`, `GET /api/instances/stale`, and each entry of `GET /api/sync/status.results[]` so downstream UI / the iOS app can show which nodes are dormant standbys.
+
+### Changed
+- **Sync replicas now retry once on transient connection errors.** `_sync_replica` catches `ssl.SSLError` / `httpx.ConnectError` / `httpx.RemoteProtocolError` on `post_teleporter`, evicts the persistent client via `close_client`, and retries with a fresh connection — matching the self-heal the stats/queries collector already did. This removes the dominant flap source for low-traffic replicas. Other error classes (auth, HTTP 4xx/5xx, post-retry failures) still report `error` for that replica as before.
+- **Sync-failure Pushover body now names the failing replicas.** Previous releases sent the generic "One or more replicas failed to sync"; the notification body now reads `pihole-spare: ConnectError(...); pihole3: RemoteProtocolError(...)` — one `{name}: {error}` per failure, semicolon-separated. Master-level failures (no teleporter exported, no master configured) still surface the top-level error message.
+
+### Migration notes
+- `alembic upgrade head` adds the `is_hot_spare` column with `server_default=false`, so existing rows are backfilled as non-hot-spare. No behaviour change until an operator sets `hot_spare: true` in `pihole_instances.yml` and restarts the container.
+
+---
+
 ## [1.8.1] — 2026-04-20
 
 First Dependabot sweep after activating `.github/dependabot.yml` in 1.8.0. No code changes — all bumps came in as Dependabot PRs, each CI-green before merge. Higher-risk majors (fastapi, bcrypt, cryptography, uvicorn, python 3.14) are held open as PRs for separate review.

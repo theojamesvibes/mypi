@@ -1,6 +1,6 @@
 # MyPi
 [![build](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/docker-publish.yml?style=flat-square)](https://github.com/theojamesvibes/mypi/actions)
-[![version](https://img.shields.io/badge/version-1.8.1-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
+[![version](https://img.shields.io/badge/version-1.9.0-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
 [![platform](https://img.shields.io/badge/platform-linux%2Famd64%20|%20linux%2Farm64-teal?style=flat-square)](https://github.com/theojamesvibes/mypi/pkgs/container/mypi)
 
 > **⚠️ Vibe Code Disclosure**
@@ -262,6 +262,13 @@ instances:
     url: "https://192.168.1.104"
     password: "your-pihole-password"
     color: "#e74c3c"
+
+  # Dormant VIP secondary (hot spare) — fully online, no DNS traffic:
+  - name: "Standby"
+    url: "http://192.168.1.105"
+    password: "your-pihole-password"
+    color: "#95a5a6"
+    hot_spare: true
 ```
 
 - Up to **10 instances** supported
@@ -269,6 +276,7 @@ instances:
 - `password` is the Pi-hole web interface password (Pi-hole v6 API). Leave empty (`""`) or omit entirely for instances with no password configured — MyPi detects the passwordless state automatically and connects without authentication. **Note:** passwordless mode only works for plain-`http://` Pi-holes. With TLS enabled, Pi-hole v6's `/api/auth` rejects empty-password requests with 401 even when the web UI has no password set, so any `https://` instance must have a password configured
 - `color` is used in charts to distinguish each instance visually
 - `master: true` designates the sync source for the Pi-hole Sync feature — exactly one instance should be marked master
+- `hot_spare: true` marks a replica as a dormant VIP secondary (see [Low-traffic or hot-standby Pi-holes](#low-traffic-or-hot-standby-pi-holes) below). Cannot be combined with `master: true` — MyPi logs a warning and ignores `hot_spare` if both are set on the same instance
 
 #### HTTP vs HTTPS
 
@@ -278,9 +286,16 @@ Both `http://` and `https://` URLs are supported. If your Pi-hole is configured 
 
 Pi-holes that sit behind a VIP as a standby, or otherwise receive very little DNS traffic, can occasionally flap in MyPi's view. Pi-hole v6's embedded webserver (CivetWeb) closes idle keepalive TCP sockets on a short timeout; between 60 s stats polls the socket can go stale, so the next poll's first request fails (`ConnectError` / `RemoteProtocolError`) before MyPi reconnects. This is not a Pi-hole-side block — session counts and `webserver.api.max_sessions` are not involved, and Pi-hole v6 does not expose a CivetWeb keepalive knob.
 
-MyPi absorbs this with a per-instance circuit breaker (3 consecutive failures → 5 min cooldown, tunable via `CIRCUIT_FAIL_THRESHOLD` / `CIRCUIT_COOLDOWN_SECONDS`), but a full cooldown window can still cross the offline-alert threshold and page you. If that happens on a genuinely idle standby, you have two levers — both in **Settings → Notifications**:
+MyPi mitigates this on **three** layers:
 
-- **Raise the offline-alert retry count** so a single cooldown window (≈5 missed polls) can't on its own trigger a Pushover alert. A value of 8–10 turns the breaker into a silent absorber for transient idle-socket flaps while still paging on a real outage.
+1. **Self-heal on the stats/queries polls** — the collector evicts the persistent client on `ssl.SSLError` / `httpx.ConnectError` / `httpx.RemoteProtocolError` and the next poll opens a fresh connection.
+2. **Self-heal on the sync path** (added in 1.9.0) — `_sync_replica` evicts and retries the teleporter POST once on the same error classes. Before 1.9.0, a single half-open socket during sync would fail the replica outright and fire a Pushover.
+3. **Per-instance circuit breaker** — 3 consecutive failures → 5 min cooldown on that instance (tunable via `CIRCUIT_FAIL_THRESHOLD` / `CIRCUIT_COOLDOWN_SECONDS`).
+
+If flaps still reach you after that, two levers:
+
+- **Mark the replica as `hot_spare: true` in `pihole_instances.yml`** — sync-failure Pushover is suppressed for hot spares if *all* failing replicas in the sync are hot spares; a mixed primary/spare failure still pages. The stats-poll offline alert is NOT suppressed — a hot spare going genuinely unreachable still fires the normal offline notification (adjustable via the offline-alert retry count).
+- **Raise the offline-alert retry count** in **Settings → Notifications** so a single cooldown window (≈5 missed polls) can't on its own trigger Pushover. A value of 8–10 turns the breaker into a silent absorber for transient idle-socket flaps while still paging on a real outage.
 - **Lengthen `STATS_POLL_INTERVAL` / `QUERIES_POLL_INTERVAL`** for the whole fleet if idle-socket flaps are widespread — less useful when only a subset of instances are low-traffic, since it slows recovery detection for everyone.
 
 ---
