@@ -48,11 +48,9 @@ _enabled: bool = False
 _alert_sync_failure: bool = True
 _alert_instance_offline: bool = True
 _alert_high_block_rate: bool = False
-_alert_no_logs: bool = True
 
 # Thresholds
 _block_rate_threshold_pct: float = 50.0
-_no_logs_minutes: int = 30
 
 # Offline alert repeat: 0 = always (every poll), 1-10 = max alerts per outage period
 _offline_alert_max_count: int = 1
@@ -122,8 +120,8 @@ def get_offline_alert_retries() -> int:
 async def load_settings() -> None:
     """Load Pushover settings from DB. Called at startup."""
     global _app_token, _user_key, _enabled
-    global _alert_sync_failure, _alert_instance_offline, _alert_high_block_rate, _alert_no_logs
-    global _block_rate_threshold_pct, _no_logs_minutes, _offline_alert_max_count, _offline_alert_retries
+    global _alert_sync_failure, _alert_instance_offline, _alert_high_block_rate
+    global _block_rate_threshold_pct, _offline_alert_max_count, _offline_alert_retries
 
     try:
         async with AsyncSessionLocal() as db:
@@ -144,11 +142,13 @@ async def load_settings() -> None:
         _alert_sync_failure = data.get("alert_sync_failure", True)
         _alert_instance_offline = data.get("alert_instance_offline", True)
         _alert_high_block_rate = data.get("alert_high_block_rate", False)
-        _alert_no_logs = data.get("alert_no_logs", True)
         _block_rate_threshold_pct = data.get("block_rate_threshold_pct", 50.0)
-        _no_logs_minutes = data.get("no_logs_minutes", 30)
         _offline_alert_max_count = data.get("offline_alert_max_count", 1)
         _offline_alert_retries = data.get("offline_alert_retries", 1)
+        # Legacy keys alert_no_logs / no_logs_minutes may be present in older
+        # rows (1.8.x wired them in the UI but the notification was never
+        # implemented).  Silently ignored here — on the next save they drop
+        # out of the persisted JSON.
         logger.info("Loaded Pushover settings from DB (enabled=%s, token_set=%s)", _enabled, bool(_app_token))
     except Exception as exc:
         logger.warning("Could not parse Pushover settings: %s", exc)
@@ -161,16 +161,14 @@ async def save_settings(
     alert_sync_failure: bool,
     alert_instance_offline: bool,
     alert_high_block_rate: bool,
-    alert_no_logs: bool,
     block_rate_threshold_pct: float,
-    no_logs_minutes: int,
     offline_alert_max_count: int = 1,
     offline_alert_retries: int = 1,
 ) -> None:
     """Save Pushover settings to DB and update in-memory state."""
     global _app_token, _user_key, _enabled
-    global _alert_sync_failure, _alert_instance_offline, _alert_high_block_rate, _alert_no_logs
-    global _block_rate_threshold_pct, _no_logs_minutes, _offline_alert_max_count, _offline_alert_retries
+    global _alert_sync_failure, _alert_instance_offline, _alert_high_block_rate
+    global _block_rate_threshold_pct, _offline_alert_max_count, _offline_alert_retries
 
     payload = json.dumps({
         "app_token": _encrypt(app_token),
@@ -179,9 +177,7 @@ async def save_settings(
         "alert_sync_failure": alert_sync_failure,
         "alert_instance_offline": alert_instance_offline,
         "alert_high_block_rate": alert_high_block_rate,
-        "alert_no_logs": alert_no_logs,
         "block_rate_threshold_pct": block_rate_threshold_pct,
-        "no_logs_minutes": no_logs_minutes,
         "offline_alert_max_count": offline_alert_max_count,
         "offline_alert_retries": offline_alert_retries,
     })
@@ -214,9 +210,7 @@ async def save_settings(
     _alert_sync_failure = alert_sync_failure
     _alert_instance_offline = alert_instance_offline
     _alert_high_block_rate = alert_high_block_rate
-    _alert_no_logs = alert_no_logs
     _block_rate_threshold_pct = block_rate_threshold_pct
-    _no_logs_minutes = no_logs_minutes
     _offline_alert_max_count = offline_alert_max_count
     _offline_alert_retries = offline_alert_retries
 
@@ -239,9 +233,7 @@ def get_settings() -> dict:
         "alert_sync_failure": _alert_sync_failure,
         "alert_instance_offline": _alert_instance_offline,
         "alert_high_block_rate": _alert_high_block_rate,
-        "alert_no_logs": _alert_no_logs,
         "block_rate_threshold_pct": _block_rate_threshold_pct,
-        "no_logs_minutes": _no_logs_minutes,
         "offline_alert_max_count": _offline_alert_max_count,
         "offline_alert_retries": _offline_alert_retries,
     }
@@ -256,9 +248,7 @@ def get_settings_raw() -> dict:
         "alert_sync_failure": _alert_sync_failure,
         "alert_instance_offline": _alert_instance_offline,
         "alert_high_block_rate": _alert_high_block_rate,
-        "alert_no_logs": _alert_no_logs,
         "block_rate_threshold_pct": _block_rate_threshold_pct,
-        "no_logs_minutes": _no_logs_minutes,
         "offline_alert_max_count": _offline_alert_max_count,
         "offline_alert_retries": _offline_alert_retries,
     }

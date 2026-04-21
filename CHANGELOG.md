@@ -4,6 +4,26 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.9.1] — 2026-04-20
+
+Follow-up to 1.9.0 after independent reviews from Gemini and Grok. Both converged on removing the dead `alert_no_logs` wiring; they diverged on proactive connection recycling, which is deliberately **not** shipped here (see note below). No behaviour change beyond the dead-UI removal and doc polish.
+
+### Removed
+- **`alert_no_logs` / `no_logs_minutes` toggle and threshold.** The UI checkbox, threshold input, request schema fields, `pushover` module state, and `load_settings` / `save_settings` plumbing all advertised an alert that was never implemented — no code path ever called `notify_no_logs`. An operator toggling it on got zero coverage. Dropped cleanly:
+  - `app/templates/settings.html` — checkbox + minutes input removed
+  - `app/static/js/dashboard.js` — `po-alert-no-logs` / `po-no-logs-minutes` getters/setters removed from the settings form
+  - `app/api/notifications.py::PushoverSettingsRequest` — fields removed
+  - `app/services/pushover.py` — module state, `load_settings`, `save_settings`, `get_settings`, `get_settings_raw` no longer reference them. Legacy persisted keys in `app_settings.pushover_settings` JSON are silently ignored on load and drop out on next save — no migration required.
+
+### Documentation
+- **README: circuit-breaker tuning profiles** — added an "Aggressive / Stable / Lenient" table under the env-var reference per Gemini's recommendation, and a note that the knobs do **not** auto-scale with poll interval (transport instability isn't proportional to how often you check).
+- **README: `max_keepalive_connections=2` is load-bearing** — explicit callout under "Low-traffic or hot-standby Pi-holes" explaining why the 1.7.6 keepalive=0 path was reverted (RPi3 + civetweb + mbedTLS handshake churn wedged FTL's TLS session table). Future maintainers reading this section need the context before they're tempted to force-close keepalive again.
+
+### Deferred
+- **Proactive client-recycle** (either Gemini's inline reap-on-use or Grok's APScheduler recycle job). Both were pitched as the "cleaner" structural fix for the residual `pihole3` idle-close WARN. Held in the "next try" bucket: the sync-path flap that motivated 1.9.0 is already fixed, the remaining symptom is cosmetic (dev.12 explicit acceptance), and either form of proactive recycling increases TLS handshake count on healthy instances — measurably worse than today's keepalive-stays-warm steady state on `pihole1` / `pihole2`. If the WARN ever escalates beyond log noise, the preferred shape is last-successful-use-aged eviction in `client_manager`, not wall-clock-aged or background-scheduled.
+
+---
+
 ## [1.9.0] — 2026-04-20
 
 Targets the "dormant VIP secondary flap" reported under the 1.8.x soak: a Pi-hole sitting behind a shared VIP as a hot standby receives no DNS traffic while the primary holds the address. Its persistent keepalive socket to MyPi therefore sits idle between 60 s polls, and CivetWeb closes idle keepalive TCP connections on a short timeout. The stats/queries collector already self-heals that symptom by evicting the client and retrying on the next tick; **the sync path did not** — a single half-open socket during sync failed the replica outright and fired a generic Pushover.
