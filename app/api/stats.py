@@ -164,31 +164,50 @@ async def get_history(
     else:
         since_dt = datetime.now(timezone.utc) - timedelta(hours=hours)
     since = since_dt
+    now = datetime.now(timezone.utc)
 
-    # Count actual query_log rows per bucket.  Use date_bin (PG 14+) so buckets
-    # honour the full bucket_minutes stride — including >60 min strides that the
-    # old date_trunc("hour") + minute-modulo expression silently truncated back
-    # to hourly.
-    bucket_col = func.date_bin(
-        func.make_interval(0, 0, 0, 0, 0, bucket_minutes),
-        QueryLog.timestamp,
-        datetime(1970, 1, 1, tzinfo=timezone.utc),
-    ).label("bucket")
+    # A bucket that had zero queries during an outage still needs to appear in
+    # the response — otherwise the chart silently closes the gap and the outage
+    # is invisible. Build the full contiguous bucket series via generate_series
+    # and LEFT JOIN the aggregated counts, coalescing missing rows to zero.
+    # date_bin (PG 14+) honours the full bucket_minutes stride.
+    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    bucket_interval = func.make_interval(0, 0, 0, 0, 0, bucket_minutes)
 
-    q = (
+    series_start = func.date_bin(bucket_interval, since, epoch)
+    series_end = func.date_bin(bucket_interval, now, epoch)
+    series = (
         select(
-            bucket_col,
+            func.generate_series(series_start, series_end, bucket_interval).label("bucket")
+        )
+        .subquery("series")
+    )
+
+    agg_bucket = func.date_bin(bucket_interval, QueryLog.timestamp, epoch).label("bucket")
+    agg_q = (
+        select(
+            agg_bucket,
             func.count(QueryLog.id).label("queries"),
             func.count(
                 case((QueryLog.status.in_(list(BLOCKED_STATUSES)), QueryLog.id))
             ).label("blocked"),
         )
         .where(QueryLog.timestamp >= since)
-        .group_by(bucket_col)
-        .order_by(bucket_col)
+        .group_by(agg_bucket)
     )
     if instance_id:
-        q = q.where(QueryLog.instance_id == instance_id)
+        agg_q = agg_q.where(QueryLog.instance_id == instance_id)
+    agg = agg_q.subquery("agg")
+
+    q = (
+        select(
+            series.c.bucket,
+            func.coalesce(agg.c.queries, 0).label("queries"),
+            func.coalesce(agg.c.blocked, 0).label("blocked"),
+        )
+        .select_from(series.outerjoin(agg, series.c.bucket == agg.c.bucket))
+        .order_by(series.c.bucket)
+    )
 
     result = await db.execute(q)
     buckets = [
