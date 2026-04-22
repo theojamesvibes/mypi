@@ -4,6 +4,18 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.9.3] — 2026-04-21
+
+Bugfix: the dashboard "Queries over time" chart silently hid outages. Periods with zero DNS queries for every range (`Today`, `Last 24 h`, `Last 48 h`, `Last 7 days`, `Last 30 days`, ad-hoc) were dropped from the response entirely, so Chart.js drew the series as if the outage never happened.
+
+### Fixed
+- **`/api/stats/history` now returns every bucket in the requested range, not just buckets that had queries.** The old query did `SELECT date_bin(...) AS bucket, count(*) FROM query_log WHERE timestamp >= since GROUP BY bucket` — any bucket with zero rows was simply absent from the result set. A 3-hour outage across 30-minute buckets produced 6 missing rows, and the bar chart rendered as if those three hours never existed. Rebuilt the query as a `generate_series(date_bin(...start), date_bin(...end), interval)` of every expected bucket, `LEFT JOIN`ed against the aggregated counts, with `COALESCE(..., 0)` on the query/blocked columns. Outages now render as empty bars on the x-axis — reflecting what actually happened rather than smoothing the chart to accommodate missing data. File: `app/api/stats.py`.
+
+### Migration notes
+- None. No schema change, no config change. The API response shape is unchanged — existing clients just receive additional zero-valued buckets where they previously got nothing.
+
+---
+
 ## [1.9.2] — 2026-04-20
 
 Bugfix: the dashboard "Queries over time" chart rendered incorrectly for every time range past 24 hours. Two issues compounded.
