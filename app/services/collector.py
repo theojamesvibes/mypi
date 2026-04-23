@@ -160,7 +160,7 @@ async def _poll_stats_for(instance: PiholeInstance) -> None:
             status="offline",
         )
     except Exception as exc:
-        logger.warning("Failed to poll stats for %s: %s", instance.name, exc)
+        logger.warning("Failed to poll stats for %s: %s: %s", instance.name, type(exc).__name__, exc)
         if isinstance(exc, (ssl.SSLError, httpx.ConnectError, httpx.RemoteProtocolError)):
             logger.info("Connection error for %s — evicting client for next poll", instance.name)
             await close_client(key)
@@ -313,7 +313,7 @@ async def _poll_queries_for(instance: PiholeInstance) -> None:
         _last_seen_ts[instance_key] = max_ts
 
     except Exception as exc:
-        logger.warning("Failed to poll queries for %s: %s", instance.name, exc)
+        logger.warning("Failed to poll queries for %s: %s: %s", instance.name, type(exc).__name__, exc)
         if isinstance(exc, (ssl.SSLError, httpx.ConnectError, httpx.RemoteProtocolError)):
             logger.info("Connection error for %s — evicting client for next poll", instance.name)
             await close_client(instance_key)
