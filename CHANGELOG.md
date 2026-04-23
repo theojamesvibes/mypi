@@ -4,6 +4,18 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.9.4] — 2026-04-23
+
+Diagnostic: the collector's poll-failure WARN logged the exception's `str()` but not its type. `httpx.ConnectError()` and similar bare exceptions produce an empty string, so operators saw `Failed to poll stats for pihole4:` with no way to distinguish `ConnectError` from `ReadError` from `SSLError` from `RemoteProtocolError`. This was blocking diagnosis of intermittent wedges on an old Raspberry Pi 3 test target whose hardware telemetry was otherwise clean (no under-voltage, no SD I/O errors, no NIC counter errors, no memory pressure).
+
+### Changed
+- **`app/services/collector.py`** — both poll-failure WARN lines now include `type(exc).__name__` alongside the exception message. Matches the diagnostic pattern established in `pihole_client._authenticate` (dev.12, 1.8.0). The next occurrence will log e.g. `Failed to poll stats for pihole4: ConnectError:` instead of the current `Failed to poll stats for pihole4:`, making the exception class visible even when `str(exc)` is empty.
+
+### Migration notes
+- None. Log-message-only change.
+
+---
+
 ## [1.9.3] — 2026-04-21
 
 Bugfix: the dashboard "Queries over time" chart silently hid outages. Periods with zero DNS queries for every range (`Today`, `Last 24 h`, `Last 48 h`, `Last 7 days`, `Last 30 days`, ad-hoc) were dropped from the response entirely, so Chart.js drew the series as if the outage never happened.
