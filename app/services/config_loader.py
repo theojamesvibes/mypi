@@ -8,9 +8,11 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from datetime import datetime, timezone
+
 from app.config import SiteConfig, load_site_configs
 from app.models.pihole import PiholeInstance
-from app.models.site import Site, SiteSetting
+from app.models.site import Site, SiteSetting, SiteSlugHistory
 from app.services.client_manager import close_client
 
 logger = logging.getLogger(__name__)
@@ -37,6 +39,47 @@ async def sync_sites_and_instances(db: AsyncSession) -> None:
         return
 
     site_slugs = {sc.slug for sc in site_configs}
+
+    # ---- 0. Main-rename detection.
+    #         If the YAML's default_site's slug doesn't exist in the DB AND
+    #         the DB's current Main has a slug that isn't referenced anywhere
+    #         in the new YAML, treat it as a rename: update the existing
+    #         Main's name+slug in place so the upsert-by-slug step below
+    #         finds it. The old slug goes to site_slug_history so bookmarks
+    #         (/dashboard/default etc.) keep working via 301.
+    target_main = next((sc for sc in site_configs if sc.main), None)
+    if target_main is not None:
+        target_main_match = await db.execute(
+            select(Site).where(Site.slug == target_main.slug)
+        )
+        target_main_in_db = target_main_match.scalar_one_or_none()
+
+        if target_main_in_db is None:
+            current_main_match = await db.execute(
+                select(Site).where(
+                    Site.is_main.is_(True), Site.is_active.is_(True),
+                )
+            )
+            current_main = current_main_match.scalar_one_or_none()
+
+            if (
+                current_main is not None
+                and current_main.slug not in site_slugs
+            ):
+                logger.info(
+                    "Main-site rename detected in YAML: '%s' (slug=%s) → "
+                    "'%s' (slug=%s). Preserving data in place.",
+                    current_main.name, current_main.slug,
+                    target_main.name, target_main.slug,
+                )
+                db.add(SiteSlugHistory(
+                    old_slug=current_main.slug,
+                    site_id=current_main.id,
+                    retired_at=datetime.now(timezone.utc),
+                ))
+                current_main.name = target_main.name
+                current_main.slug = target_main.slug
+                await db.flush()
 
     # ---- 1. Upsert sites.
     slug_to_site: dict[str, Site] = {}

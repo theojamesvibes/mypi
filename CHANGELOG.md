@@ -4,6 +4,24 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.11.0-dev.11] — 2026-04-24
+
+Multi-site YAML ergonomics — friendlier field name for the Main flag, optional slugs are now documented up-front, and renaming the default site through YAML is supported in-place (no orphans, no data loss).
+
+### Added
+- **`default_site: true`** in `sites:` YAML — friendly alias for `main: true`. Either (or both) flips the Main flag. `main:` stays as a silent back-compat alias so existing configs keep working.
+- **Main-site rename detection** in `config_loader.sync_sites_and_instances()`. When the YAML's `default_site` entry names a slug that doesn't exist in the DB **and** the DB's current Main has a slug that isn't referenced anywhere in the new YAML, MyPi recognizes this as a rename: the existing site row is updated in place (name + slug), the old slug is written to `site_slug_history` so bookmarks keep working via 301, and all historical stats, query logs, sync schedule, and Pushover settings stay attached. No orphan Default hanging around. Runs before the normal upsert-by-slug loop so the upsert sees the slug match and treats it as an update, not a new insert.
+
+### Changed
+- **`pihole_instances.yml.example`** — multi-site block now uses `default_site: true` as the primary form, documents the rename-in-place flow, and the "Advanced" notes explain when `slug:` is worth setting explicitly. `main: true` is mentioned only as a back-compat alias.
+
+### Migration notes
+- Pulling dev.11 without changing your YAML is a no-op. All existing configs keep working.
+- When you're ready to rename the Default site, edit `pihole_instances.yml` to the `sites:` format with your preferred name on the `default_site: true` entry (e.g. `name: "WTR"`), then restart the container. A log line `Main-site rename detected in YAML: 'Default' (slug=default) → 'WTR' (slug=wtr). Preserving data in place.` confirms the rename ran.
+- Bookmarks to `/dashboard/default`, `/api/sites/default/...`, etc. continue working after the rename via the existing slug-history 301 path in `resolve_site`.
+
+---
+
 ## [1.11.0-dev.10] — 2026-04-24
 
 Bugfix — dashboard / settings / query-log pages rendered empty even though the backend was healthy. `window.siteApiUrl` was defined in a trailing `<script>` at the bottom of `base.html`, but each template's `extra_js` block runs *before* that (extra_js is injected via Jinja block, the trailing script follows it). `settings.html::extra_js` calls `loadSettingsInstances()`, `loadSyncStatus()`, etc., which reference `window.siteApiUrl(...)`. With the helper still undefined, each loader threw `TypeError: siteApiUrl is not a function` in the browser console, aborted silently, and left the UI looking like instances + sync settings were gone.

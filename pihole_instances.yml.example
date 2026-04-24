@@ -45,35 +45,43 @@ instances:
 # independent sync groups. Uncomment the block below and delete the
 # `instances:` block above.
 #
-# Exactly one site should be flagged `main: true` — it's the source for
-# inherited settings (Pushover, sync schedule, poll intervals) that other
-# sites can opt to share via the "Use Main's settings" checkbox in the UI.
-# If you don't flag any site as main, the first one becomes Main.
+# Exactly one site should be flagged `default_site: true` — it's the source
+# for inherited settings (Pushover, sync schedule, poll intervals) that
+# other sites can opt to share via the "Use Main's settings" checkbox in the
+# UI. If you don't flag any site as default_site, the first one becomes the
+# default. (`main: true` is a silent back-compat alias for the same flag.)
 #
-# Each site's `slug:` is optional — if omitted, MyPi derives one from the
-# name (e.g. "Home Base" → "home-base"). The slug appears in URLs
-# (`/api/sites/home/...`, `/dashboard/home`) and in iOS's site picker.
-# Reserved slugs you can't use: `sites`, `inactive`, `admin`, `main`.
+# Renaming the default site is supported in-place: change `name:` on the
+# `default_site: true` entry and restart. MyPi detects the rename, updates
+# the existing site row, preserves all data + history, and adds the old
+# URL slug to the redirect history so bookmarks keep working.
 
 # sites:
-#   - name: "Home"
-#     slug: "home"           # optional; derived from name if omitted
-#     main: true             # exactly one site should be Main
+#   - name: "WTR"
+#     default_site: true     # exactly one site should be default_site
 #     instances:
-#       - name: "Living Room"
-#         url: "http://192.168.1.100"
+#       - name: "pihole1"
+#         url: "https://192.168.66.20"
 #         password: "..."
 #         color: "#00a65a"
 #         master: true       # master *within this site*
-#       - name: "Office"
-#         url: "http://192.168.1.101"
+#       - name: "pihole2"
+#         url: "https://192.168.66.21"
 #         password: "..."
 #         color: "#3c8dbc"
 #
 #   - name: "Cabin"
 #     instances:
 #       - name: "Cabin Pi"
-#         url: "http://192.168.66.10"
+#         url: "http://192.168.77.10"
 #         password: "..."
 #         color: "#f39c12"
 #         master: true
+#
+# ─── Advanced ─────────────────────────────────────────────────────────────────
+# The `slug:` field on each site is optional. MyPi derives one from `name:`
+# ("Cabin" → "cabin", "Home Base" → "home-base"). The slug appears in URLs
+# (`/api/sites/cabin/...`, `/dashboard/cabin`) and in iOS's site picker. Set
+# `slug:` explicitly only when the derived one is awkward or when you want
+# shorter URLs. Reserved slugs you can't use: `sites`, `inactive`, `admin`,
+# `main`.
