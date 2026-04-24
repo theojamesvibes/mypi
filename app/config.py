@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import os
+import re
 from pathlib import Path
 
 import yaml
@@ -9,6 +11,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 SESSION_COOKIE_NAME = "session_token"
 SESSION_COOKIE_MAX_AGE = 60 * 60 * 8  # 8 hours
+
+# Slugs that would clash with API route segments or reserved URL space.
+# Enforced for user-provided slugs in YAML; the system-generated `default`
+# slug used when wrapping legacy flat `instances:` YAML is exempt.
+RESERVED_SLUGS = frozenset({"sites", "inactive", "admin", "main"})
+
+_SLUG_STRIP_RE = re.compile(r"[^a-z0-9]+")
+_SLUG_EDGE_RE = re.compile(r"(^-+)|(-+$)")
 
 
 class Settings(BaseSettings):
@@ -46,7 +56,8 @@ class Settings(BaseSettings):
     verify_pihole_ssl: bool = False
 
     pihole_config_path: str = "/app/pihole_instances.yml"
-    max_pihole_instances: int = 10
+    max_sites: int = 10
+    max_pihole_instances: int = 10  # per site, not total
 
     # Expose FastAPI's auto-generated Swagger UI (/docs) and OpenAPI schema
     # (/openapi.json). Both are useful for development and for driving iOS-side
@@ -97,7 +108,97 @@ class PiholeInstanceConfig:
         self.master = master
 
 
-def load_instance_configs(path: str | None = None) -> list[PiholeInstanceConfig]:
+class SiteConfig:
+    """A site from pihole_instances.yml — one or more pihole instances with a
+    master, wrapped in a site scope.
+
+    Legacy flat `instances:` YAML is parsed into a single implicit SiteConfig
+    named "Default" with slug "default" and is_main=True.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        slug: str,
+        main: bool,
+        instances: list[PiholeInstanceConfig],
+    ):
+        self.name = name
+        self.slug = slug
+        self.main = main
+        self.instances = instances
+
+
+def slugify(name: str) -> str:
+    """Derive a URL slug from a site name. Lowercase, hyphen-delimited,
+    alphanumeric. Returns empty string when nothing usable is left."""
+    slug = name.lower()
+    slug = _SLUG_STRIP_RE.sub("-", slug)
+    slug = _SLUG_EDGE_RE.sub("", slug)
+    return slug[:64]
+
+
+def validate_slug(slug: str, source: str) -> None:
+    """Raise ValueError with source context if the slug is unusable."""
+    if not slug:
+        raise ValueError(f"{source}: slug is empty or contains only punctuation")
+    if len(slug) > 64:
+        raise ValueError(f"{source}: slug exceeds 64 characters")
+    if slug in RESERVED_SLUGS:
+        raise ValueError(f"{source}: slug '{slug}' is reserved")
+    if not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", slug):
+        raise ValueError(
+            f"{source}: slug '{slug}' must be lowercase alphanumerics "
+            "separated by single hyphens"
+        )
+
+
+def _parse_instance(item: dict) -> PiholeInstanceConfig:
+    return PiholeInstanceConfig(
+        name=item["name"],
+        url=item["url"],
+        password=item.get("password", ""),
+        color=item.get("color", "#3c8dbc"),
+        master=bool(item.get("master", False)),
+    )
+
+
+def _parse_site(item: dict, fallback_index: int) -> SiteConfig:
+    name = item.get("name") or f"Site {fallback_index + 1}"
+    raw_slug = item.get("slug")
+    slug = raw_slug if raw_slug else slugify(name)
+    # Validate user-supplied slug; auto-derived slug also gets the same
+    # treatment to keep bad names from silently becoming unusable URLs.
+    validate_slug(slug, f"site '{name}'")
+
+    raw_instances = item.get("instances") or []
+    if len(raw_instances) > settings.max_pihole_instances:
+        logging.getLogger(__name__).warning(
+            "Site '%s' has %d instances; only the first %d will be used.",
+            name, len(raw_instances), settings.max_pihole_instances,
+        )
+    instances = [_parse_instance(x) for x in raw_instances[:settings.max_pihole_instances]]
+
+    return SiteConfig(
+        name=name,
+        slug=slug,
+        main=bool(item.get("main", False)),
+        instances=instances,
+    )
+
+
+def load_site_configs(path: str | None = None) -> list[SiteConfig]:
+    """Load and parse pihole_instances.yml.
+
+    Returns a list of SiteConfig. Supports both the new `sites:` top-level
+    key (multi-site) and the legacy `instances:` top-level key (wrapped
+    into a single implicit `Default` site flagged main).
+
+    Main-flag resolution: if zero sites are flagged `main: true`, the first
+    site in YAML order becomes Main. If multiple sites are flagged, the
+    first flagged one wins and the rest are logged as demoted.
+    """
+    logger = logging.getLogger(__name__)
     config_path = path or os.getenv("PIHOLE_CONFIG_PATH", "pihole_instances.yml")
     p = Path(config_path)
     if not p.exists():
@@ -106,33 +207,79 @@ def load_instance_configs(path: str | None = None) -> list[PiholeInstanceConfig]
         with open(p) as f:
             data = yaml.safe_load(f)
     except (OSError, yaml.YAMLError) as exc:
-        import logging
-        logging.getLogger(__name__).warning(
-            "Could not load Pi-hole instances from %s: %s — starting with no instances.",
+        logger.warning(
+            "Could not load Pi-hole sites from %s: %s — starting with no sites.",
             config_path, exc,
         )
         return []
-    if not data or "instances" not in data:
+    if not data:
         return []
-    instances = []
-    raw = data["instances"]
-    if len(raw) > settings.max_pihole_instances:
-        import logging
-        logging.getLogger(__name__).warning(
-            "Config has %d instances; only the first %d will be used.",
-            len(raw), settings.max_pihole_instances,
-        )
-    for item in raw[:settings.max_pihole_instances]:
-        instances.append(
-            PiholeInstanceConfig(
-                name=item["name"],
-                url=item["url"],
-                password=item.get("password", ""),
-                color=item.get("color", "#3c8dbc"),
-                master=bool(item.get("master", False)),
+
+    # New-style multi-site YAML.
+    if "sites" in data:
+        raw = data["sites"] or []
+        if len(raw) > settings.max_sites:
+            logger.warning(
+                "Config has %d sites; only the first %d will be used.",
+                len(raw), settings.max_sites,
             )
+        sites = [_parse_site(item, i) for i, item in enumerate(raw[:settings.max_sites])]
+
+    # Legacy flat `instances:` YAML — wrap as an implicit Default site.
+    elif "instances" in data:
+        raw_instances = data["instances"] or []
+        if len(raw_instances) > settings.max_pihole_instances:
+            logger.warning(
+                "Config has %d instances; only the first %d will be used.",
+                len(raw_instances), settings.max_pihole_instances,
+            )
+        instances = [_parse_instance(x) for x in raw_instances[:settings.max_pihole_instances]]
+        sites = [SiteConfig(name="Default", slug="default", main=True, instances=instances)]
+
+    else:
+        return []
+
+    # Resolve Main designation.
+    flagged = [s for s in sites if s.main]
+    if len(flagged) > 1:
+        winner = flagged[0]
+        for loser in flagged[1:]:
+            loser.main = False
+            logger.warning(
+                "Multiple sites flagged main: true; demoted '%s' — '%s' is Main.",
+                loser.name, winner.name,
+            )
+    elif not flagged and sites:
+        sites[0].main = True
+        logger.info(
+            "No site flagged main: true; using first site '%s' as Main.",
+            sites[0].name,
         )
-    return instances
+
+    # Slug uniqueness across sites.
+    seen: set[str] = set()
+    deduped: list[SiteConfig] = []
+    for s in sites:
+        if s.slug in seen:
+            logger.warning(
+                "Duplicate slug '%s' for site '%s' — skipping duplicate.",
+                s.slug, s.name,
+            )
+            continue
+        seen.add(s.slug)
+        deduped.append(s)
+    return deduped
+
+
+# Legacy name kept so nothing downstream of config_loader re-imports it by
+# accident. Returns the flat list of instances under Main, matching the
+# old semantics. Not wired into the startup path — config_loader uses
+# load_site_configs now.
+def load_instance_configs(path: str | None = None) -> list[PiholeInstanceConfig]:
+    for site in load_site_configs(path):
+        if site.main:
+            return list(site.instances)
+    return []
 
 
 settings = Settings()

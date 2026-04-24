@@ -4,6 +4,30 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.11.0-dev.2] — 2026-04-24
+
+Multi-site Phase 2 — YAML loading, config sync, and the `site_settings` inheritance service. No behavior change for existing deployments: the collector, sync service, APIs, and web UI still run exactly as they did in dev.0/dev.1 because the readers (pushover, poll_settings, sync_service) haven't been migrated onto `site_settings` yet — Phase 4 ships that reader rewrite plus the app_settings→site_settings data move together.
+
+### Added
+- **`sites:` YAML format** in `pihole_instances.yml` — up to 10 sites per deployment, each with up to 10 Pi-hole instances, its own master, and its own `main:` flag for inheritance. Legacy flat `instances:` YAML continues to work unchanged and is transparently wrapped into an implicit `Default` site.
+- **`app/config.py::SiteConfig`** + **`slugify()`** + **`validate_slug()`** + **`load_site_configs()`** — parse both YAML shapes, derive slugs from names, enforce reserved-slug list (`sites`, `inactive`, `admin`, `main`), resolve Main designation (first `main: true` wins; if none flagged, first site becomes Main). `max_sites` setting added (default 10, per-site `max_pihole_instances` stays 10).
+- **`app/services/config_loader.py::sync_sites_and_instances()`** (replaces `sync_instances`) — upserts sites by slug and instances by `(site_id, name)`, detects orphans at both layers, handles Main reassignment with settings materialization (copies old Main's `site_settings` into new Main where new Main has NULL), evicts `client_manager` clients for deactivated instances. `sync_instances` kept as an alias for compatibility.
+- **`app/services/site_settings.py`** — per-site settings service with Main-fallback inheritance. `get_setting()` resolves NULL-or-missing values against the active Main; `set_setting()` / `clear_setting()` upsert with the established `pg_insert … ON CONFLICT DO UPDATE` + read-back verification pattern. `get_json_setting` / `set_json_setting` convenience wrappers for JSON-encoded values. Module is available but unwired in Phase 2 — Phase 4 migrates the existing settings readers onto it.
+- **`pihole_instances.yml.example`** — documents both formats side by side with the slug/main/inheritance semantics.
+
+### Fixed (pre-release correction to dev.0's migration `0013_multisite.py`)
+- **Dropped the per-site `app_settings` backfill from migration 0013.** The draft migration filtered on `key LIKE 'sync.%'` / `'pushover.%'` / `'poll.%'`, but the actual keys in use are flat (`sync_schedule`, `sync_last_result`, `pushover_settings`, `queries_poll_interval`), so the backfill would have matched nothing and left per-site settings in `app_settings` indefinitely. Corrected here because dev.0 was never deployed. The app_settings→site_settings data move is now explicitly scoped to Phase 4, paired with the reader rewrite — see the migration plan.
+
+### Changed
+- **`app/main.py::_bootstrap`** calls `sync_sites_and_instances` (renamed from `sync_instances`). One call-site updated.
+
+### Migration notes
+- No new Alembic migration in this release. `alembic upgrade head` is still at `0014_api_key_site_scope` from dev.1.
+- Existing deployments upgrading to dev.2 see the Default site (created by migration 0013 in dev.0) get upserted by slug on startup. Zero row churn.
+- Deployments that want to adopt multi-site can swap their `instances:` YAML for a `sites:` YAML on restart; MyPi will create the new sites, move instances under them where the name matches, and flag the old Default site as an orphan if it's no longer referenced. Orphans stay as `is_active=FALSE` rows for manual cleanup — data is never auto-deleted.
+
+---
+
 ## [1.11.0-dev.1] — 2026-04-24
 
 Phase 1 addendum — forward-compatibility hook so a future per-site API-key scoping feature won't require another breaking schema migration. No user-visible change; no existing or newly-created key's behavior changes in v1. All keys continue to have access to every site on the deployment.
