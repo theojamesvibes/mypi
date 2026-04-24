@@ -239,12 +239,12 @@ Not in this branch. Handled in `mypi-ios` after backend ships.
 Every phase that changes code bumps VERSION and updates CHANGELOG. Rough
 plan:
 
-- Phase 1: `1.11.0-dev.0` (schema)
-- Phase 2: `1.11.0-dev.1` (config loader)
-- Phase 3: `1.11.0-dev.2` (per-site collector)
-- Phase 4: `1.11.0-dev.3` (per-site sync)
-- Phase 5: `1.11.0-dev.4` (API)
-- Phase 6: `1.11.0-dev.5` (UI)
+- Phase 1: `1.11.0-dev.0` (schema) + `1.11.0-dev.1` (api_key site-scope column addendum)
+- Phase 2: `1.11.0-dev.2` (config loader)
+- Phase 3: `1.11.0-dev.3` (per-site collector)
+- Phase 4: `1.11.0-dev.4` (per-site sync)
+- Phase 5: `1.11.0-dev.5` (API)
+- Phase 6: `1.11.0-dev.6` (UI)
 - Final merge to main: `1.11.0`
 
 README update happens in a single commit at the end of Phase 6 reflecting
