@@ -4,6 +4,18 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.11.0-dev.8] — 2026-04-24
+
+Bugfix — migration `0013_multisite` failed on asyncpg with `DatatypeMismatchError: column "id" is of type uuid but expression is of type character varying`. asyncpg is strict about parameter types: a Python `str` bound to a `uuid` column is rejected, unlike psycopg2 which performs an implicit cast. Two bind sites in the migration (the `INSERT INTO sites` and the `UPDATE pihole_instances` backfill) both pass a stringified UUID, so both were failing.
+
+Fix: wrap the two bind params in explicit SQL casts — `CAST(:id AS uuid)` and `CAST(:sid AS uuid)`. Works uniformly under asyncpg, psycopg2, and psycopg3.
+
+### Migration notes
+- The failing migration ran inside a transaction that rolled back cleanly on each failure, so any DB that tried to upgrade to dev.7 is still at revision 0012 with no stale state. Pulling dev.8 and restarting the container will run 0013 → 0014 → 0015 cleanly this time.
+- No schema or logic change beyond the cast. Every other behavior of migration 0013 is identical to what dev.0/dev.1 intended.
+
+---
+
 ## [1.11.0-dev.7] — 2026-04-24
 
 Multi-site Phase 6 — Web UI. A site picker in the topbar, bookmarkable per-site URLs (`/dashboard/{slug}`, `/queries/{slug}`, `/settings/{slug}`), dashboard JS routes site-scoped fetches through a `window.siteApiUrl()` helper, and a new Orphaned Sites cleanup section in the settings page. The picker is hidden for single-site deployments so nothing about the UI changes in that case.
