@@ -34,14 +34,14 @@
     <div class="sidebar-subtitle">Multi-hole Dashboard</div>
   </div>
   <ul class="sidebar-nav">
-    <li class="nav-item {% if request.url.path == '/' %}active{% endif %}">
-      <a href="/"><i class="bi bi-speedometer2"></i><span> Dashboard</span></a>
+    <li class="nav-item {% if request.url.path == '/' or request.url.path.startswith('/dashboard') %}active{% endif %}">
+      <a id="nav-dashboard" href="/"><i class="bi bi-speedometer2"></i><span> Dashboard</span></a>
     </li>
-    <li class="nav-item {% if request.url.path == '/queries' %}active{% endif %}">
-      <a href="/queries"><i class="bi bi-list-ul"></i><span> Query Log</span></a>
+    <li class="nav-item {% if request.url.path.startswith('/queries') %}active{% endif %}">
+      <a id="nav-queries" href="/queries"><i class="bi bi-list-ul"></i><span> Query Log</span></a>
     </li>
-    <li class="nav-item {% if request.url.path == '/settings' %}active{% endif %}">
-      <a href="/settings"><i class="bi bi-gear"></i><span> Settings</span></a>
+    <li class="nav-item {% if request.url.path.startswith('/settings') %}active{% endif %}">
+      <a id="nav-settings" href="/settings"><i class="bi bi-gear"></i><span> Settings</span></a>
     </li>
     {% if enable_api_docs %}
     <li class="nav-item">
@@ -69,6 +69,8 @@
       {% endif %}
     </div>
     <div class="d-flex align-items-center gap-2">
+      <!-- Site picker: hidden when only 1 active site; populated by JS below. -->
+      <select id="site-picker" class="form-select form-select-sm" style="display:none; width:auto;"></select>
       <span class="badge bg-secondary" id="sync-status-badge" style="display:none!important;"></span>
       <span class="badge bg-success" id="online-count">— online</span>
       <span class="text-muted small" id="last-updated"></span>
@@ -170,10 +172,86 @@
     document.getElementById('main-content').classList.toggle('expanded');
   });
 
-  // Sync badge — runs on every page
+  // ── Multi-site support ───────────────────────────────────────────────────
+  // Server passes `site_slug` when the request hit a /dashboard/{slug} etc.
+  // route; empty string means legacy unprefixed URL → operate on Main.
+  window.currentSiteSlug = {{ site_slug|default('')|tojson }};
+
+  // API base helper: legacy URLs + single-site deployments → /api/... ;
+  // per-site URLs → /api/sites/{slug}/...  Pass just the suffix
+  // ("/stats/summary"), the prefix is inserted for you.
+  window.siteApiUrl = function (pathAfterApi) {
+    if (pathAfterApi.indexOf('/') !== 0) pathAfterApi = '/' + pathAfterApi;
+    if (window.currentSiteSlug) {
+      return '/api/sites/' + encodeURIComponent(window.currentSiteSlug) + pathAfterApi;
+    }
+    return '/api' + pathAfterApi;
+  };
+
+  // Determine which section we're on so the picker's "change" handler can
+  // navigate to the correct /{section}/{slug} URL.
+  window.currentSection = (function () {
+    var path = window.location.pathname;
+    if (path.indexOf('/queries') === 0) return 'queries';
+    if (path.indexOf('/settings') === 0) return 'settings';
+    return 'dashboard';
+  })();
+
+  // Populate the site picker on every page. Hidden when ≤1 active site so
+  // single-site deployments see no UI change at all.
   (async function () {
     try {
-      const res = await fetch('/api/sync/status', { credentials: 'include', cache: 'no-store' });
+      const res = await fetch('/api/sites', { credentials: 'include', cache: 'no-store' });
+      if (!res.ok) return;
+      const sites = await res.json();
+      const picker = document.getElementById('site-picker');
+      if (!picker) return;
+      if (!sites || sites.length <= 1) {
+        picker.style.display = 'none';
+        return;
+      }
+      picker.innerHTML = '';
+      const currentSlug = window.currentSiteSlug;
+      let haveActiveSelection = false;
+      for (const s of sites) {
+        const opt = document.createElement('option');
+        opt.value = s.slug;
+        opt.textContent = s.name + (s.is_main ? ' ★' : '');
+        if (s.slug === currentSlug) { opt.selected = true; haveActiveSelection = true; }
+        picker.appendChild(opt);
+      }
+      if (!haveActiveSelection) {
+        // Legacy URL on a multi-site deployment → pick the Main site as
+        // the currently-visible default so the dropdown isn't misleading.
+        const main = sites.find(s => s.is_main) || sites[0];
+        if (main) {
+          for (const opt of picker.options) {
+            if (opt.value === main.slug) { opt.selected = true; break; }
+          }
+        }
+      }
+      picker.style.display = '';
+      picker.addEventListener('change', () => {
+        const slug = picker.value;
+        // Navigate to the same section under the new slug.
+        window.location.href = '/' + window.currentSection + '/' + encodeURIComponent(slug);
+      });
+      // Rewrite sidebar links so clicking Dashboard/Queries/Settings
+      // preserves the selected site.
+      const navSlug = currentSlug || (sites.find(s => s.is_main) || sites[0]).slug;
+      const dash = document.getElementById('nav-dashboard');
+      const que  = document.getElementById('nav-queries');
+      const set  = document.getElementById('nav-settings');
+      if (dash) dash.href = '/dashboard/' + encodeURIComponent(navSlug);
+      if (que)  que.href  = '/queries/'  + encodeURIComponent(navSlug);
+      if (set)  set.href  = '/settings/' + encodeURIComponent(navSlug);
+    } catch (_) {}
+  })();
+
+  // Sync badge — runs on every page. Uses per-site status when on a site URL.
+  (async function () {
+    try {
+      const res = await fetch(window.siteApiUrl('/sync/status'), { credentials: 'include', cache: 'no-store' });
       if (res.ok) renderSyncBadge(await res.json());
     } catch (_) {}
   })();
@@ -193,7 +271,7 @@
   })();
   setInterval(async () => {
     try {
-      const res = await fetch('/api/sync/status', { credentials: 'include', cache: 'no-store' });
+      const res = await fetch(window.siteApiUrl('/sync/status'), { credentials: 'include', cache: 'no-store' });
       if (res.ok) renderSyncBadge(await res.json());
     } catch (_) {}
   }, 60000);
