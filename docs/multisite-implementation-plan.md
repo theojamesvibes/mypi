@@ -242,10 +242,22 @@ plan:
 - Phase 1: `1.11.0-dev.0` (schema) + `1.11.0-dev.1` (api_key site-scope column addendum)
 - Phase 2: `1.11.0-dev.2` (config loader)
 - Phase 3: `1.11.0-dev.3` (per-site collector)
-- Phase 4: `1.11.0-dev.4` (per-site sync)
-- Phase 5: `1.11.0-dev.5` (API)
-- Phase 6: `1.11.0-dev.6` (UI)
+- Phase 4a: `1.11.0-dev.4` (storage-layer reader migration — settings readers now
+  site_settings-backed but still Main-only in behavior; Alembic 0015 moves the
+  four per-site keys out of app_settings)
+- Phase 4b: `1.11.0-dev.5` (sync_service per-site functional rewrite —
+  `run_sync(site_id)`, per-site locks/state/schedules, per-site
+  blocklist-delta trigger)
+- Phase 5: `1.11.0-dev.6` (API per-site routes + legacy aliases)
+- Phase 6: `1.11.0-dev.7` (Web UI)
 - Final merge to main: `1.11.0`
+
+**Why the Phase 4 split:** rewriting sync_service per-site + migrating all
+three settings readers + moving their data in one commit produced a
+~1200-line diff across 4+ files — too risky to land atomically. The
+storage-layer move (4a) is a pure internal refactor with zero user-visible
+behavior change, so it can ship in isolation and the sync-functional
+rewrite (4b) lands against a stable migrated base.
 
 README update happens in a single commit at the end of Phase 6 reflecting
 the new feature, the YAML format addition, and the legacy-compat story.

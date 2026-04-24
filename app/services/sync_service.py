@@ -13,13 +13,12 @@ from typing import Literal
 
 import httpx
 from sqlalchemy import select, text
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.database import AsyncSessionLocal
 from app.models.pihole import PiholeInstance
-from app.models.settings import AppSetting
 from app.services import pushover as pushover_service
 from app.services.client_manager import close_client, get_client, save_sid
+from app.services.site_settings import get_main_site_id, get_setting, set_setting
 
 # Transient socket failures that the collector already self-heals by evicting
 # the persistent client.  Sync's _sync_replica uses the same class list to
@@ -98,24 +97,22 @@ def get_schedule() -> dict:
 # ── DB persistence ────────────────────────────────────────────────────────────
 
 async def _db_upsert(key: str, value: str) -> None:
-    """Write key/value to app_settings and verify it was committed."""
-    async with AsyncSessionLocal() as db:
-        stmt = (
-            pg_insert(AppSetting)
-            .values(key=key, value=value)
-            .on_conflict_do_update(index_elements=["key"], set_={"value": value})
-        )
-        await db.execute(stmt)
-        await db.commit()
+    """Write key/value to site_settings under the active Main site.
 
-    # Verify in a fresh session (no identity-map cache) that the row landed
+    Phase 4 moved the backing store from `app_settings` (flat/global) to
+    `site_settings` (keyed by (site_id, key)). In Phase 4 everything still
+    goes through Main's row because the surrounding sync_service logic is
+    single-site. Phase 5 rewrites run_sync / state / scheduling to be
+    per-site, and this helper gains a site_id parameter at that point.
+    """
     async with AsyncSessionLocal() as db:
-        row = await db.get(AppSetting, key)
-        if row is None or row.value != value:
+        main_id = await get_main_site_id(db)
+        if main_id is None:
             raise RuntimeError(
-                f"DB write verification failed for key '{key}': "
-                f"committed but read-back returned {'nothing' if row is None else repr(row.value)}"
+                f"Cannot persist sync_service key '{key}': no Main site found."
             )
+        # set_setting commits and verifies with a fresh read-back.
+        await set_setting(db, main_id, key, value)
     logger.info("DB upsert verified: key='%s'", key)
 
 
@@ -155,18 +152,24 @@ async def load_schedule() -> None:
     """Load persisted schedule and last sync result from DB (called at startup)."""
     global _schedule_minutes, _auto_gravity, _sync_opts, _state
 
+    schedule_raw: str | None = None
+    result_raw: str | None = None
     try:
         async with AsyncSessionLocal() as db:
-            schedule_row = await db.get(AppSetting, "sync_schedule")
-            result_row = await db.get(AppSetting, "sync_last_result")
+            main_id = await get_main_site_id(db)
+            if main_id is None:
+                logger.warning("No Main site found on startup; sync schedule load deferred.")
+                return
+            schedule_raw = await get_setting(db, main_id, "sync_schedule")
+            result_raw = await get_setting(db, main_id, "sync_last_result")
     except Exception as exc:
         logger.error("Failed to load sync settings from DB: %s", exc)
         return
 
     # Restore schedule
-    if schedule_row and schedule_row.value:
+    if schedule_raw:
         try:
-            data = json.loads(schedule_row.value)
+            data = json.loads(schedule_raw)
             _schedule_minutes = data.get("interval_minutes", 0)
             _auto_gravity = data.get("auto_gravity", False)
             _sync_opts = {
@@ -185,9 +188,9 @@ async def load_schedule() -> None:
         logger.warning("STARTUP: no sync_schedule row in DB — using defaults (interval=0, disabled)")
 
     # Restore last sync result
-    if result_row and result_row.value:
+    if result_raw:
         try:
-            data = json.loads(result_row.value)
+            data = json.loads(result_raw)
             _state = SyncState(
                 status=data.get("status", "idle"),
                 started_at=datetime.fromisoformat(data["started_at"]) if data.get("started_at") else None,
