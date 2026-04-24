@@ -1,10 +1,31 @@
-"""Background APScheduler jobs that poll Pi-hole instances."""
+"""Background APScheduler jobs that poll Pi-hole instances.
+
+Scheduler structure (Phase 3 onward):
+  For each active site, a pair of APScheduler jobs — `poll_stats_site_<id>`
+  and `poll_queries_site_<id>` — polls only that site's instances. Adding
+  or removing a site updates just its pair via `schedule_site` /
+  `unschedule_site`; a poll-interval change reschedules every site's
+  queries job via `reschedule_all_queries_jobs`. Sites are independent:
+  a hang on one site's poll doesn't delay another's next tick.
+
+  Per-instance module state (watermarks, offline counters, circuit
+  breaker) is still keyed by instance id — site scoping doesn't change
+  what we track, only which instances we touch per tick. A dedicated
+  `prune_inactive_state` job clears dict entries for instances that
+  config_loader has deactivated.
+
+  The master-blocklist-delta auto-sync trigger only fires for the Main
+  site's master in Phase 3. `sync_service` still has global
+  single-master state; Phase 4 rewrites it to be per-site and this
+  guard goes away.
+"""
 from __future__ import annotations
 
 import asyncio
 import logging
 import ssl
 import time
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -14,6 +35,7 @@ from sqlalchemy import delete, func, select
 from app.config import settings
 from app.database import AsyncSessionLocal
 from app.models.pihole import PiholeInstance, QueryLog, StatsSnapshot
+from app.models.site import Site
 from app.models.user import RevokedToken
 from app.services import pihole_version_check
 from app.services import pushover as pushover_service
@@ -132,7 +154,33 @@ async def _get_active_instances() -> list[PiholeInstance]:
         return list(result.scalars().all())
 
 
-async def _poll_stats_for(instance: PiholeInstance) -> None:
+async def _get_instances_for_site(site_id: uuid.UUID) -> list[PiholeInstance]:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(PiholeInstance).where(
+                PiholeInstance.site_id == site_id,
+                PiholeInstance.is_active.is_(True),
+            )
+        )
+        return list(result.scalars().all())
+
+
+async def get_active_site_ids() -> list[uuid.UUID]:
+    """Used by startup to register a poll-job pair per active site."""
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Site.id).where(Site.is_active.is_(True)).order_by(Site.sort_order, Site.name)
+        )
+        return [row[0] for row in result.fetchall()]
+
+
+async def _is_main_site(site_id: uuid.UUID) -> bool:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Site.is_main).where(Site.id == site_id))
+        return bool(result.scalar_one_or_none())
+
+
+async def _poll_stats_for(instance: PiholeInstance, is_main_site: bool = True) -> None:
     key = str(instance.id)
     try:
         if not _breaker_allows(key, instance.name):
@@ -216,14 +264,21 @@ async def _poll_stats_for(instance: PiholeInstance) -> None:
             _spawn(pushover_service.notify_instance_back_online(instance.name))
     _prev_status[key] = snapshot.status
 
-    # Notify sync service if this is the master (enables auto-gravity detection)
-    if instance.is_master and snapshot.status == "online":
+    # Notify sync service if this is the master (enables auto-gravity detection).
+    # In Phase 3 only the Main site's master notifies — sync_service still has
+    # a single global _last_blocklist_count and would otherwise thrash between
+    # multiple masters' counts. Phase 4 makes that state per-site.
+    if instance.is_master and snapshot.status == "online" and is_main_site:
         await sync_service.notify_blocklist_count(snapshot.domains_on_blocklist)
 
 
-async def poll_stats() -> None:
-    instances = await _get_active_instances()
-    await asyncio.gather(*[_poll_stats_for(inst) for inst in instances])
+async def poll_stats_for_site(site_id: uuid.UUID) -> None:
+    """Poll stats for every active instance in one site."""
+    instances = await _get_instances_for_site(site_id)
+    if not instances:
+        return
+    is_main = await _is_main_site(site_id)
+    await asyncio.gather(*[_poll_stats_for(inst, is_main_site=is_main) for inst in instances])
 
 
 async def _fetch_version_for(instance: PiholeInstance) -> None:
@@ -320,36 +375,49 @@ async def _poll_queries_for(instance: PiholeInstance) -> None:
             _breaker_failure(instance_key, instance.name)
 
 
-async def poll_queries() -> None:
-    instances = await _get_active_instances()
+async def poll_queries_for_site(site_id: uuid.UUID) -> None:
+    """Poll queries for every active instance in one site.
 
-    active_keys = {str(inst.id) for inst in instances}
-    for key in list(_last_seen_ts):
-        if key not in active_keys:
-            del _last_seen_ts[key]
-    for key in list(_prev_status):
-        if key not in active_keys:
-            del _prev_status[key]
-    for key in list(_offline_retry_count):
-        if key not in active_keys:
-            del _offline_retry_count[key]
-    for key in list(_offline_alert_count):
-        if key not in active_keys:
-            del _offline_alert_count[key]
-    for key in list(_consec_failures):
-        if key not in active_keys:
-            del _consec_failures[key]
-    for key in list(_cooldown_until):
-        if key not in active_keys:
-            del _cooldown_until[key]
-    for key in list(_last_failure_at):
-        if key not in active_keys:
-            del _last_failure_at[key]
-    for key in list(_last_seen_ts):
-        if key not in active_keys:
-            await close_client(key, logout=True)
-
+    Per-instance state cleanup for globally-deactivated instances lives in
+    the dedicated `prune_inactive_state` job — running it in every site's
+    poll would either redundantly hit the DB or risk cross-site races.
+    """
+    instances = await _get_instances_for_site(site_id)
+    if not instances:
+        return
     await asyncio.gather(*[_poll_queries_for(inst) for inst in instances])
+
+
+async def prune_inactive_state() -> None:
+    """Drop per-instance module state for instances that config_loader has
+    deactivated, and evict any leftover clients for them.
+
+    config_loader.sync_sites_and_instances already evicts clients when it
+    deactivates an instance, so this is belt-and-suspenders. Runs on its
+    own infrequent schedule (default every 5 minutes) so state doesn't
+    leak between YAML reloads and container restarts.
+    """
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(PiholeInstance.id).where(PiholeInstance.is_active.is_(True))
+        )
+        active_keys = {str(row[0]) for row in result.fetchall()}
+
+    stale_keys: set[str] = set()
+    for state_dict in (
+        _last_seen_ts, _prev_status, _offline_retry_count, _offline_alert_count,
+        _consec_failures, _cooldown_until, _last_failure_at,
+    ):
+        for key in list(state_dict):
+            if key not in active_keys:
+                stale_keys.add(key)
+                del state_dict[key]
+
+    for key in stale_keys:
+        try:
+            await close_client(key, logout=True)
+        except Exception as exc:
+            logger.warning("prune_inactive_state: close_client(%s) failed: %s", key, exc)
 
 
 async def _store_queries(instance: PiholeInstance, queries: list) -> int:
@@ -498,6 +566,73 @@ async def cleanup_old_data() -> None:
             settings.data_retention_days,
             token_result.rowcount,
         )
+
+
+def _site_job_id(site_id: uuid.UUID, kind: str) -> str:
+    """Job id for a site's poll pair. `kind` is 'stats' or 'queries'."""
+    return f"poll_{kind}_site_{site_id}"
+
+
+def schedule_site(
+    scheduler,
+    site_id: uuid.UUID,
+    stats_interval_seconds: int,
+    queries_interval_seconds: int,
+) -> None:
+    """Register (or replace) the stats+queries poll pair for a site."""
+    scheduler.add_job(
+        poll_stats_for_site,
+        "interval",
+        seconds=stats_interval_seconds,
+        args=[site_id],
+        id=_site_job_id(site_id, "stats"),
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        poll_queries_for_site,
+        "interval",
+        seconds=queries_interval_seconds,
+        args=[site_id],
+        id=_site_job_id(site_id, "queries"),
+        replace_existing=True,
+    )
+    logger.info(
+        "Scheduled site %s (stats=%ds, queries=%ds)",
+        site_id, stats_interval_seconds, queries_interval_seconds,
+    )
+
+
+def unschedule_site(scheduler, site_id: uuid.UUID) -> None:
+    """Remove the stats+queries poll pair for a site. No-op if not registered."""
+    removed = 0
+    for kind in ("stats", "queries"):
+        job_id = _site_job_id(site_id, kind)
+        try:
+            scheduler.remove_job(job_id)
+            removed += 1
+        except Exception:
+            pass
+    if removed:
+        logger.info("Unscheduled site %s (removed %d job(s))", site_id, removed)
+
+
+def reschedule_all_queries_jobs(scheduler, new_interval_seconds: int) -> None:
+    """Apply a new queries-poll interval to every registered site's queries job.
+
+    Called from `poll_settings.set_reschedule_callback` when an operator
+    changes the global query-poll interval. Phase 4 will add per-site
+    interval overrides via site_settings; until then, the interval is
+    applied uniformly.
+    """
+    rescheduled = 0
+    for job in scheduler.get_jobs():
+        if job.id.startswith("poll_queries_site_"):
+            scheduler.reschedule_job(job.id, trigger="interval", seconds=new_interval_seconds)
+            rescheduled += 1
+    logger.info(
+        "Rescheduled %d site queries-poll job(s) to %ds interval",
+        rescheduled, new_interval_seconds,
+    )
 
 
 async def shutdown() -> None:
