@@ -4,6 +4,33 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.11.0-dev.3] — 2026-04-24
+
+Multi-site Phase 3 — per-site polling. The collector's two global APScheduler jobs (`poll_stats`, `poll_queries`) are replaced by a pair of jobs per active site (`poll_stats_site_<id>`, `poll_queries_site_<id>`). Each site's polls iterate only that site's instances, so a hang on one site's poll tick can't delay another. Poll intervals are still globally configured for now; Phase 4 adds per-site overrides via `site_settings` when the reader migration lands.
+
+### Added
+- **`app/services/collector.py::poll_stats_for_site(site_id)`** / **`poll_queries_for_site(site_id)`** — replace the old global `poll_stats` / `poll_queries`. Each polls only the instances belonging to one site.
+- **`schedule_site(scheduler, site_id, stats_interval, queries_interval)`** / **`unschedule_site(scheduler, site_id)`** / **`reschedule_all_queries_jobs(scheduler, interval)`** — scheduler-management helpers. Job ids follow the convention `poll_{kind}_site_{uuid}` so dynamic add/remove/reschedule targets the right pair without touching others.
+- **`get_active_site_ids()`** — used by startup to enumerate sites needing a poll pair registered.
+- **`prune_inactive_state()`** — dedicated APScheduler job running every 5 minutes. Drops per-instance module state dicts (`_last_seen_ts`, `_prev_status`, circuit breaker, offline-alert counters) for instances that have been deactivated, and evicts any leftover `client_manager` clients. The old in-poll prune logic lived inside `poll_queries` and would have been redundantly run N times per tick in a multi-site world.
+- **`_is_main_site(site_id)`** helper — the collector uses it to gate the master-blocklist-delta auto-sync notification so only the Main site's master triggers a sync. `sync_service` still has global single-master state in Phase 3; allowing multiple sites' masters to notify would thrash `_last_blocklist_count`. Phase 4 rewrites sync state per-site and this guard drops.
+
+### Changed
+- **`app/main.py`** — scheduler setup iterates active sites and calls `schedule_site` for each instead of registering two fixed jobs. The `poll_settings_service` reschedule callback now re-targets every registered queries-poll job via `reschedule_all_queries_jobs`. A new 5-minute `prune_inactive_state` job replaces the old in-poll prune. Startup log message now reports site count.
+- **`_poll_stats_for(instance, is_main_site=True)`** — new keyword arg guards the `sync_service.notify_blocklist_count` call. Defaults `True` for back-compat with any ad-hoc callers.
+
+### Unchanged
+- `client_manager` — clients are keyed by `instance_id`, agnostic to site. Shared between a site's stats and queries polls exactly as before.
+- Circuit breaker, eviction, dedup, offline-retry/alert-count state — all still per-instance.
+- Backfill and version-fetch startup tasks — still iterate all active instances globally; one-shot at startup, no per-site scheduler change needed.
+
+### Migration notes
+- No DB migration in this release.
+- Deployments that restart into dev.3 will see the logger message `Scheduler started: 1 site(s), stats=60s, queries=10s, prune=5min.` (or whatever their intervals are). Polling cadence and circuit-breaker behavior are unchanged for single-site users.
+- Users adopting a multi-site `sites:` YAML will see one `Polling queries for <instance>` line per site per tick in logs — one per tick per site is expected. Log volume scales linearly with site count.
+
+---
+
 ## [1.11.0-dev.2] — 2026-04-24
 
 Multi-site Phase 2 — YAML loading, config sync, and the `site_settings` inheritance service. No behavior change for existing deployments: the collector, sync service, APIs, and web UI still run exactly as they did in dev.0/dev.1 because the readers (pushover, poll_settings, sync_service) haven't been migrated onto `site_settings` yet — Phase 4 ships that reader rewrite plus the app_settings→site_settings data move together.

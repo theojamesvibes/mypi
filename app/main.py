@@ -32,7 +32,16 @@ from app.database import AsyncSessionLocal, get_db
 from app.limiter import limiter
 from app.models.settings import AppSetting
 from app.models.user import RevokedToken, User
-from app.services.collector import backfill_all_instances, cleanup_old_data, fetch_all_instance_versions, poll_queries, poll_stats, shutdown as collector_shutdown
+from app.services.collector import (
+    backfill_all_instances,
+    cleanup_old_data,
+    fetch_all_instance_versions,
+    get_active_site_ids,
+    prune_inactive_state,
+    reschedule_all_queries_jobs,
+    schedule_site,
+    shutdown as collector_shutdown,
+)
 from app.services.config_loader import sync_sites_and_instances
 from app.services import poll_settings as poll_settings_service
 from app.services import pushover as pushover_service
@@ -179,10 +188,19 @@ async def lifespan(app: FastAPI):
     await _soft_load("version_check", version_check_service.load_settings())
     await _soft_load("pihole_version_check", pihole_version_check_service.load_settings())
     poll_settings_service.set_reschedule_callback(
-        lambda s: scheduler.reschedule_job("poll_queries", trigger="interval", seconds=s)
+        lambda s: reschedule_all_queries_jobs(scheduler, s)
     )
-    scheduler.add_job(poll_stats, "interval", seconds=settings.stats_poll_interval, id="poll_stats")
-    scheduler.add_job(poll_queries, "interval", seconds=poll_settings_service.get_interval_seconds(), id="poll_queries")
+    # Register a poll pair per active site. Both jobs share the (currently
+    # global) poll intervals; Phase 4 adds per-site overrides via site_settings.
+    site_ids = await get_active_site_ids()
+    for site_id in site_ids:
+        schedule_site(
+            scheduler,
+            site_id,
+            stats_interval_seconds=settings.stats_poll_interval,
+            queries_interval_seconds=poll_settings_service.get_interval_seconds(),
+        )
+    scheduler.add_job(prune_inactive_state, "interval", minutes=5, id="prune_inactive_state")
     scheduler.add_job(cleanup_old_data, "cron", hour=3, minute=0, id="cleanup")
     scheduler.add_job(version_check_service.check_now, "interval", hours=1, id="version_check")
     scheduler.add_job(pihole_version_check_service.check_now, "interval", hours=1, id="pihole_version_check")
@@ -194,8 +212,11 @@ async def lifespan(app: FastAPI):
     _track_task(pihole_version_check_service.check_now())
     _track_task(fetch_all_instance_versions())
     _track_task(backfill_all_instances())
-    logger.info("Scheduler started (stats every %ds, queries every %ds).",
-                settings.stats_poll_interval, poll_settings_service.get_interval_seconds())
+    logger.info(
+        "Scheduler started: %d site(s), stats=%ds, queries=%ds, prune=5min.",
+        len(site_ids), settings.stats_poll_interval,
+        poll_settings_service.get_interval_seconds(),
+    )
     yield
     scheduler.shutdown(wait=False)
     await collector_shutdown()
