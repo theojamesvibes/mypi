@@ -4,6 +4,14 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.11.0-dev.9] — 2026-04-24
+
+Bugfix — app startup failed with `AssertionError: Status code 204 must not have a response body` because `DELETE /api/sites/{slug}` was declared with both `status_code=204` *and* an explicit `-> None` return annotation. FastAPI's post-0.115 route builder interprets any return annotation (including `None`) as a response-model hint, which contradicts 204's "no body" semantics. The existing `DELETE /api/instances/{id}` handler works because it has no return annotation at all — matched that pattern.
+
+Dropped the `-> None` annotation from `delete_orphan_site`. Migration 0013–0015 had already completed cleanly in dev.8, so the DB is in the correct multisite state — only the app import was blocked.
+
+---
+
 ## [1.11.0-dev.8] — 2026-04-24
 
 Bugfix — migration `0013_multisite` failed on asyncpg with `DatatypeMismatchError: column "id" is of type uuid but expression is of type character varying`. asyncpg is strict about parameter types: a Python `str` bound to a `uuid` column is rejected, unlike psycopg2 which performs an implicit cast. Two bind sites in the migration (the `INSERT INTO sites` and the `UPDATE pihole_instances` backfill) both pass a stringified UUID, so both were failing.

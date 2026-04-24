@@ -171,7 +171,7 @@ async def delete_orphan_site(
     slug: str,
     user: User = Depends(require_mutation),
     db: AsyncSession = Depends(get_db),
-) -> None:
+):
     """Permanently delete a deactivated site and cascade through its
     instances, stats snapshots, query logs, settings, and slug history.
 
