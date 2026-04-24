@@ -174,13 +174,17 @@ async def get_active_site_ids() -> list[uuid.UUID]:
         return [row[0] for row in result.fetchall()]
 
 
-async def _is_main_site(site_id: uuid.UUID) -> bool:
+async def _get_site_name(site_id: uuid.UUID) -> str:
+    """Look up a site's human-readable name for alert/log messages.
+    Returns the stringified id if the site is missing (shouldn't happen;
+    defensive fallback)."""
     async with AsyncSessionLocal() as db:
-        result = await db.execute(select(Site.is_main).where(Site.id == site_id))
-        return bool(result.scalar_one_or_none())
+        result = await db.execute(select(Site.name).where(Site.id == site_id))
+        name = result.scalar_one_or_none()
+    return name or str(site_id)
 
 
-async def _poll_stats_for(instance: PiholeInstance, is_main_site: bool = True) -> None:
+async def _poll_stats_for(instance: PiholeInstance, site_name: str = "") -> None:
     key = str(instance.id)
     try:
         if not _breaker_allows(key, instance.name):
@@ -253,7 +257,7 @@ async def _poll_stats_for(instance: PiholeInstance, is_main_site: bool = True) -
                 current = _offline_alert_count.get(key, 0)
                 if current == 0 or max_count == 0 or current < max_count:
                     _offline_alert_count[key] = current + 1
-                    _spawn(pushover_service.notify_instance_offline(instance.name))
+                    _spawn(pushover_service.notify_instance_offline(instance.name, site_name=site_name))
     elif snapshot.status == "online" and prev == "offline":
         # Recovery: alert only if we had already sent an offline alert (avoids spurious
         # "back online" pings for blips that resolved before retries were exhausted).
@@ -261,15 +265,15 @@ async def _poll_stats_for(instance: PiholeInstance, is_main_site: bool = True) -
         _offline_retry_count.pop(key, None)
         _offline_alert_count.pop(key, None)
         if already_alerted:
-            _spawn(pushover_service.notify_instance_back_online(instance.name))
+            _spawn(pushover_service.notify_instance_back_online(instance.name, site_name=site_name))
     _prev_status[key] = snapshot.status
 
     # Notify sync service if this is the master (enables auto-gravity detection).
-    # In Phase 3 only the Main site's master notifies — sync_service still has
-    # a single global _last_blocklist_count and would otherwise thrash between
-    # multiple masters' counts. Phase 4 makes that state per-site.
-    if instance.is_master and snapshot.status == "online" and is_main_site:
-        await sync_service.notify_blocklist_count(snapshot.domains_on_blocklist)
+    # Per-site as of Phase 4b — each site's master has its own blocklist-count
+    # watermark, so multiple sites' masters can trigger their own auto-syncs
+    # independently without thrashing shared state.
+    if instance.is_master and snapshot.status == "online":
+        await sync_service.notify_blocklist_count(instance.site_id, snapshot.domains_on_blocklist)
 
 
 async def poll_stats_for_site(site_id: uuid.UUID) -> None:
@@ -277,8 +281,8 @@ async def poll_stats_for_site(site_id: uuid.UUID) -> None:
     instances = await _get_instances_for_site(site_id)
     if not instances:
         return
-    is_main = await _is_main_site(site_id)
-    await asyncio.gather(*[_poll_stats_for(inst, is_main_site=is_main) for inst in instances])
+    site_name = await _get_site_name(site_id)
+    await asyncio.gather(*[_poll_stats_for(inst, site_name=site_name) for inst in instances])
 
 
 async def _fetch_version_for(instance: PiholeInstance) -> None:

@@ -1,4 +1,13 @@
-"""Pi-hole sync service — pushes config from the master instance to all replicas."""
+"""Pi-hole sync service — pushes config from the master instance to replicas.
+
+Phase 4b: sync is per-site. Every public entry point takes an optional
+`site_id` keyword (defaulting to the active Main site) so the existing API
+surface keeps working verbatim. Internally, schedule config, in-flight
+locks, last-result state, and blocklist-delta watermarks are all dict
+keyed by `str(site_id)`. A site's sync picks its master and replicas
+only from that site's active instances — two sites' syncs can run
+concurrently without contention.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -6,16 +15,18 @@ import io
 import json
 import logging
 import ssl
+import uuid
 import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal
 
 import httpx
-from sqlalchemy import select, text
+from sqlalchemy import select
 
 from app.database import AsyncSessionLocal
 from app.models.pihole import PiholeInstance
+from app.models.site import Site
 from app.services import pushover as pushover_service
 from app.services.client_manager import close_client, get_client, save_sid
 from app.services.site_settings import get_main_site_id, get_setting, set_setting
@@ -45,19 +56,27 @@ class SyncState:
     error: str | None = None
 
 
-_state = SyncState()
-_lock = asyncio.Lock()
+# Per-site state — keyed by str(site_id). Accessor helpers create dict entries
+# on demand so each site starts fresh from hard-coded defaults the first time
+# it's touched, then overlays anything restored from site_settings.
+_state_by_site: dict[str, SyncState] = {}
+_lock_by_site: dict[str, asyncio.Lock] = {}
+_schedule_task_by_site: dict[str, asyncio.Task] = {}
+_last_blocklist_by_site: dict[str, int] = {}
 
-# Schedule config — persisted to DB, restored on startup
-_schedule_minutes: int = 0
-_auto_gravity: bool = False
-_schedule_task: asyncio.Task | None = None
-_last_blocklist_count: int | None = None
+# Per-site schedule config: the JSON payload stored under
+# site_settings.sync_schedule, unpacked into a plain dict. Fields:
+#   interval_minutes: int   (0 = disabled)
+#   auto_gravity:     bool
+#   import_config:    bool
+#   import_gravity:   bool
+#   import_dhcp_leases: bool
+#   run_gravity:      bool
+_schedule_by_site: dict[str, dict] = {}
 
-# Fire-and-forget background tasks spawned from this module. asyncio only
-# keeps weak references to tasks, so without stashing them here they can be
-# GC'd mid-run. `_spawn` adds a task to this set and removes it on completion,
-# logging any uncaught exception.
+# Fire-and-forget background tasks. asyncio keeps only weak refs to bare
+# create_task(...) — stash each task here and log any exception so a
+# failed notify/persist doesn't silently vanish.
 _background_tasks: set[asyncio.Task] = set()
 
 
@@ -74,59 +93,79 @@ def _spawn(coro) -> None:
 
     task.add_done_callback(_done)
 
-_sync_opts: dict = {
-    "import_config": True,
-    "import_gravity": True,
-    "import_dhcp_leases": False,
-    "run_gravity": True,
-}
+
+# ── Site resolution + state accessors ─────────────────────────────────────────
+
+async def _resolve_site_id(site_id: uuid.UUID | None) -> uuid.UUID:
+    """None → active Main site's id. Raises if no Main exists."""
+    if site_id is not None:
+        return site_id
+    async with AsyncSessionLocal() as db:
+        main_id = await get_main_site_id(db)
+    if main_id is None:
+        raise RuntimeError("No Main site configured — sync_service cannot resolve target.")
+    return main_id
 
 
-def get_state() -> SyncState:
-    return _state
+def _get_lock(site_id: uuid.UUID) -> asyncio.Lock:
+    key = str(site_id)
+    if key not in _lock_by_site:
+        _lock_by_site[key] = asyncio.Lock()
+    return _lock_by_site[key]
 
 
-def get_schedule() -> dict:
-    return {
-        "interval_minutes": _schedule_minutes,
-        "auto_gravity": _auto_gravity,
-        **_sync_opts,
-    }
+def _get_state_dict(site_id: uuid.UUID) -> SyncState:
+    return _state_by_site.setdefault(str(site_id), SyncState())
+
+
+def _get_schedule_config(site_id: uuid.UUID) -> dict:
+    return _schedule_by_site.setdefault(str(site_id), {
+        "interval_minutes": 0,
+        "auto_gravity": False,
+        "import_config": True,
+        "import_gravity": True,
+        "import_dhcp_leases": False,
+        "run_gravity": True,
+    })
+
+
+async def get_state(site_id: uuid.UUID | None = None) -> SyncState:
+    """Return the most-recent sync state for a site (Main if site_id omitted)."""
+    sid = await _resolve_site_id(site_id)
+    return _get_state_dict(sid)
+
+
+async def get_schedule(site_id: uuid.UUID | None = None) -> dict:
+    """Return the current schedule config for a site (Main if site_id omitted)."""
+    sid = await _resolve_site_id(site_id)
+    return dict(_get_schedule_config(sid))
 
 
 # ── DB persistence ────────────────────────────────────────────────────────────
 
-async def _db_upsert(key: str, value: str) -> None:
-    """Write key/value to site_settings under the active Main site.
-
-    Phase 4 moved the backing store from `app_settings` (flat/global) to
-    `site_settings` (keyed by (site_id, key)). In Phase 4 everything still
-    goes through Main's row because the surrounding sync_service logic is
-    single-site. Phase 5 rewrites run_sync / state / scheduling to be
-    per-site, and this helper gains a site_id parameter at that point.
-    """
+async def _db_upsert_site(site_id: uuid.UUID, key: str, value: str) -> None:
+    """Write `key`/`value` into site_settings for `site_id` and verify it landed."""
     async with AsyncSessionLocal() as db:
-        main_id = await get_main_site_id(db)
-        if main_id is None:
-            raise RuntimeError(
-                f"Cannot persist sync_service key '{key}': no Main site found."
-            )
-        # set_setting commits and verifies with a fresh read-back.
-        await set_setting(db, main_id, key, value)
-    logger.info("DB upsert verified: key='%s'", key)
+        # set_setting does upsert + fresh-session read-back verification.
+        await set_setting(db, site_id, key, value)
+    logger.info("DB upsert verified: site=%s key='%s'", site_id, key)
 
 
-async def _persist_schedule() -> None:
-    await _db_upsert("sync_schedule", json.dumps({
-        "interval_minutes": _schedule_minutes,
-        "auto_gravity": _auto_gravity,
-        **_sync_opts,
+async def _persist_schedule(site_id: uuid.UUID) -> None:
+    cfg = _get_schedule_config(site_id)
+    await _db_upsert_site(site_id, "sync_schedule", json.dumps({
+        "interval_minutes": cfg["interval_minutes"],
+        "auto_gravity": cfg["auto_gravity"],
+        "import_config": cfg["import_config"],
+        "import_gravity": cfg["import_gravity"],
+        "import_dhcp_leases": cfg["import_dhcp_leases"],
+        "run_gravity": cfg["run_gravity"],
     }))
-    logger.info("Sync schedule persisted and verified in DB.")
+    logger.info("Sync schedule persisted for site %s.", site_id)
 
 
-async def _persist_sync_state(state: SyncState) -> None:
-    """Store the last completed sync result so it survives restarts."""
+async def _persist_sync_state(site_id: uuid.UUID, state: SyncState) -> None:
+    """Store the site's last completed sync result so it survives restarts."""
     try:
         payload = {
             "status": state.status,
@@ -135,63 +174,72 @@ async def _persist_sync_state(state: SyncState) -> None:
             "master": state.master,
             "error": state.error,
             "results": [
-                {
-                    "name": r.name,
-                    "status": r.status,
-                    "error": r.error,
-                }
+                {"name": r.name, "status": r.status, "error": r.error}
                 for r in state.results
             ],
         }
-        await _db_upsert("sync_last_result", json.dumps(payload))
+        await _db_upsert_site(site_id, "sync_last_result", json.dumps(payload))
     except Exception as exc:
-        logger.warning("Could not persist sync state: %s", exc)
+        logger.warning("Could not persist sync state for site %s: %s", site_id, exc)
 
 
 async def load_schedule() -> None:
-    """Load persisted schedule and last sync result from DB (called at startup)."""
-    global _schedule_minutes, _auto_gravity, _sync_opts, _state
+    """Iterate every active site and restore its schedule + last result.
 
+    Called once at startup. Re-arms each site's interval loop if that site
+    had a non-zero `interval_minutes` persisted.
+    """
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(Site)
+                .where(Site.is_active.is_(True))
+                .order_by(Site.sort_order, Site.name)
+            )
+            sites = list(result.scalars().all())
+    except Exception as exc:
+        logger.error("Failed to enumerate sites for sync schedule load: %s", exc)
+        return
+
+    for site in sites:
+        await _load_site_schedule(site.id, site.name)
+
+
+async def _load_site_schedule(site_id: uuid.UUID, site_name: str) -> None:
+    sid_key = str(site_id)
     schedule_raw: str | None = None
     result_raw: str | None = None
     try:
         async with AsyncSessionLocal() as db:
-            main_id = await get_main_site_id(db)
-            if main_id is None:
-                logger.warning("No Main site found on startup; sync schedule load deferred.")
-                return
-            schedule_raw = await get_setting(db, main_id, "sync_schedule")
-            result_raw = await get_setting(db, main_id, "sync_last_result")
+            schedule_raw = await get_setting(db, site_id, "sync_schedule")
+            result_raw = await get_setting(db, site_id, "sync_last_result")
     except Exception as exc:
-        logger.error("Failed to load sync settings from DB: %s", exc)
+        logger.error("Failed to load sync settings for site %s: %s", site_name, exc)
         return
 
-    # Restore schedule
     if schedule_raw:
         try:
             data = json.loads(schedule_raw)
-            _schedule_minutes = data.get("interval_minutes", 0)
-            _auto_gravity = data.get("auto_gravity", False)
-            _sync_opts = {
-                "import_config": data.get("import_config", True),
-                "import_gravity": data.get("import_gravity", True),
-                "import_dhcp_leases": data.get("import_dhcp_leases", False),
-                "run_gravity": data.get("run_gravity", True),
-            }
+            cfg = _get_schedule_config(site_id)
+            cfg["interval_minutes"] = data.get("interval_minutes", 0)
+            cfg["auto_gravity"] = data.get("auto_gravity", False)
+            cfg["import_config"] = data.get("import_config", True)
+            cfg["import_gravity"] = data.get("import_gravity", True)
+            cfg["import_dhcp_leases"] = data.get("import_dhcp_leases", False)
+            cfg["run_gravity"] = data.get("run_gravity", True)
             logger.warning(
-                "STARTUP: loaded sync schedule from DB — interval=%d min, auto_gravity=%s",
-                _schedule_minutes, _auto_gravity,
+                "STARTUP: loaded sync schedule for site '%s' — interval=%d min, auto_gravity=%s",
+                site_name, cfg["interval_minutes"], cfg["auto_gravity"],
             )
         except Exception as exc:
-            logger.error("STARTUP: could not parse sync schedule JSON: %s", exc)
+            logger.error("STARTUP: could not parse sync_schedule for site %s: %s", site_name, exc)
     else:
-        logger.warning("STARTUP: no sync_schedule row in DB — using defaults (interval=0, disabled)")
+        logger.info("STARTUP: no sync_schedule row for site '%s' — using defaults.", site_name)
 
-    # Restore last sync result
     if result_raw:
         try:
             data = json.loads(result_raw)
-            _state = SyncState(
+            _state_by_site[sid_key] = SyncState(
                 status=data.get("status", "idle"),
                 started_at=datetime.fromisoformat(data["started_at"]) if data.get("started_at") else None,
                 completed_at=datetime.fromisoformat(data["completed_at"]) if data.get("completed_at") else None,
@@ -199,38 +247,41 @@ async def load_schedule() -> None:
                 error=data.get("error"),
                 results=[
                     InstanceSyncResult(
-                        name=r["name"],
-                        status=r["status"],
-                        error=r.get("error"),
+                        name=r["name"], status=r["status"], error=r.get("error"),
                     )
                     for r in data.get("results", [])
                 ],
             )
-            logger.info("Restored last sync state from DB: %s at %s", _state.status, _state.completed_at)
+            logger.info(
+                "Restored last sync state for site '%s': %s at %s",
+                site_name, _state_by_site[sid_key].status, _state_by_site[sid_key].completed_at,
+            )
         except Exception as exc:
-            logger.warning("Could not parse last sync result: %s", exc)
-    else:
-        logger.info("No persisted sync result found in DB.")
+            logger.warning("Could not parse last sync result for site %s: %s", site_name, exc)
 
-    # Re-arm interval task if schedule was active. Stash the task in
-    # _schedule_task so set_schedule(...) can cancel it on reconfiguration
-    # (without this, a startup-armed loop and a user-armed loop would run
-    # concurrently after the first PUT /api/sync/schedule).
-    if _schedule_minutes > 0:
-        global _schedule_task
-        _schedule_task = asyncio.create_task(_scheduled_loop(_schedule_minutes))
-        logger.info("Re-armed sync schedule: every %d minutes.", _schedule_minutes)
+    cfg = _get_schedule_config(site_id)
+    if cfg["interval_minutes"] > 0:
+        # Re-arm the site's interval loop. Stash the task in
+        # _schedule_task_by_site so set_schedule can cancel it on
+        # reconfiguration (otherwise a startup-armed loop and a
+        # user-armed loop would run concurrently after the first PUT).
+        task = asyncio.create_task(_scheduled_loop(site_id, site_name, cfg["interval_minutes"]))
+        _schedule_task_by_site[sid_key] = task
+        logger.info("Re-armed sync schedule for site '%s': every %d min.", site_name, cfg["interval_minutes"])
 
 
 # ── Schedule management ───────────────────────────────────────────────────────
 
-async def _scheduled_loop(minutes: int) -> None:
+async def _scheduled_loop(site_id: uuid.UUID, site_name: str, minutes: int) -> None:
     while True:
         await asyncio.sleep(minutes * 60)
-        if _lock.locked():
+        lock = _get_lock(site_id)
+        if lock.locked():
             continue
-        logger.info("Scheduled sync triggered (every %d min)", minutes)
-        await run_sync(**_sync_opts)
+        logger.info("Scheduled sync triggered for site '%s' (every %d min)", site_name, minutes)
+        cfg = _get_schedule_config(site_id)
+        opts = {k: cfg[k] for k in ("import_config", "import_gravity", "import_dhcp_leases", "run_gravity")}
+        await run_sync(site_id=site_id, **opts)
 
 
 async def set_schedule(
@@ -240,47 +291,60 @@ async def set_schedule(
     import_gravity: bool,
     import_dhcp_leases: bool,
     run_gravity: bool,
+    site_id: uuid.UUID | None = None,
 ) -> None:
-    global _schedule_minutes, _auto_gravity, _schedule_task, _sync_opts
-    _schedule_minutes = interval_minutes
-    _auto_gravity = auto_gravity
-    _sync_opts = {
-        "import_config": import_config,
-        "import_gravity": import_gravity,
-        "import_dhcp_leases": import_dhcp_leases,
-        "run_gravity": run_gravity,
-    }
+    sid = await _resolve_site_id(site_id)
+    sid_key = str(sid)
+    cfg = _get_schedule_config(sid)
+    cfg["interval_minutes"] = interval_minutes
+    cfg["auto_gravity"] = auto_gravity
+    cfg["import_config"] = import_config
+    cfg["import_gravity"] = import_gravity
+    cfg["import_dhcp_leases"] = import_dhcp_leases
+    cfg["run_gravity"] = run_gravity
 
-    if _schedule_task and not _schedule_task.done():
-        _schedule_task.cancel()
-        _schedule_task = None
+    existing = _schedule_task_by_site.get(sid_key)
+    if existing and not existing.done():
+        existing.cancel()
+        _schedule_task_by_site.pop(sid_key, None)
 
     if interval_minutes > 0:
-        _schedule_task = asyncio.create_task(_scheduled_loop(interval_minutes))
-        logger.info("Sync scheduled every %d minutes.", interval_minutes)
+        site_name = await _lookup_site_name(sid)
+        task = asyncio.create_task(_scheduled_loop(sid, site_name, interval_minutes))
+        _schedule_task_by_site[sid_key] = task
+        logger.info("Sync scheduled for site %s every %d min.", site_name, interval_minutes)
     else:
-        logger.info("Sync schedule disabled.")
+        logger.info("Sync schedule disabled for site %s.", sid)
 
-    await _persist_schedule()
+    await _persist_schedule(sid)
 
 
-async def notify_blocklist_count(count: int) -> None:
-    global _last_blocklist_count
-    if not _auto_gravity:
-        _last_blocklist_count = count
+async def notify_blocklist_count(site_id: uuid.UUID, count: int) -> None:
+    sid_key = str(site_id)
+    cfg = _get_schedule_config(site_id)
+    if not cfg["auto_gravity"]:
+        _last_blocklist_by_site[sid_key] = count
         return
-    if _last_blocklist_count is not None and count != _last_blocklist_count:
+    last = _last_blocklist_by_site.get(sid_key)
+    if last is not None and count != last:
         logger.info(
-            "Master blocklist count changed %d → %d; triggering auto-sync.",
-            _last_blocklist_count, count,
+            "Master blocklist count for site %s changed %d → %d; triggering auto-sync.",
+            site_id, last, count,
         )
-        _last_blocklist_count = count
-        if not _lock.locked():
-            # _spawn keeps a strong ref + logs uncaught exceptions; bare
-            # asyncio.create_task drops the result and risks GC mid-run.
-            _spawn(run_sync(**_sync_opts))
+        _last_blocklist_by_site[sid_key] = count
+        lock = _get_lock(site_id)
+        if not lock.locked():
+            opts = {k: cfg[k] for k in ("import_config", "import_gravity", "import_dhcp_leases", "run_gravity")}
+            _spawn(run_sync(site_id=site_id, **opts))
     else:
-        _last_blocklist_count = count
+        _last_blocklist_by_site[sid_key] = count
+
+
+async def _lookup_site_name(site_id: uuid.UUID) -> str:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Site.name).where(Site.id == site_id))
+        name = result.scalar_one_or_none()
+    return name or str(site_id)
 
 
 # ── Sync execution ────────────────────────────────────────────────────────────
@@ -290,20 +354,27 @@ async def run_sync(
     import_gravity: bool = True,
     import_dhcp_leases: bool = False,
     run_gravity: bool = True,
+    site_id: uuid.UUID | None = None,
 ) -> SyncState:
-    global _state
+    sid = await _resolve_site_id(site_id)
+    sid_key = str(sid)
+    site_name = await _lookup_site_name(sid)
+    lock = _get_lock(sid)
 
-    if _lock.locked():
-        raise RuntimeError("A sync is already in progress.")
+    if lock.locked():
+        raise RuntimeError(f"A sync is already in progress for site '{site_name}'.")
 
-    async with _lock:
-        _state = SyncState(status="running", started_at=datetime.now(timezone.utc))
+    async with lock:
+        _state_by_site[sid_key] = SyncState(status="running", started_at=datetime.now(timezone.utc))
         results: list[InstanceSyncResult] = []
 
         try:
             async with AsyncSessionLocal() as db:
                 result = await db.execute(
-                    select(PiholeInstance).where(PiholeInstance.is_active.is_(True))
+                    select(PiholeInstance).where(
+                        PiholeInstance.site_id == sid,
+                        PiholeInstance.is_active.is_(True),
+                    )
                 )
                 instances = list(result.scalars().all())
 
@@ -312,20 +383,19 @@ async def run_sync(
 
             if not master:
                 raise ValueError(
-                    "No master instance configured. "
-                    "Add 'master: true' to one entry in pihole_instances.yml and restart."
+                    f"No master instance configured for site '{site_name}'. "
+                    "Add 'master: true' to one entry in the site's instance list and restart."
                 )
             if not replicas:
-                raise ValueError("No replica instances to sync to.")
+                raise ValueError(f"No replica instances to sync to in site '{site_name}'.")
 
             logger.info(
-                "Sync started: master=%s, replicas=%s, config=%s, gravity=%s, dhcp=%s, run_gravity=%s",
-                master.name, [r.name for r in replicas],
+                "Sync started: site=%s master=%s, replicas=%s, config=%s, gravity=%s, dhcp=%s, run_gravity=%s",
+                site_name, master.name, [r.name for r in replicas],
                 import_config, import_gravity, import_dhcp_leases, run_gravity,
             )
 
             # Step 1: Run gravity on master to get fresh blocklists before export.
-            # Uses the shared persistent client — no new session created.
             try:
                 master_client = await get_client(master)
                 await master_client.run_gravity()
@@ -334,9 +404,7 @@ async def run_sync(
             except Exception as exc:
                 logger.warning("Gravity on master failed (non-fatal, continuing with export): %s", exc)
 
-            # Step 2: Export teleporter zip from master (contains fresh gravity DB).
-            # Retry once with a short delay: gravity's socket framing quirks can
-            # occasionally leave stale bytes that corrupt the first teleporter read.
+            # Step 2: Export teleporter zip from master.
             zip_data: bytes | None = None
             last_exc: Exception | None = None
             for attempt in range(2):
@@ -359,18 +427,10 @@ async def run_sync(
                 ) from last_exc
             logger.info("Exported teleporter from master %s (%d bytes)", master.name, len(zip_data))
 
-            # Validate the master's export before broadcasting it. If the
-            # archive is truncated, zero-length, or corrupt, we fail the whole
-            # sync here so no replica overwrites its working config with
-            # garbage.
             _validate_teleporter_zip(zip_data)
             logger.info("Teleporter ZIP from master %s passed validation", master.name)
 
             # Step 3: Push to each replica concurrently, then run gravity on each.
-            # The teleporter ZIP carries the master's adlists and domain lists, but the
-            # compiled gravity table is rebuilt by Pi-hole FTL during a gravity run.
-            # Without running gravity on replicas after import, their domain counts stay
-            # stale and diverge from the master.
             async def _sync_replica(replica: PiholeInstance) -> InstanceSyncResult:
                 key = str(replica.id)
                 try:
@@ -384,11 +444,6 @@ async def run_sync(
                         )
                         await save_sid(replica.id, replica_client.sid)
                     except _TRANSIENT_SYNC_ERRORS as exc:
-                        # Idle keepalive half-open: the persistent TCP socket
-                        # was closed server-side between uses and the first
-                        # request on it failed.  Classic on low-traffic
-                        # replicas.  Evict and retry once with a fresh
-                        # client — same self-heal the collector does.
                         logger.warning(
                             "Transient connection error syncing to %s (%s: %s) — "
                             "evicting client and retrying once",
@@ -406,10 +461,6 @@ async def run_sync(
                     logger.info("Teleporter import to %s succeeded", replica.name)
 
                     if import_gravity:
-                        # FTL restarts after the teleporter import; give it a moment
-                        # before reconnecting to run gravity.  The SID will have been
-                        # invalidated by the restart so the client will re-authenticate
-                        # automatically on the next request.
                         await asyncio.sleep(5)
                         try:
                             replica_client = await get_client(replica)
@@ -417,9 +468,6 @@ async def run_sync(
                             await save_sid(replica.id, replica_client.sid)
                             logger.info("Gravity update completed on replica %s", replica.name)
                         except Exception as g_exc:
-                            # Gravity failure is non-fatal: adlists are synced; the
-                            # domain count will catch up when Pi-hole runs gravity on
-                            # its own schedule.
                             logger.warning("Gravity on replica %s failed (non-fatal): %s", replica.name, g_exc)
 
                     logger.info("Sync to %s succeeded", replica.name)
@@ -437,39 +485,40 @@ async def run_sync(
             overall: Literal["success", "error"] = (
                 "error" if any(r.status == "error" for r in results) else "success"
             )
-            _state = SyncState(
+            _state_by_site[sid_key] = SyncState(
                 status=overall,
-                started_at=_state.started_at,
+                started_at=_state_by_site[sid_key].started_at,
                 completed_at=datetime.now(timezone.utc),
                 master=master.name,
                 results=results,
             )
 
         except Exception as exc:
-            logger.error("Sync failed: %s", exc)
-            _state = SyncState(
+            logger.error("Sync failed for site '%s': %s", site_name, exc)
+            _state_by_site[sid_key] = SyncState(
                 status="error",
-                started_at=_state.started_at,
+                started_at=_state_by_site[sid_key].started_at,
                 completed_at=datetime.now(timezone.utc),
                 error=str(exc),
                 results=results,
             )
 
-        _spawn(_persist_sync_state(_state))
-        if _state.status == "error":
-            if _state.error:
-                _spawn(pushover_service.notify_sync_failure(_state.error))
+        current_state = _state_by_site[sid_key]
+        _spawn(_persist_sync_state(sid, current_state))
+        if current_state.status == "error":
+            if current_state.error:
+                _spawn(pushover_service.notify_sync_failure(current_state.error, site_name=site_name))
             else:
-                failed = [r for r in _state.results if r.status == "error"]
+                failed = [r for r in current_state.results if r.status == "error"]
                 if failed:
                     body = "; ".join(
                         f"{r.name}: {r.error or 'unknown error'}" for r in failed
                     )
-                    _spawn(pushover_service.notify_sync_failure(body))
+                    _spawn(pushover_service.notify_sync_failure(body, site_name=site_name))
         # Refresh Pi-hole version info after sync — FTL may have restarted on
-        # replicas after the teleporter import, so give it a moment to come back.
+        # replicas after the teleporter import.
         _spawn(_refresh_versions_post_sync())
-        return _state
+        return current_state
 
 
 def _validate_teleporter_zip(data: bytes) -> None:
