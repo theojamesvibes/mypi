@@ -4,6 +4,28 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.11.0-dev.0] — 2026-04-24
+
+Multi-site foundation (Phase 1 of 6 — schema only, no behavior change). A single MyPi deployment will eventually group its Pi-holes into up to 10 sites, each with its own master, replicas, sync cadence, Pushover config, and polling intervals. This release lays the schema; existing deployments are migrated into an auto-created `Default` site flagged as Main, legacy API surfaces and YAML still work unchanged. See `docs/multisite-design.md`, `docs/multisite-migration-plan.md`, and `docs/multisite-implementation-plan.md` for the full plan.
+
+### Added
+- **`sites` table** with `id`, `name`, `slug`, `is_main`, `is_active`, `sort_order`, `created_at`. Partial unique indexes enforce exactly one active row with a given name, exactly one active row with a given slug, and exactly one active Main.
+- **`site_slug_history` table** — retired slugs stay behind as permanent aliases so changing a site's slug doesn't break bookmarks or scripts.
+- **`site_settings` table** with composite PK `(site_id, key)` — the new home for all per-site app settings (`sync.*`, `pushover.*`, `poll.*`). A `NULL` value means "inherit from Main."
+- **`pihole_instances.site_id`** FK → `sites.id` with `ON DELETE CASCADE`.
+- **`app/models/site.py`** — `Site`, `SiteSlugHistory`, `SiteSetting` ORM models with relationships + cascade.
+
+### Changed
+- **`pihole_instances.name` uniqueness** is now scoped to `(site_id, name)` instead of globally unique. Two sites can now each have e.g. a "Living Room" instance. Global `pihole_instances_name_key` dropped, replaced by `uq_pihole_instances_site_name`.
+- **`PiholeInstance` ORM model** gains a required `site_id` FK and a `site` relationship.
+
+### Migration notes
+- `alembic upgrade head` runs `0013_multisite.py` in a single transaction. A fresh `Default` site (`slug='default'`) is created and flagged Main; every existing `pihole_instance` is reassigned to it; every per-site `app_settings` row (keys beginning `sync.`, `pushover.`, or `poll.`) moves to `site_settings` under that Default site. Truly-global keys stay in `app_settings`.
+- Downgrade is supported but lossy: only Main's non-null settings are copied back into `app_settings`; non-Main site settings and their pihole groupings are discarded. Downgrade is a developer escape hatch, not a routine operation.
+- No behavior change in this release — the app still reads/writes exactly as before because the Default/Main site transparently wraps existing data. The collector, sync service, APIs, and web UI are unchanged. Those land in subsequent `1.11.0-dev.N` releases per the implementation plan.
+
+---
+
 ## [1.10.0] — 2026-04-23
 
 Removed the `hot_spare` YAML flag and its Pushover-suppression plumbing shipped in 1.9.0. That feature was built for a symptom — a "VIP standby" replica flapping through sync — that a side-by-side A/B later attributed to `pihole-FTL` on a Raspberry Pi 3 wedging at the TLS handshake rather than anything hot-spare-specific. The RPi5 replacement under identical MyPi / FTL config never exhibited the flap. Suppressing notifications for a whole class of replicas was papering over an RPi3-specific FTL bug, so the flag is gone. The general-purpose sync-path retry on transient socket errors (`ssl.SSLError` / `httpx.ConnectError` / `httpx.RemoteProtocolError`) stays — it was never hot-spare-specific.

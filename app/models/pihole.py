@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 
 from cryptography.fernet import Fernet, InvalidToken
-from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, func
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import TypeDecorator
@@ -60,7 +60,10 @@ class PiholeInstance(Base):
     __tablename__ = "pihole_instances"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    site_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
     url: Mapped[str] = mapped_column(String(512), nullable=False)
     api_password: Mapped[str] = mapped_column(EncryptedString(512), nullable=False, default="")
     color: Mapped[str] = mapped_column(String(16), nullable=False, default="#3c8dbc")
@@ -78,11 +81,16 @@ class PiholeInstance(Base):
     update_available_ftl: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     update_available_web: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
+    site: Mapped["Site"] = relationship("Site", back_populates="instances")
     snapshots: Mapped[list[StatsSnapshot]] = relationship(
         "StatsSnapshot", back_populates="instance", cascade="all, delete-orphan"
     )
     query_logs: Mapped[list[QueryLog]] = relationship(
         "QueryLog", back_populates="instance", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        UniqueConstraint("site_id", "name", name="uq_pihole_instances_site_name"),
     )
 
 
