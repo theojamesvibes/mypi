@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, String, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -34,6 +34,10 @@ class ApiKey(Base):
     key_hash_algo: Mapped[str] = mapped_column(String(16), nullable=False, server_default="sha256")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_read_only: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="false")
+    # NULL = key has access to every site on this deployment (v1 default).
+    # Populated list = key is scoped to those site ids only (reserved for
+    # a future release; not user-configurable yet).
+    allowed_site_ids: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
