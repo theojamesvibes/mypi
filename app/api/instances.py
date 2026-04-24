@@ -7,10 +7,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api._site_dep import resolve_site
 from app.api.stats import _latest_snapshots_by_instance
 from app.auth import get_current_user, require_mutation
 from app.database import get_db
 from app.models.pihole import PiholeInstance
+from app.models.site import Site
 from app.models.user import User
 from app.schemas.instance import InstanceStatus
 
@@ -100,3 +102,48 @@ async def delete_instance(
     await db.delete(inst)
     await db.commit()
     logger.info("user=%s permanently deleted stale instance id=%s name=%r", user.username, instance_id, inst_name)
+
+
+# ── Per-site variants ────────────────────────────────────────────────────────
+
+site_router = APIRouter(prefix="/api/sites/{slug}/instances", tags=["instances (per-site)"])
+
+
+@site_router.get("", response_model=list[InstanceStatus])
+async def list_instances_for_site(
+    site: Site = Depends(resolve_site),
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Active instances belonging to one site."""
+    result = await db.execute(
+        select(PiholeInstance)
+        .where(
+            PiholeInstance.site_id == site.id,
+            PiholeInstance.is_active.is_(True),
+        )
+        .order_by(PiholeInstance.name)
+    )
+    instances = result.scalars().all()
+    snapshots = await _latest_snapshots_by_instance(db)
+    return [_build_status(inst, snapshots) for inst in instances]
+
+
+@site_router.get("/stale", response_model=list[InstanceStatus])
+async def list_stale_instances_for_site(
+    site: Site = Depends(resolve_site),
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Instances under this site that were removed from pihole_instances.yml."""
+    result = await db.execute(
+        select(PiholeInstance)
+        .where(
+            PiholeInstance.site_id == site.id,
+            PiholeInstance.is_active.is_(False),
+        )
+        .order_by(PiholeInstance.name)
+    )
+    instances = result.scalars().all()
+    snapshots = await _latest_snapshots_by_instance(db)
+    return [_build_status(inst, snapshots) for inst in instances]

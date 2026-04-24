@@ -507,14 +507,18 @@ async def run_sync(
         _spawn(_persist_sync_state(sid, current_state))
         if current_state.status == "error":
             if current_state.error:
-                _spawn(pushover_service.notify_sync_failure(current_state.error, site_name=site_name))
+                _spawn(pushover_service.notify_sync_failure(
+                    current_state.error, site_name=site_name, site_id=sid,
+                ))
             else:
                 failed = [r for r in current_state.results if r.status == "error"]
                 if failed:
                     body = "; ".join(
                         f"{r.name}: {r.error or 'unknown error'}" for r in failed
                     )
-                    _spawn(pushover_service.notify_sync_failure(body, site_name=site_name))
+                    _spawn(pushover_service.notify_sync_failure(
+                        body, site_name=site_name, site_id=sid,
+                    ))
         # Refresh Pi-hole version info after sync — FTL may have restarted on
         # replicas after the teleporter import.
         _spawn(_refresh_versions_post_sync())

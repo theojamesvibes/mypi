@@ -23,6 +23,7 @@ from app.api import instances as instances_router
 from app.api import notifications as notifications_router
 from app.api import poll_settings as poll_settings_router
 from app.api import queries as queries_router
+from app.api import sites as sites_router
 from app.api import stats as stats_router
 from app.api import sync as sync_router
 from app.api import version as version_router
@@ -301,11 +302,16 @@ templates.env.globals["enable_api_docs"] = settings.enable_api_docs
 # API routers
 app.include_router(auth_router.router)
 app.include_router(health_router.router)
+app.include_router(sites_router.router)
 app.include_router(instances_router.router)
+app.include_router(instances_router.site_router)
 app.include_router(stats_router.router)
+app.include_router(stats_router.site_router)
 app.include_router(queries_router.router)
+app.include_router(queries_router.site_router)
 app.include_router(domains_router.router)
 app.include_router(sync_router.router)
+app.include_router(sync_router.site_router)
 app.include_router(notifications_router.router)
 app.include_router(poll_settings_router.router)
 app.include_router(version_router.router)

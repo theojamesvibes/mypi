@@ -257,7 +257,9 @@ async def _poll_stats_for(instance: PiholeInstance, site_name: str = "") -> None
                 current = _offline_alert_count.get(key, 0)
                 if current == 0 or max_count == 0 or current < max_count:
                     _offline_alert_count[key] = current + 1
-                    _spawn(pushover_service.notify_instance_offline(instance.name, site_name=site_name))
+                    _spawn(pushover_service.notify_instance_offline(
+                        instance.name, site_name=site_name, site_id=instance.site_id,
+                    ))
     elif snapshot.status == "online" and prev == "offline":
         # Recovery: alert only if we had already sent an offline alert (avoids spurious
         # "back online" pings for blips that resolved before retries were exhausted).
@@ -265,7 +267,9 @@ async def _poll_stats_for(instance: PiholeInstance, site_name: str = "") -> None
         _offline_retry_count.pop(key, None)
         _offline_alert_count.pop(key, None)
         if already_alerted:
-            _spawn(pushover_service.notify_instance_back_online(instance.name, site_name=site_name))
+            _spawn(pushover_service.notify_instance_back_online(
+                instance.name, site_name=site_name, site_id=instance.site_id,
+            ))
     _prev_status[key] = snapshot.status
 
     # Notify sync service if this is the master (enables auto-gravity detection).

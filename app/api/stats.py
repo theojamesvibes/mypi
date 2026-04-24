@@ -7,9 +7,11 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import and_, case, distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api._site_dep import resolve_site
 from app.auth import get_current_user
 from app.database import get_db
 from app.models.pihole import PiholeInstance, QueryLog, StatsSnapshot
+from app.models.site import Site
 from app.models.user import User
 from app.schemas.stats import (
     AggregatedSummary,
@@ -53,28 +55,44 @@ async def _latest_snapshots_by_instance(db: AsyncSession) -> dict[uuid.UUID, Sta
     return {snap.instance_id: snap for snap in result.scalars().all()}
 
 
-@router.get("/summary", response_model=AggregatedSummary)
-async def get_summary(
-    hours: int = Query(default=24, ge=1, le=720),
-    since: datetime | None = Query(default=None),
-    _: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    if since is not None:
-        since_dt = since if since.tzinfo else since.replace(tzinfo=timezone.utc)
-    else:
-        since_dt = datetime.now(timezone.utc) - timedelta(hours=hours)
-    since = since_dt
-
+async def _summary_body(
+    db: AsyncSession,
+    since: datetime,
+    site_id: uuid.UUID | None = None,
+) -> AggregatedSummary:
+    """Shared body for summary endpoints. site_id=None → all active
+    instances across every site (legacy behavior)."""
+    inst_filters = [PiholeInstance.is_active.is_(True)]
+    if site_id is not None:
+        inst_filters.append(PiholeInstance.site_id == site_id)
     result = await db.execute(
         select(PiholeInstance)
-        .where(PiholeInstance.is_active.is_(True))
+        .where(*inst_filters)
         .order_by(PiholeInstance.is_master.desc(), PiholeInstance.name)
     )
     instances = result.scalars().all()
-    snapshots = await _latest_snapshots_by_instance(db)
+    all_snapshots = await _latest_snapshots_by_instance(db)
 
-    # Compute aggregate query counts from QueryLog for the selected time range.
+    # When scoping to a site, constrain QueryLog aggregates + snapshot lookups
+    # to that site's instances.
+    inst_ids = [i.id for i in instances]
+    if site_id is not None:
+        inst_id_set = set(inst_ids)
+        snapshots = {k: v for k, v in all_snapshots.items() if k in inst_id_set}
+    else:
+        snapshots = all_snapshots
+    query_filters = [QueryLog.timestamp >= since]
+    if site_id is not None:
+        if not inst_ids:
+            # Site has zero active instances; return empty totals.
+            totals = SummaryStats(
+                dns_queries_today=0, queries_blocked=0, percent_blocked=0.0,
+                domains_on_blocklist=0, unique_clients=0,
+                queries_cached=0, queries_forwarded=0,
+            )
+            return AggregatedSummary(totals=totals, instances=[])
+        query_filters.append(QueryLog.instance_id.in_(inst_ids))
+
     agg_result = await db.execute(
         select(
             func.count(QueryLog.id).label("total"),
@@ -83,11 +101,10 @@ async def get_summary(
             func.count(case((QueryLog.status.in_(["CACHE", "CACHE_STALE"]), QueryLog.id))).label("cached"),
             func.count(distinct(QueryLog.client_ip)).label("unique_clients"),
         )
-        .where(QueryLog.timestamp >= since)
+        .where(*query_filters)
     )
     agg = agg_result.one()
 
-    # Per-instance time-windowed aggregation from QueryLog.
     inst_agg_result = await db.execute(
         select(
             QueryLog.instance_id,
@@ -95,7 +112,7 @@ async def get_summary(
             func.count(case((QueryLog.status.in_(list(BLOCKED_STATUSES)), QueryLog.id))).label("blocked"),
             func.count(distinct(QueryLog.client_ip)).label("unique_clients"),
         )
-        .where(QueryLog.timestamp >= since)
+        .where(*query_filters)
         .group_by(QueryLog.instance_id)
     )
     inst_agg: dict[uuid.UUID, tuple[int, int, int]] = {
@@ -150,6 +167,30 @@ async def get_summary(
     return AggregatedSummary(totals=totals, instances=per_instance)
 
 
+@router.get("/summary", response_model=AggregatedSummary)
+async def get_summary(
+    hours: int = Query(default=24, ge=1, le=720),
+    since: datetime | None = Query(default=None),
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if since is not None:
+        since_dt = since if since.tzinfo else since.replace(tzinfo=timezone.utc)
+    else:
+        since_dt = datetime.now(timezone.utc) - timedelta(hours=hours)
+    return await _summary_body(db, since_dt, site_id=None)
+
+
+async def _site_instance_ids(db: AsyncSession, site_id: uuid.UUID) -> list[uuid.UUID]:
+    result = await db.execute(
+        select(PiholeInstance.id).where(
+            PiholeInstance.site_id == site_id,
+            PiholeInstance.is_active.is_(True),
+        )
+    )
+    return [row[0] for row in result.fetchall()]
+
+
 @router.get("/history", response_model=HistoryResponse)
 async def get_history(
     hours: int = Query(default=24, ge=1, le=720),
@@ -163,9 +204,18 @@ async def get_history(
         since_dt = since if since.tzinfo else since.replace(tzinfo=timezone.utc)
     else:
         since_dt = datetime.now(timezone.utc) - timedelta(hours=hours)
-    since = since_dt
     now = datetime.now(timezone.utc)
+    return await _history_body(db, since_dt, now, bucket_minutes, instance_id, site_instance_ids=None)
 
+
+async def _history_body(
+    db: AsyncSession,
+    since: datetime,
+    now: datetime,
+    bucket_minutes: int,
+    instance_id: uuid.UUID | None = None,
+    site_instance_ids: list[uuid.UUID] | None = None,
+) -> "HistoryResponse":
     # A bucket that had zero queries during an outage still needs to appear in
     # the response — otherwise the chart silently closes the gap and the outage
     # is invisible. Build the full contiguous bucket series via generate_series
@@ -197,6 +247,10 @@ async def get_history(
     )
     if instance_id:
         agg_q = agg_q.where(QueryLog.instance_id == instance_id)
+    if site_instance_ids is not None:
+        if not site_instance_ids:
+            return HistoryResponse(buckets=[], instance_id=instance_id)
+        agg_q = agg_q.where(QueryLog.instance_id.in_(site_instance_ids))
     agg = agg_q.subquery("agg")
 
     q = (
@@ -229,10 +283,18 @@ async def get_top(
 ):
     if since is not None:
         since_dt = since if since.tzinfo else since.replace(tzinfo=timezone.utc)
-        since = since_dt
     else:
-        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+        since_dt = datetime.now(timezone.utc) - timedelta(hours=hours)
+    return await _top_body(db, since_dt, instance_id, limit, site_instance_ids=None)
 
+
+async def _top_body(
+    db: AsyncSession,
+    since: datetime,
+    instance_id: uuid.UUID | None,
+    limit: int,
+    site_instance_ids: list[uuid.UUID] | None = None,
+) -> TopStatsResponse:
     domain_q = (
         select(QueryLog.domain, QueryLog.status, func.count(QueryLog.id).label("cnt"))
         .where(QueryLog.timestamp >= since)
@@ -240,6 +302,13 @@ async def get_top(
     )
     if instance_id:
         domain_q = domain_q.where(QueryLog.instance_id == instance_id)
+    if site_instance_ids is not None:
+        if not site_instance_ids:
+            return TopStatsResponse(
+                top_permitted=[], top_blocked=[], top_clients=[],
+                instance_id=instance_id,
+            )
+        domain_q = domain_q.where(QueryLog.instance_id.in_(site_instance_ids))
 
     client_q = (
         select(QueryLog.client_ip, QueryLog.client_name, func.count(QueryLog.id).label("cnt"))
@@ -250,6 +319,8 @@ async def get_top(
     )
     if instance_id:
         client_q = client_q.where(QueryLog.instance_id == instance_id)
+    if site_instance_ids is not None:
+        client_q = client_q.where(QueryLog.instance_id.in_(site_instance_ids))
 
     domain_result, client_result = (
         await db.execute(domain_q),
@@ -281,3 +352,60 @@ async def get_top(
         ],
         instance_id=instance_id,
     )
+
+
+# ── Per-site variants ────────────────────────────────────────────────────────
+
+site_router = APIRouter(prefix="/api/sites/{slug}/stats", tags=["stats (per-site)"])
+
+
+@site_router.get("/summary", response_model=AggregatedSummary)
+async def get_summary_for_site(
+    hours: int = Query(default=24, ge=1, le=720),
+    since: datetime | None = Query(default=None),
+    site: Site = Depends(resolve_site),
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if since is not None:
+        since_dt = since if since.tzinfo else since.replace(tzinfo=timezone.utc)
+    else:
+        since_dt = datetime.now(timezone.utc) - timedelta(hours=hours)
+    return await _summary_body(db, since_dt, site_id=site.id)
+
+
+@site_router.get("/history", response_model=HistoryResponse)
+async def get_history_for_site(
+    hours: int = Query(default=24, ge=1, le=720),
+    since: datetime | None = Query(default=None),
+    bucket_minutes: int = Query(default=10, ge=1, le=1440),
+    instance_id: uuid.UUID | None = Query(default=None),
+    site: Site = Depends(resolve_site),
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if since is not None:
+        since_dt = since if since.tzinfo else since.replace(tzinfo=timezone.utc)
+    else:
+        since_dt = datetime.now(timezone.utc) - timedelta(hours=hours)
+    now = datetime.now(timezone.utc)
+    scope = await _site_instance_ids(db, site.id)
+    return await _history_body(db, since_dt, now, bucket_minutes, instance_id, site_instance_ids=scope)
+
+
+@site_router.get("/top", response_model=TopStatsResponse)
+async def get_top_for_site(
+    hours: int = Query(default=24, ge=1, le=720),
+    since: datetime | None = Query(default=None),
+    instance_id: uuid.UUID | None = Query(default=None),
+    limit: int = Query(default=10, ge=1, le=50),
+    site: Site = Depends(resolve_site),
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if since is not None:
+        since_dt = since if since.tzinfo else since.replace(tzinfo=timezone.utc)
+    else:
+        since_dt = datetime.now(timezone.utc) - timedelta(hours=hours)
+    scope = await _site_instance_ids(db, site.id)
+    return await _top_body(db, since_dt, instance_id, limit, site_instance_ids=scope)

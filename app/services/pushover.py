@@ -4,6 +4,9 @@ from __future__ import annotations
 import json
 import logging
 
+import uuid
+from typing import Optional
+
 import httpx
 from cryptography.fernet import InvalidToken
 
@@ -75,11 +78,51 @@ async def _post(app_token: str, user_key: str, message: str, title: str, priorit
         return False
 
 
-async def send(message: str, title: str = "MyPi", priority: int = 0) -> bool:
-    """Send a notification. Respects the enabled flag."""
-    if not _enabled or not _app_token or not _user_key:
+async def _resolve_site_config(site_id: uuid.UUID) -> Optional[dict]:
+    """Return the effective Pushover config for a site (with Main-fallback
+    inheritance). None if no credentials configured at this site or Main."""
+    try:
+        async with AsyncSessionLocal() as db:
+            raw = await get_setting(db, site_id, _SETTINGS_KEY)
+    except Exception as exc:
+        logger.warning("Could not resolve Pushover config for site %s: %s", site_id, exc)
+        return None
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return None
+    return {
+        "app_token": _decrypt(data.get("app_token", "")),
+        "user_key": _decrypt(data.get("user_key", "")),
+        "enabled": data.get("enabled", False),
+        "alert_sync_failure": data.get("alert_sync_failure", True),
+        "alert_instance_offline": data.get("alert_instance_offline", True),
+        "alert_high_block_rate": data.get("alert_high_block_rate", False),
+        "block_rate_threshold_pct": data.get("block_rate_threshold_pct", 50.0),
+        "offline_alert_max_count": data.get("offline_alert_max_count", 1),
+        "offline_alert_retries": data.get("offline_alert_retries", 1),
+    }
+
+
+async def send(
+    message: str,
+    title: str = "MyPi",
+    priority: int = 0,
+    site_id: uuid.UUID | None = None,
+) -> bool:
+    """Send a notification using either Main's in-memory config (site_id=None)
+    or the target site's config resolved from site_settings (with
+    Main-fallback inheritance)."""
+    if site_id is None:
+        if not _enabled or not _app_token or not _user_key:
+            return False
+        return await _post(_app_token, _user_key, message, title, priority)
+    cfg = await _resolve_site_config(site_id)
+    if not cfg or not cfg["enabled"] or not cfg["app_token"] or not cfg["user_key"]:
         return False
-    return await _post(_app_token, _user_key, message, title, priority)
+    return await _post(cfg["app_token"], cfg["user_key"], message, title, priority)
 
 
 async def send_test() -> bool:
@@ -262,19 +305,57 @@ def _with_site(body: str, site_name: str) -> str:
     return f"{body} ({site_name})" if site_name else body
 
 
-async def notify_sync_failure(error: str, site_name: str = "") -> None:
-    if not _alert_sync_failure:
+async def notify_sync_failure(
+    error: str,
+    site_name: str = "",
+    site_id: uuid.UUID | None = None,
+) -> None:
+    """When site_id is set, the per-site alert toggle + credentials are used
+    (with Main-fallback). Otherwise the legacy Main-only config is used."""
+    if site_id is not None:
+        cfg = await _resolve_site_config(site_id)
+        if cfg is None or not cfg["alert_sync_failure"]:
+            return
+    elif not _alert_sync_failure:
         return
-    await send(_with_site(f"Sync failed: {error}", site_name), title="MyPi Sync Error")
+    await send(
+        _with_site(f"Sync failed: {error}", site_name),
+        title="MyPi Sync Error",
+        site_id=site_id,
+    )
 
 
-async def notify_instance_offline(name: str, site_name: str = "") -> None:
-    if not _alert_instance_offline:
+async def notify_instance_offline(
+    name: str,
+    site_name: str = "",
+    site_id: uuid.UUID | None = None,
+) -> None:
+    if site_id is not None:
+        cfg = await _resolve_site_config(site_id)
+        if cfg is None or not cfg["alert_instance_offline"]:
+            return
+    elif not _alert_instance_offline:
         return
-    await send(_with_site(f"Instance offline: {name}", site_name), title="MyPi Alert")
+    await send(
+        _with_site(f"Instance offline: {name}", site_name),
+        title="MyPi Alert",
+        site_id=site_id,
+    )
 
 
-async def notify_instance_back_online(name: str, site_name: str = "") -> None:
-    if not _alert_instance_offline:
+async def notify_instance_back_online(
+    name: str,
+    site_name: str = "",
+    site_id: uuid.UUID | None = None,
+) -> None:
+    if site_id is not None:
+        cfg = await _resolve_site_config(site_id)
+        if cfg is None or not cfg["alert_instance_offline"]:
+            return
+    elif not _alert_instance_offline:
         return
-    await send(_with_site(f"Instance back online: {name}", site_name), title="MyPi Alert")
+    await send(
+        _with_site(f"Instance back online: {name}", site_name),
+        title="MyPi Alert",
+        site_id=site_id,
+    )
