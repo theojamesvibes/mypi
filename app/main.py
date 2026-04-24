@@ -33,7 +33,7 @@ from app.limiter import limiter
 from app.models.settings import AppSetting
 from app.models.user import RevokedToken, User
 from app.services.collector import backfill_all_instances, cleanup_old_data, fetch_all_instance_versions, poll_queries, poll_stats, shutdown as collector_shutdown
-from app.services.config_loader import sync_instances
+from app.services.config_loader import sync_sites_and_instances
 from app.services import poll_settings as poll_settings_service
 from app.services import pushover as pushover_service
 from app.services import session_settings
@@ -135,7 +135,7 @@ async def _ensure_encryption_key() -> None:
 async def _bootstrap() -> None:
     """Sync instances and create initial admin user if needed."""
     async with AsyncSessionLocal() as db:
-        await sync_instances(db)
+        await sync_sites_and_instances(db)
 
         result = await db.execute(select(User).limit(1))
         if result.scalar_one_or_none() is None:

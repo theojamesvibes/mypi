@@ -5,13 +5,19 @@ Revises: 0012
 Create Date: 2026-04-24
 
 Introduces per-site scoping. Existing single-site deployments are wrapped
-into an auto-created `Default` site flagged as Main. Per-site app_settings
-keys (`sync.*`, `pushover.*`, `poll.*`) move to the new `site_settings`
-table under that Default site; truly-global keys stay in `app_settings`.
+into an auto-created `Default` site flagged as Main.
 
 Pihole instance names lose their global UNIQUE and gain scoped
 UNIQUE(site_id, name), so two sites can each have e.g. a "Living Room"
 instance.
+
+**Scope note:** this migration creates the schema and moves pihole_instances
+under the Default site. It does **not** migrate per-site `app_settings`
+rows (`sync_schedule`, `sync_last_result`, `pushover_settings`,
+`queries_poll_interval`) into `site_settings` — those readers (pushover,
+poll_settings, sync_service) are still the old `app_settings`-backed code
+path through Phase 3 to keep each phase shippable. Phase 4 rewrites the
+readers and ships the data move in a follow-up migration.
 
 See docs/multisite-migration-plan.md for the full rationale.
 """
@@ -109,42 +115,13 @@ def upgrade() -> None:
         "uq_pihole_instances_site_name", "pihole_instances", ["site_id", "name"],
     )
 
-    # 9. Move per-site app_settings keys into site_settings under Default.
-    op.execute(
-        sa.text(
-            "INSERT INTO site_settings (site_id, key, value) "
-            "SELECT :sid, key, value FROM app_settings "
-            "WHERE key LIKE 'sync.%' "
-            "   OR key LIKE 'pushover.%' "
-            "   OR key LIKE 'poll.%'"
-        ).bindparams(sid=str(default_site_id))
-    )
-    op.execute(
-        sa.text(
-            "DELETE FROM app_settings "
-            "WHERE key LIKE 'sync.%' "
-            "   OR key LIKE 'pushover.%' "
-            "   OR key LIKE 'poll.%'"
-        )
-    )
+    # Per-site app_settings rows (sync_schedule, sync_last_result,
+    # pushover_settings, queries_poll_interval) are intentionally NOT moved
+    # here — readers are still app_settings-backed through Phase 3. Phase 4
+    # ships the reader rewrite + the data move together.
 
 
 def downgrade() -> None:
-    # Flatten: move Main's site_settings back into app_settings; non-Main
-    # site config is lost. Documented in the migration plan — downgrade is
-    # a developer escape hatch, not routine.
-    op.execute(
-        sa.text(
-            "INSERT INTO app_settings (key, value) "
-            "SELECT ss.key, ss.value "
-            "FROM site_settings ss "
-            "JOIN sites s ON s.id = ss.site_id "
-            "WHERE s.is_main = TRUE AND s.is_active = TRUE "
-            "  AND ss.value IS NOT NULL "
-            "ON CONFLICT (key) DO NOTHING"
-        )
-    )
-
     # Restore global name-uniqueness on pihole_instances.
     op.drop_constraint("uq_pihole_instances_site_name", "pihole_instances", type_="unique")
     op.create_unique_constraint(

@@ -1,7 +1,17 @@
 # Pi-hole instance configuration for MyPi
-# Copy this file to pihole_instances.yml and fill in your instance details.
-# Instances are loaded at startup and synced to the database.
-# Restart the container to pick up configuration changes.
+# Copy this file to pihole_instances.yml and fill in your details.
+# Loaded at startup and synced to the database. Restart the container to
+# pick up configuration changes.
+#
+# Two formats are supported. Pick whichever fits your deployment.
+
+# ==============================================================================
+# FORMAT 1 — single-site (legacy; unchanged from previous MyPi releases)
+# ==============================================================================
+#
+# Use this if you have one group of Pi-holes to aggregate. MyPi wraps them
+# internally into an implicit "Default" site. No YAML change needed when
+# upgrading from earlier MyPi versions.
 
 instances:
   - name: "Living Room"
@@ -20,16 +30,50 @@ instances:
     password: "your-pihole-password"
     color: "#f39c12"   # orange
 
-  # Pi-hole with no password set — omit the field or leave it empty:
-  # - name: "Garage"
-  #   url: "http://192.168.1.103"
-  #   password: ""
-  #   color: "#9b59b6"   # purple
+# Up to 10 instances per site.
+# `password:` — Pi-hole v6 web-interface password. Leave empty ("") or
+#              omit entirely for no-password Pi-holes.
+# `master:` — designates the sync source within the site. Exactly one
+#             instance per site should be master.
 
-# Up to 10 instances supported.
-# Colors are used in charts to distinguish each Pi-hole visually.
+
+# ==============================================================================
+# FORMAT 2 — multi-site (up to 10 sites, each with up to 10 Pi-holes)
+# ==============================================================================
 #
-# password: corresponds to the Pi-hole web interface password (Pi-hole v6 API).
-#           Leave empty ("") or omit entirely for instances with no password set.
-# master:   designates the sync source for Pi-hole Sync. Exactly one instance
-#           should be marked master: true. Omit or set false on all replicas.
+# Use this when you run Pi-holes at more than one physical location or want
+# independent sync groups. Uncomment the block below and delete the
+# `instances:` block above.
+#
+# Exactly one site should be flagged `main: true` — it's the source for
+# inherited settings (Pushover, sync schedule, poll intervals) that other
+# sites can opt to share via the "Use Main's settings" checkbox in the UI.
+# If you don't flag any site as main, the first one becomes Main.
+#
+# Each site's `slug:` is optional — if omitted, MyPi derives one from the
+# name (e.g. "Home Base" → "home-base"). The slug appears in URLs
+# (`/api/sites/home/...`, `/dashboard/home`) and in iOS's site picker.
+# Reserved slugs you can't use: `sites`, `inactive`, `admin`, `main`.
+
+# sites:
+#   - name: "Home"
+#     slug: "home"           # optional; derived from name if omitted
+#     main: true             # exactly one site should be Main
+#     instances:
+#       - name: "Living Room"
+#         url: "http://192.168.1.100"
+#         password: "..."
+#         color: "#00a65a"
+#         master: true       # master *within this site*
+#       - name: "Office"
+#         url: "http://192.168.1.101"
+#         password: "..."
+#         color: "#3c8dbc"
+#
+#   - name: "Cabin"
+#     instances:
+#       - name: "Cabin Pi"
+#         url: "http://192.168.66.10"
+#         password: "..."
+#         color: "#f39c12"
+#         master: true
