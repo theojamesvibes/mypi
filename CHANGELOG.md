@@ -4,6 +4,16 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.11.0-dev.10] — 2026-04-24
+
+Bugfix — dashboard / settings / query-log pages rendered empty even though the backend was healthy. `window.siteApiUrl` was defined in a trailing `<script>` at the bottom of `base.html`, but each template's `extra_js` block runs *before* that (extra_js is injected via Jinja block, the trailing script follows it). `settings.html::extra_js` calls `loadSettingsInstances()`, `loadSyncStatus()`, etc., which reference `window.siteApiUrl(...)`. With the helper still undefined, each loader threw `TypeError: siteApiUrl is not a function` in the browser console, aborted silently, and left the UI looking like instances + sync settings were gone.
+
+Fix: moved `window.currentSiteSlug`, `window.siteApiUrl`, and `window.currentSection` into the existing early `<script>` in `<head>` (the theme-preference block). They're now guaranteed defined before `dashboard.js` loads and before any `extra_js` runs. The trailing script at the bottom of `base.html` now only contains the site-picker population code, which legitimately needs the DOM to be ready.
+
+Nothing else changed — the underlying site-picker logic, API routes, collector, and sync_service are all untouched. This is purely a JS load-order fix.
+
+---
+
 ## [1.11.0-dev.9] — 2026-04-24
 
 Bugfix — app startup failed with `AssertionError: Status code 204 must not have a response body` because `DELETE /api/sites/{slug}` was declared with both `status_code=204` *and* an explicit `-> None` return annotation. FastAPI's post-0.115 route builder interprets any return annotation (including `None`) as a response-model hint, which contradicts 204's "no body" semantics. The existing `DELETE /api/instances/{id}` handler works because it has no return annotation at all — matched that pattern.
