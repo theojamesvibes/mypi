@@ -56,6 +56,29 @@
       </div>
     </div>
 
+    <!-- Orphaned sites (hidden until orphan sites are detected) -->
+    <div class="col-12 d-none" id="stale-sites-card">
+      <div class="card border-warning">
+        <div class="card-header bg-warning bg-opacity-10 d-flex align-items-center justify-content-between">
+          <span><i class="bi bi-exclamation-triangle me-1 text-warning"></i>Orphaned Sites</span>
+          <span class="badge bg-warning text-dark" id="stale-sites-count-badge">0</span>
+        </div>
+        <div class="card-body">
+          <p class="text-muted small mb-3">
+            These sites were present in <code>pihole_instances.yml</code> under the <code>sites:</code> block
+            but have since been removed. All of their instances, stats, and query logs are still in the database.
+            Deleting a site here removes the site row and cascades through its instances, historical data, and settings.
+          </p>
+          <table class="table table-sm table-hover mb-0">
+            <thead class="table-light">
+              <tr><th>Name</th><th>Slug</th><th>Instances</th><th></th></tr>
+            </thead>
+            <tbody id="stale-sites-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
     <!-- Orphaned instances (hidden until stale instances are detected) -->
     <div class="col-12 d-none" id="stale-instances-card">
       <div class="card border-warning">
@@ -474,6 +497,7 @@
 <script>
   loadApiKeys();
   loadSettingsInstances();
+  loadStaleSites();
   loadStaleInstances();
   loadSyncStatus();
   loadSyncSchedule();

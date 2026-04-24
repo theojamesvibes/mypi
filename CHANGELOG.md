@@ -4,6 +4,34 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.11.0-dev.7] — 2026-04-24
+
+Multi-site Phase 6 — Web UI. A site picker in the topbar, bookmarkable per-site URLs (`/dashboard/{slug}`, `/queries/{slug}`, `/settings/{slug}`), dashboard JS routes site-scoped fetches through a `window.siteApiUrl()` helper, and a new Orphaned Sites cleanup section in the settings page. The picker is hidden for single-site deployments so nothing about the UI changes in that case.
+
+### Added
+- **Site picker** in `app/templates/base.html` topbar — `<select id="site-picker">` populated from `GET /api/sites` on every page load. Hidden when ≤1 active site. Changing the selection navigates to `/{currentSection}/{slug}` preserving the section (dashboard / queries / settings). Sidebar links get rewritten so clicking Dashboard/Queries/Settings preserves the selected site.
+- **`window.currentSiteSlug`** (from server-side `site_slug` template var) and **`window.siteApiUrl(path)`** helper: returns `/api${path}` when no slug is set, `/api/sites/{slug}${path}` otherwise. Legacy deployments see no behavior change.
+- **Web routes** `/dashboard/{slug}`, `/queries/{slug}`, `/settings/{slug}` in `app/main.py` — render the same three templates with `site_slug` in the context. Existing un-prefixed routes still work and pass `site_slug=""`.
+- **Orphaned Sites** card in the settings page. Hidden unless `GET /api/sites/inactive` returns at least one row. Each row shows name, slug, instance count, and a "Remove site + data" button that calls `DELETE /api/sites/{slug}` after a confirm that spells out the cascade (instances + stats + queries + settings). Matches the existing orphan-instances pattern.
+- **`loadStaleSites()`** + **`deleteOrphanSite()`** in `dashboard.js` — parallel to `loadStaleInstances` / `deleteStaleInstance` with the site-specific cascade warning.
+
+### Changed
+- **`dashboard.js`** — the 15 fetches that are site-scoped by nature (stats summary/history/top, queries list + clients, instances list, sync status/schedule/trigger) now go through `window.siteApiUrl()`. On legacy URLs this is a no-op. On per-site URLs (`/dashboard/home`, etc.) these hit the per-site API variants shipped in dev.6. Domain management, API keys, version-check, session timeout, notifications, and stale-instance management continue to use legacy routes — they're not per-site scoped in v1.
+- **`base.html` sidebar links** — Dashboard/Queries/Settings get per-site href rewrites only when a site picker is visible. Single-site users keep the plain `/`, `/queries`, `/settings` URLs.
+- **Sync-status badge polling** (in `base.html`) now uses `window.siteApiUrl('/sync/status')` so it reflects the selected site.
+
+### Unchanged
+- The Pushover / sync-schedule / poll-interval settings UI stays Main-only for v1. Per-site configuration works at the API layer (dev.6) but the settings form still writes to Main's `site_settings` row via the existing `/api/notifications/settings` and `/api/sync/schedule` handlers. A "Use Main's settings" checkbox / per-site form expansion can ship when real multi-site deployments ask for it.
+- All legacy web URLs work verbatim. `/`, `/queries`, `/settings` are unchanged.
+- dashboard.js's API-key management, version-check, domain on/off, and session-timeout fetches all stay on legacy routes. These concerns are not site-scoped in the v1 design.
+
+### Migration notes
+- No DB migration. Python + templates + JS only.
+- Restart into dev.7 on a single-site deployment → pixel-identical UI. The picker renders empty and immediately hides on `GET /api/sites` returning 1.
+- Multi-site deployments will see the picker, per-site bookmarkable URLs, and the orphan-sites section if any orphans exist.
+
+---
+
 ## [1.11.0-dev.6] — 2026-04-24
 
 Multi-site Phase 5 — per-site API surface. Every legacy un-prefixed route (`/api/stats/summary`, `/api/queries`, `/api/sync/status`, …) is unchanged and still resolves the active Main site by default. Alongside them, a parallel set of routes under `/api/sites/{slug}/…` scopes every read/action to one site. A new `/api/sites` namespace exposes site management (list, inactive, detail, rename, delete). Single-site deployments see zero API behavior change.
