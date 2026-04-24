@@ -4,6 +4,40 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.11.0-dev.6] — 2026-04-24
+
+Multi-site Phase 5 — per-site API surface. Every legacy un-prefixed route (`/api/stats/summary`, `/api/queries`, `/api/sync/status`, …) is unchanged and still resolves the active Main site by default. Alongside them, a parallel set of routes under `/api/sites/{slug}/…` scopes every read/action to one site. A new `/api/sites` namespace exposes site management (list, inactive, detail, rename, delete). Single-site deployments see zero API behavior change.
+
+### Added
+- **`app/api/sites.py`** — site management. `GET /api/sites` (list), `GET /api/sites/inactive` (orphans), `GET /api/sites/{slug}` (detail), `PATCH /api/sites/{slug}` (rename or slug-change; the old slug is moved to `site_slug_history` so bookmarks keep working via a 301), `DELETE /api/sites/{slug}` (orphan-only; cascades to the site's instances, stats, queries, settings). Active sites can't be deleted — must be removed from `pihole_instances.yml` first, matching the orphan-instance pattern.
+- **`app/api/_site_dep.py`** — `resolve_site` FastAPI dependency. Active-slug match returns the `Site`; `site_slug_history` match returns HTTP 301 with the `Location` header pointing at the current slug; no match returns 404.
+- **Per-site route variants** wired under `/api/sites/{slug}/…`:
+  - Sync: `GET /status`, `GET/PUT /schedule`, `POST /` (trigger).
+  - Instances: `GET /instances`, `GET /instances/stale`.
+  - Stats: `GET /stats/summary`, `GET /stats/history`, `GET /stats/top`.
+  - Queries: `GET /queries`, `GET /queries/clients`.
+- **`app/services/pushover.py::_resolve_site_config(site_id)`** — resolves a site's effective Pushover config (credentials + alert toggles) from `site_settings` with Main-fallback inheritance.
+- **`send(..., site_id=None)`** / **`notify_sync_failure(..., site_id=None)`** / **`notify_instance_offline(..., site_id=None)`** / **`notify_instance_back_online(..., site_id=None)`** — when `site_id` is given, the site's credentials + alert toggles (resolved with Main-fallback) are used; otherwise Main's in-memory config is used as before.
+
+### Changed
+- **`app/services/sync_service.py`** — `run_sync` threads the resolved `site_id` into its Pushover notify calls so per-site syncs deliver notifications via the site's credentials when configured.
+- **`app/services/collector.py`** — instance-offline / back-online notify calls now pass `site_id=instance.site_id` so multi-site deployments that configure per-site Pushover credentials see the right account fire. Single-site deployments: Main's config is still used (same delivery target as before).
+- **`app/api/stats.py`** — `get_summary`, `get_history`, `get_top` handler bodies factored into `_summary_body`, `_history_body`, `_top_body` helpers that accept an optional `site_id` / `site_instance_ids`. Legacy routes call with no site scope; per-site routes pass the site's active instance-id list so `QueryLog` aggregates are constrained to that site.
+- **`app/api/queries.py`** — per-site `/queries` and `/queries/clients` reuse the legacy body pattern with an `instance_id IN (site's instances)` filter.
+- **`app/main.py`** — registers the new `sites_router` (site management), plus the per-site sub-routers exposed by `sync`, `instances`, `stats`, `queries`. Five `include_router` lines added.
+
+### Unchanged
+- Every existing route. The legacy paths continue to serve Main by default for single-site deployments; multi-site users keep the option to target legacy URL = Main.
+- Pushover in-memory Main state (`_app_token`, `_user_key`, alert toggles). Phase 5 adds per-site *resolution* for notifications but leaves the legacy Main-only settings page + API intact. Per-site Pushover settings API lands alongside the UI work in Phase 6.
+- `get_offline_alert_retries` / `get_offline_alert_max_count` stay sync and Main-only — collector polls them on every tick, and threading per-site async lookups would add 2× N DB hits per poll cycle. Remaining Main-only until per-site alert tuning is a real user-facing feature.
+
+### Migration notes
+- No DB migration. All changes are Python-only.
+- Single-site deployments see identical behavior: legacy routes hit Main, site CRUD is available but returns a list of one.
+- Multi-site deployments now get per-site stats/queries/sync accessible via `/api/sites/{slug}/…`. Each site's sync reads/writes its own `sync_schedule` and `sync_last_result` in `site_settings` (Phase 4b wired that). Inherited Pushover credentials resolve automatically.
+
+---
+
 ## [1.11.0-dev.5] — 2026-04-24
 
 Multi-site Phase 4b — `sync_service` is now truly per-site. Every piece of sync state (locks, in-flight `_state`, schedule config, schedule task, blocklist-delta watermark) is keyed by `str(site_id)` in a dict. A site's `run_sync` picks its master and replicas from only that site's active instances, so two sites' syncs can run concurrently without contending on shared state. Existing single-site deployments keep working verbatim because every public function takes `site_id: uuid.UUID | None = None` and defaults to the active Main site when omitted.
