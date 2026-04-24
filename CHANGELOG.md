@@ -4,6 +4,22 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.11.0-dev.1] — 2026-04-24
+
+Phase 1 addendum — forward-compatibility hook so a future per-site API-key scoping feature won't require another breaking schema migration. No user-visible change; no existing or newly-created key's behavior changes in v1. All keys continue to have access to every site on the deployment.
+
+### Added
+- **`api_keys.allowed_site_ids`** — nullable `JSONB` column. `NULL` (the default, and the only value any key has today) means "unrestricted; all sites." A populated array will mean "scoped to these site ids only" once the scoping feature is exposed in a future release. Middleware enforcement will be a one-line null-check: if `NULL`, allow; else `site_id in allowed_site_ids or 403`.
+
+### Migration notes
+- `alembic upgrade head` runs `0014_api_key_site_scope.py` — single `ADD COLUMN` on an already-small table. Fast and trivial to roll back.
+- iOS design implication: the one-key-per-MyPi-server model still holds. iOS continues to auth once per server, then calls `GET /api/sites` to discover sites and lets the user pick which backend site to view. Same API key covers every site on that server. The scoping column only comes into play when a future release exposes per-site scoped keys for limited integrations.
+
+### Implementation plan impact
+- Phase 2 (config loader + Main-reassignment) ships as `1.11.0-dev.2`, not dev.1. The phase-to-version mapping in `docs/multisite-implementation-plan.md` shifts by one; the phase order is unchanged.
+
+---
+
 ## [1.11.0-dev.0] — 2026-04-24
 
 Multi-site foundation (Phase 1 of 6 — schema only, no behavior change). A single MyPi deployment will eventually group its Pi-holes into up to 10 sites, each with its own master, replicas, sync cadence, Pushover config, and polling intervals. This release lays the schema; existing deployments are migrated into an auto-created `Default` site flagged as Main, legacy API surfaces and YAML still work unchanged. See `docs/multisite-design.md`, `docs/multisite-migration-plan.md`, and `docs/multisite-implementation-plan.md` for the full plan.
