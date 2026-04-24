@@ -62,12 +62,12 @@ def _state_to_response(state: sync_service.SyncState) -> SyncStatusResponse:
 
 @router.get("/status", response_model=SyncStatusResponse)
 async def sync_status(_: User = Depends(get_current_user)) -> SyncStatusResponse:
-    return _state_to_response(sync_service.get_state())
+    return _state_to_response(await sync_service.get_state())
 
 
 @router.get("/schedule")
 async def get_schedule(_: User = Depends(get_current_user)) -> dict:
-    return sync_service.get_schedule()
+    return await sync_service.get_schedule()
 
 
 @router.put("/schedule")
@@ -88,7 +88,7 @@ async def set_schedule(req: ScheduleRequest, user: User = Depends(require_mutati
         "user=%s set sync schedule: interval=%dmin auto_gravity=%s",
         user.username, req.interval_minutes, req.auto_gravity,
     )
-    return sync_service.get_schedule()
+    return await sync_service.get_schedule()
 
 
 @router.post("", response_model=SyncStatusResponse)
@@ -99,7 +99,8 @@ async def trigger_sync(
     background_tasks: BackgroundTasks,
     user: User = Depends(require_mutation),
 ) -> SyncStatusResponse:
-    if sync_service.get_state().status == "running":
+    current_state = await sync_service.get_state()
+    if current_state.status == "running":
         raise HTTPException(status_code=409, detail="A sync is already in progress.")
 
     logger.info("user=%s triggered manual sync", user.username)

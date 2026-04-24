@@ -4,6 +4,37 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.11.0-dev.5] — 2026-04-24
+
+Multi-site Phase 4b — `sync_service` is now truly per-site. Every piece of sync state (locks, in-flight `_state`, schedule config, schedule task, blocklist-delta watermark) is keyed by `str(site_id)` in a dict. A site's `run_sync` picks its master and replicas from only that site's active instances, so two sites' syncs can run concurrently without contending on shared state. Existing single-site deployments keep working verbatim because every public function takes `site_id: uuid.UUID | None = None` and defaults to the active Main site when omitted.
+
+### Added
+- **Per-site state in `app/services/sync_service.py`** — `_state_by_site`, `_lock_by_site`, `_schedule_task_by_site`, `_last_blocklist_by_site`, `_schedule_by_site`. The old module globals (`_state`, `_lock`, `_schedule_minutes`, `_auto_gravity`, `_schedule_task`, `_last_blocklist_count`, `_sync_opts`) are gone.
+- **`_resolve_site_id(site_id)`** — None-to-Main helper used by every public entry point.
+- **`_lookup_site_name(site_id)`** — returns the site's name for logs and alerts.
+- **Site-labeled Pushover notifications.** `notify_sync_failure(error, site_name=…)` / `notify_instance_offline(name, site_name=…)` / `notify_instance_back_online(name, site_name=…)` append a `(SiteName)` suffix so multi-site users can tell which site fired. `site_name=""` (default) yields the pre-4b message verbatim.
+
+### Changed
+- **`run_sync(..., site_id=None)`** — scopes `SELECT … FROM pihole_instances` to the target site. Master-not-configured / no-replicas errors now name the site. Per-site locks mean two sites' syncs are independent.
+- **`set_schedule(..., site_id=None)`** — cancels only the target site's interval task and re-arms it under the site's new cadence. Other sites' schedules are untouched.
+- **`notify_blocklist_count(site_id, count)`** — signature changed: `site_id` is now required-positional (no default). Collector's caller already threads `instance.site_id` through, so the Phase-3 `is_main_site` guard is dropped. Each site's master maintains its own watermark; auto-sync fires per-site.
+- **`load_schedule()`** — iterates every active site via `Site` table, calls `_load_site_schedule(site.id, site.name)` for each. Re-arms the interval task per site.
+- **`get_state()` / `get_schedule()`** — now `async` (need to resolve Main on demand). `api/sync.py` handlers now `await` them.
+- **`app/services/collector.py`** — `_poll_stats_for` takes `site_name: str = ""` instead of `is_main_site: bool`. `poll_stats_for_site` looks up the site name once via `_get_site_name(site_id)` and threads it through. The Phase-3 `_is_main_site` helper is replaced by `_get_site_name`. Pushover notify calls pass `site_name=site_name`.
+- **`app/services/pushover.py`** — notify helpers accept optional `site_name` and append `(site_name)` to the body via a small `_with_site` helper.
+- **`app/api/sync.py`** — four call sites updated to `await` the now-async `sync_service.get_state` / `get_schedule`.
+
+### Not yet in this release (coming in Phase 5 + 6)
+- Per-site API routes (`/api/sites/{slug}/sync/...`). The existing un-prefixed routes still resolve Main by default.
+- Per-site UI site picker and settings pages.
+- Per-site Pushover credentials (still one global-for-Main config; messages are site-labeled but the delivery target is Main's Pushover account).
+
+### Migration notes
+- No new Alembic migration — schema is unchanged from dev.4. Behavior changes are in Python only.
+- Existing deployments restarting into dev.5 see the exact same single-site behavior: `load_schedule()` restores Main's schedule, `run_sync()` (no site_id arg) syncs Main's instances. Multi-site YAML users see per-site schedules restored independently and per-site `Sync started: site=<name> master=…` log lines.
+
+---
+
 ## [1.11.0-dev.4] — 2026-04-24
 
 Multi-site Phase 4a — storage-layer reader migration. The three app settings backed by per-site-natured data (Pushover, poll interval, sync schedule + last result) now read and write from `site_settings` under the active Main site instead of the flat `app_settings` table. No user-visible behavior change: everything is still resolved through Main because the surrounding service logic (sync_service's single-master state, the global UI) is still single-site. The functional per-site rewrite of `sync_service` lands next in dev.5 as Phase 4b.
