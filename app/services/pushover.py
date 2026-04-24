@@ -256,19 +256,25 @@ def get_settings_raw() -> dict:
 
 # ── Alert helpers ─────────────────────────────────────────────────────────────
 
-async def notify_sync_failure(error: str) -> None:
+def _with_site(body: str, site_name: str) -> str:
+    """Append a site label to a notification body so multi-site users can tell
+    which site fired. No-op when site_name is falsy."""
+    return f"{body} ({site_name})" if site_name else body
+
+
+async def notify_sync_failure(error: str, site_name: str = "") -> None:
     if not _alert_sync_failure:
         return
-    await send(f"Sync failed: {error}", title="MyPi Sync Error")
+    await send(_with_site(f"Sync failed: {error}", site_name), title="MyPi Sync Error")
 
 
-async def notify_instance_offline(name: str) -> None:
+async def notify_instance_offline(name: str, site_name: str = "") -> None:
     if not _alert_instance_offline:
         return
-    await send(f"Instance offline: {name}", title="MyPi Alert")
+    await send(_with_site(f"Instance offline: {name}", site_name), title="MyPi Alert")
 
 
-async def notify_instance_back_online(name: str) -> None:
+async def notify_instance_back_online(name: str, site_name: str = "") -> None:
     if not _alert_instance_offline:
         return
-    await send(f"Instance back online: {name}", title="MyPi Alert")
+    await send(_with_site(f"Instance back online: {name}", site_name), title="MyPi Alert")
