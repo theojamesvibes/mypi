@@ -137,9 +137,9 @@ async function loadDashboard() {
 
   try {
     const [summary, history, top] = await Promise.all([
-      apiFetch(`/api/stats/summary?${tp}`),
-      apiFetch(`/api/stats/history?${tp}&bucket_minutes=${bucketMinutes}`),
-      apiFetch(`/api/stats/top?${tp}&limit=10`),
+      apiFetch(window.siteApiUrl(`/stats/summary?${tp}`)),
+      apiFetch(window.siteApiUrl(`/stats/history?${tp}&bucket_minutes=${bucketMinutes}`)),
+      apiFetch(window.siteApiUrl(`/stats/top?${tp}&limit=10`)),
     ]);
 
     if (!summary) return;
@@ -367,7 +367,7 @@ let _liveInterval = null;
 async function loadInstanceFilter() {
   const sel = document.getElementById('f-instance');
   if (!sel) return;
-  const instances = await apiFetch('/api/instances');
+  const instances = await apiFetch(window.siteApiUrl('/instances'));
   if (!instances) return;
   instances.forEach(i => {
     const opt = document.createElement('option');
@@ -420,7 +420,7 @@ async function loadQueries(page) {
   if (blocked !== '') params.set('blocked', blocked);
 
   try {
-    const data = await apiFetch(`/api/queries?${params}`);
+    const data = await apiFetch(window.siteApiUrl(`/queries?${params}`));
     if (!data) return;
 
     const tbody = document.getElementById('queries-tbody');
@@ -463,7 +463,7 @@ async function loadClientSummary(hours, instanceId) {
   if (instanceId) params.set('instance_id', instanceId);
 
   try {
-    const data = await apiFetch(`/api/queries/clients?${params}`);
+    const data = await apiFetch(window.siteApiUrl(`/queries/clients?${params}`));
     if (!data) return;
 
     const tbody = document.getElementById('queries-tbody');
@@ -740,7 +740,7 @@ async function revokeKey(id) {
 async function loadSettingsInstances() {
   const tbody = document.getElementById('settings-instances-tbody');
   if (!tbody) return;
-  const instances = await apiFetch('/api/instances');
+  const instances = await apiFetch(window.siteApiUrl('/instances'));
   if (!instances) return;
   updateStatusBadge(instances);
 
@@ -865,6 +865,68 @@ async function deleteAllStale() {
   await loadStaleInstances();
 }
 
+// ─── Orphaned sites ───────────────────────────────────────────────────────────
+// Sites that were in pihole_instances.yml's `sites:` block and are no longer.
+// Mirrors the orphan-instances pattern, but deleting a site cascades through
+// instances → stats → queries → site_settings.
+
+async function loadStaleSites() {
+  const card = document.getElementById('stale-sites-card');
+  const tbody = document.getElementById('stale-sites-tbody');
+  const badge = document.getElementById('stale-sites-count-badge');
+  if (!card || !tbody) return;
+
+  let sites;
+  try {
+    sites = await apiFetch('/api/sites/inactive');
+  } catch (_) {
+    return;
+  }
+  if (!sites || sites.length === 0) {
+    card.classList.add('d-none');
+    return;
+  }
+
+  card.classList.remove('d-none');
+  if (badge) badge.textContent = sites.length;
+
+  tbody.innerHTML = sites.map(s => `
+    <tr>
+      <td>${escHtml(s.name)}</td>
+      <td><code class="small">${escHtml(s.slug)}</code></td>
+      <td class="small text-muted">${s.instance_count} instance(s)</td>
+      <td>
+        <button class="btn btn-xs btn-outline-danger py-0 px-1" style="font-size:0.75rem;"
+                onclick="deleteOrphanSite('${escHtml(s.slug)}', '${escHtml(s.name)}', ${s.instance_count})">
+          <i class="bi bi-trash"></i> Remove site + data
+        </button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function deleteOrphanSite(slug, name, instanceCount) {
+  if (!confirm(
+    `Permanently delete orphan site "${name}"?\n\n` +
+    `This cascades: ${instanceCount} instance(s) and all their stats, query logs, and settings will be removed. ` +
+    `This cannot be undone.`
+  )) return;
+  try {
+    const res = await fetch(`/api/sites/${encodeURIComponent(slug)}`, {
+      method: 'DELETE',
+      credentials: 'include',
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(`Failed to remove site: ${data.detail || res.status}`);
+      return;
+    }
+    await loadStaleSites();
+  } catch (err) {
+    alert(`Error: ${err.message}`);
+  }
+}
+
 // ─── Drill-down modal ─────────────────────────────────────────────────────────
 
 function openDrillDown(filter) {
@@ -902,7 +964,7 @@ async function loadDrillPage(page) {
     '<tr><td colspan="7" class="text-center text-muted py-3">Loading…</td></tr>';
 
   try {
-    const data = await apiFetch(`/api/queries?${params}`);
+    const data = await apiFetch(window.siteApiUrl(`/queries?${params}`));
     if (!data) return;
 
     const totalPages = Math.ceil(data.total / data.page_size);
@@ -986,7 +1048,7 @@ async function runSearch(page) {
     '<tr><td colspan="7" class="text-center text-muted py-3">Searching…</td></tr>';
 
   try {
-    const data = await apiFetch(`/api/queries?${params}`);
+    const data = await apiFetch(window.siteApiUrl(`/queries?${params}`));
     if (!data) return;
 
     const totalPages = Math.ceil(data.total / data.page_size);
@@ -1045,7 +1107,7 @@ function renderSearchPagination(total) {
 async function loadSyncIndicator() {
   let status = null;
   try {
-    const res = await fetch('/api/sync/status', { credentials: 'include', cache: 'no-store' });
+    const res = await fetch(window.siteApiUrl('/sync/status'), { credentials: 'include', cache: 'no-store' });
     if (res.ok) status = await res.json();
   } catch (_) { /* network error — leave badge hidden */ }
 
@@ -1125,13 +1187,13 @@ function renderSyncBadge(status) {
 let _syncPollInterval = null;
 
 async function loadSyncStatus() {
-  const data = await apiFetch('/api/sync/status');
+  const data = await apiFetch(window.siteApiUrl('/sync/status'));
   if (!data) return;
   renderSyncStatus(data);
 }
 
 async function loadSyncSchedule() {
-  const data = await apiFetch('/api/sync/schedule');
+  const data = await apiFetch(window.siteApiUrl('/sync/schedule'));
   if (!data) return;
   const interval = document.getElementById('sync-interval');
   if (interval) interval.value = String(data.interval_minutes);
@@ -1154,7 +1216,7 @@ async function saveSchedule() {
     import_dhcp_leases: document.getElementById('sync-dhcp')?.checked ?? false,
     run_gravity: true,
   };
-  const res = await fetch('/api/sync/schedule', {
+  const res = await fetch(window.siteApiUrl('/sync/schedule'), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
@@ -1239,7 +1301,7 @@ async function triggerSync() {
   };
 
   try {
-    const res = await fetch('/api/sync', {
+    const res = await fetch(window.siteApiUrl('/sync'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -1256,7 +1318,7 @@ async function triggerSync() {
 
   // Poll for completion
   _syncPollInterval = setInterval(async () => {
-    const data = await apiFetch('/api/sync/status');
+    const data = await apiFetch(window.siteApiUrl('/sync/status'));
     if (!data) return;
     renderSyncStatus(data);
     if (data.status !== 'running') {

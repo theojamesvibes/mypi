@@ -390,7 +390,25 @@ async def dashboard(request: Request, current_user=Depends(get_current_user_opti
         return RedirectResponse(url="/login", status_code=303)
     if current_user.password_change_required:
         return RedirectResponse(url="/change-password", status_code=303)
-    return templates.TemplateResponse("dashboard.html", {"request": request, "user": current_user})
+    return templates.TemplateResponse(
+        "dashboard.html",
+        {"request": request, "user": current_user, "site_slug": ""},
+    )
+
+
+@app.get("/dashboard/{slug}", response_class=HTMLResponse, include_in_schema=False)
+async def dashboard_for_site(
+    slug: str, request: Request,
+    current_user=Depends(get_current_user_optional),
+):
+    if current_user is None:
+        return RedirectResponse(url="/login", status_code=303)
+    if current_user.password_change_required:
+        return RedirectResponse(url="/change-password", status_code=303)
+    return templates.TemplateResponse(
+        "dashboard.html",
+        {"request": request, "user": current_user, "site_slug": slug},
+    )
 
 
 @app.get("/queries", response_class=HTMLResponse, include_in_schema=False)
@@ -399,7 +417,25 @@ async def queries_page(request: Request, current_user=Depends(get_current_user_o
         return RedirectResponse(url="/login", status_code=303)
     if current_user.password_change_required:
         return RedirectResponse(url="/change-password", status_code=303)
-    return templates.TemplateResponse("queries.html", {"request": request, "user": current_user})
+    return templates.TemplateResponse(
+        "queries.html",
+        {"request": request, "user": current_user, "site_slug": ""},
+    )
+
+
+@app.get("/queries/{slug}", response_class=HTMLResponse, include_in_schema=False)
+async def queries_page_for_site(
+    slug: str, request: Request,
+    current_user=Depends(get_current_user_optional),
+):
+    if current_user is None:
+        return RedirectResponse(url="/login", status_code=303)
+    if current_user.password_change_required:
+        return RedirectResponse(url="/change-password", status_code=303)
+    return templates.TemplateResponse(
+        "queries.html",
+        {"request": request, "user": current_user, "site_slug": slug},
+    )
 
 
 @app.get("/settings", response_class=HTMLResponse, include_in_schema=False)
@@ -408,7 +444,25 @@ async def settings_page(request: Request, current_user=Depends(get_current_user_
         return RedirectResponse(url="/login", status_code=303)
     if current_user.password_change_required:
         return RedirectResponse(url="/change-password", status_code=303)
-    return templates.TemplateResponse("settings.html", {"request": request, "user": current_user})
+    return templates.TemplateResponse(
+        "settings.html",
+        {"request": request, "user": current_user, "site_slug": ""},
+    )
+
+
+@app.get("/settings/{slug}", response_class=HTMLResponse, include_in_schema=False)
+async def settings_page_for_site(
+    slug: str, request: Request,
+    current_user=Depends(get_current_user_optional),
+):
+    if current_user is None:
+        return RedirectResponse(url="/login", status_code=303)
+    if current_user.password_change_required:
+        return RedirectResponse(url="/change-password", status_code=303)
+    return templates.TemplateResponse(
+        "settings.html",
+        {"request": request, "user": current_user, "site_slug": slug},
+    )
 
 
 @app.get("/change-password", response_class=HTMLResponse, include_in_schema=False)
