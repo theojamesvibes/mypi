@@ -4,6 +4,27 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.11.0-dev.4] — 2026-04-24
+
+Multi-site Phase 4a — storage-layer reader migration. The three app settings backed by per-site-natured data (Pushover, poll interval, sync schedule + last result) now read and write from `site_settings` under the active Main site instead of the flat `app_settings` table. No user-visible behavior change: everything is still resolved through Main because the surrounding service logic (sync_service's single-master state, the global UI) is still single-site. The functional per-site rewrite of `sync_service` lands next in dev.5 as Phase 4b.
+
+Phase 4 as originally planned was one commit containing the reader migration, the Alembic data move, and the `sync_service` per-site functional rewrite. That produced a ~1200-line diff across four+ files with heavy coupling; splitting into **4a (storage)** and **4b (functional)** lets each half ship against a stable base and keeps reviews tractable. Plan doc updated.
+
+### Added
+- **`alembic/versions/0015_move_settings_to_site_settings.py`** — moves four keys from `app_settings` to `site_settings` under Main: `sync_schedule`, `sync_last_result`, `pushover_settings`, `queries_poll_interval`. Uses `INSERT … SELECT … ON CONFLICT DO NOTHING` + `DELETE` to preserve any hand-written destination rows while collapsing to a single source of truth. Fresh installs see a no-op. Downgrade copies Main's values back to `app_settings` (lossy for non-Main overrides, documented).
+
+### Changed
+- **`app/services/pushover.py`** — `load_settings()` / `save_settings()` now resolve the active Main site id via `site_settings.get_main_site_id()` and read/write through `site_settings.get_setting()` / `set_setting()`. Dropped the manual `pg_insert … ON CONFLICT DO UPDATE` + fresh-session verify block in favor of the site_settings module's built-in verification. Import surface dropped `AppSetting` and `pg_insert`. Public API (function signatures, module-global readers like `get_offline_alert_retries()`) is unchanged — every existing caller works verbatim.
+- **`app/services/poll_settings.py`** — same pattern. `load_settings()` / `save_settings(interval_seconds)` now go through Main's `site_settings` row. Public API unchanged.
+- **`app/services/sync_service.py`** — `_db_upsert(key, value)` now writes to Main's `site_settings` row instead of `app_settings`. `load_schedule()` reads both `sync_schedule` and `sync_last_result` from Main's `site_settings`. Dropped `AppSetting` / `pg_insert` imports. `_persist_schedule()` and `_persist_sync_state()` paths unchanged in surface — they still call `_db_upsert`. `run_sync()` behavior and signature unchanged — per-site rewrite is Phase 4b.
+
+### Migration notes
+- `alembic upgrade head` runs `0015_move_settings_to_site_settings`. It's idempotent against existing data — re-running (e.g. after a manual backout) behaves correctly.
+- If a user hand-wrote `site_settings` rows for Main before upgrading (unlikely but supported), those rows are preserved and the matching `app_settings` rows are deleted anyway.
+- dev.4 containers restarting against a dev.3 DB perform the move on first boot. Settings persistence survives the migration untouched.
+
+---
+
 ## [1.11.0-dev.3] — 2026-04-24
 
 Multi-site Phase 3 — per-site polling. The collector's two global APScheduler jobs (`poll_stats`, `poll_queries`) are replaced by a pair of jobs per active site (`poll_stats_site_<id>`, `poll_queries_site_<id>`). Each site's polls iterate only that site's instances, so a hang on one site's poll tick can't delay another. Poll intervals are still globally configured for now; Phase 4 adds per-site overrides via `site_settings` when the reader migration lands.

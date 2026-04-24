@@ -1,14 +1,18 @@
-"""Query poll interval setting — persisted to app_settings."""
+"""Query poll interval setting — persisted to site_settings under Main.
+
+Phase 4 moved storage from `app_settings` (global) to `site_settings` under
+the active Main site. Public API (get_interval_seconds / load_settings /
+save_settings / set_reschedule_callback) is unchanged; Phase 5 will add
+per-site variants when the sync_service rewrite lands.
+"""
 from __future__ import annotations
 
 import json
 import logging
 from typing import Callable
 
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-
 from app.database import AsyncSessionLocal
-from app.models.settings import AppSetting
+from app.services.site_settings import get_main_site_id, get_setting, set_setting
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +36,13 @@ async def load_settings() -> None:
     global _interval_seconds
     try:
         async with AsyncSessionLocal() as db:
-            row = await db.get(AppSetting, _SETTINGS_KEY)
-        if row and row.value:
-            data = json.loads(row.value)
+            main_id = await get_main_site_id(db)
+            if main_id is None:
+                logger.warning("No Main site found on startup; poll interval deferred.")
+                return
+            raw = await get_setting(db, main_id, _SETTINGS_KEY)
+        if raw:
+            data = json.loads(raw)
             _interval_seconds = int(data.get("interval_seconds", _DEFAULT_INTERVAL))
             logger.info("Query poll interval loaded from DB: %ds", _interval_seconds)
         else:
@@ -47,21 +55,13 @@ async def save_settings(interval_seconds: int) -> None:
     global _interval_seconds
     value = json.dumps({"interval_seconds": interval_seconds})
     async with AsyncSessionLocal() as db:
-        stmt = (
-            pg_insert(AppSetting)
-            .values(key=_SETTINGS_KEY, value=value)
-            .on_conflict_do_update(index_elements=["key"], set_={"value": value})
-        )
-        await db.execute(stmt)
-        await db.commit()
-
-    async with AsyncSessionLocal() as db:
-        row = await db.get(AppSetting, _SETTINGS_KEY)
-        if row is None or row.value != value:
+        main_id = await get_main_site_id(db)
+        if main_id is None:
             raise RuntimeError(
-                f"Query poll interval save verification failed: "
-                f"{'nothing found' if row is None else repr(row.value)}"
+                "Cannot save poll interval: no Main site found. Run config sync first."
             )
+        # site_settings.set_setting commits and verifies with a fresh read.
+        await set_setting(db, main_id, _SETTINGS_KEY, value)
 
     _interval_seconds = interval_seconds
     logger.info("Query poll interval saved: %ds", interval_seconds)

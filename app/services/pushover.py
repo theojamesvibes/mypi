@@ -6,11 +6,10 @@ import logging
 
 import httpx
 from cryptography.fernet import InvalidToken
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.database import AsyncSessionLocal
 from app.models.pihole import _get_fernet
-from app.models.settings import AppSetting
+from app.services.site_settings import get_main_site_id, get_setting, set_setting
 
 logger = logging.getLogger(__name__)
 
@@ -118,24 +117,33 @@ def get_offline_alert_retries() -> int:
 
 
 async def load_settings() -> None:
-    """Load Pushover settings from DB. Called at startup."""
+    """Load Pushover settings from DB. Called at startup.
+
+    Reads from `site_settings` under the active Main site. In Phase 4 the
+    UI is still Main-only, so this preserves single-site behavior. Phase 5's
+    per-site UI rewrite wires in a site_id parameter.
+    """
     global _app_token, _user_key, _enabled
     global _alert_sync_failure, _alert_instance_offline, _alert_high_block_rate
     global _block_rate_threshold_pct, _offline_alert_max_count, _offline_alert_retries
 
     try:
         async with AsyncSessionLocal() as db:
-            row = await db.get(AppSetting, _SETTINGS_KEY)
+            main_id = await get_main_site_id(db)
+            if main_id is None:
+                logger.warning("No Main site found on startup; Pushover settings deferred.")
+                return
+            raw = await get_setting(db, main_id, _SETTINGS_KEY)
     except Exception as exc:
         logger.warning("Could not query Pushover settings on startup: %s", exc)
         return
 
-    if not row or not row.value:
+    if not raw:
         logger.info("No persisted Pushover settings found in DB — using defaults.")
         return
 
     try:
-        data = json.loads(row.value)
+        data = json.loads(raw)
         _app_token = _decrypt(data.get("app_token", ""))
         _user_key = _decrypt(data.get("user_key", ""))
         _enabled = data.get("enabled", False)
@@ -183,22 +191,14 @@ async def save_settings(
     })
 
     async with AsyncSessionLocal() as db:
-        stmt = (
-            pg_insert(AppSetting)
-            .values(key=_SETTINGS_KEY, value=payload)
-            .on_conflict_do_update(index_elements=["key"], set_={"value": payload})
-        )
-        await db.execute(stmt)
-        await db.commit()
-
-    # Verify the write landed in a fresh session
-    async with AsyncSessionLocal() as db:
-        row = await db.get(AppSetting, _SETTINGS_KEY)
-        if row is None or row.value != payload:
+        main_id = await get_main_site_id(db)
+        if main_id is None:
             raise RuntimeError(
-                f"DB write verification failed for Pushover settings: "
-                f"committed but read-back returned {'nothing' if row is None else 'wrong value'}"
+                "Cannot save Pushover settings: no Main site found. "
+                "Run config sync first."
             )
+        # site_settings.set_setting commits and verifies with a fresh read.
+        await set_setting(db, main_id, _SETTINGS_KEY, payload)
 
     # Update in-memory state only after the DB write has been verified.
     # If verification raises, the next load_settings() restores the truth
