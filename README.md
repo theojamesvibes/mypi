@@ -1,6 +1,6 @@
 # MyPi
 [![build](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/docker-publish.yml?style=flat-square)](https://github.com/theojamesvibes/mypi/actions)
-[![version](https://img.shields.io/badge/version-1.9.4-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
+[![version](https://img.shields.io/badge/version-1.10.0-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
 [![platform](https://img.shields.io/badge/platform-linux%2Famd64%20|%20linux%2Farm64-teal?style=flat-square)](https://github.com/theojamesvibes/mypi/pkgs/container/mypi)
 
 > **⚠️ Vibe Code Disclosure**
@@ -274,13 +274,6 @@ instances:
     url: "https://192.168.1.104"
     password: "your-pihole-password"
     color: "#e74c3c"
-
-  # Dormant VIP secondary (hot spare) — fully online, no DNS traffic:
-  - name: "Standby"
-    url: "http://192.168.1.105"
-    password: "your-pihole-password"
-    color: "#95a5a6"
-    hot_spare: true
 ```
 
 - Up to **10 instances** supported
@@ -288,29 +281,18 @@ instances:
 - `password` is the Pi-hole web interface password (Pi-hole v6 API). Leave empty (`""`) or omit entirely for instances with no password configured — MyPi detects the passwordless state automatically and connects without authentication. **Note:** passwordless mode only works for plain-`http://` Pi-holes. With TLS enabled, Pi-hole v6's `/api/auth` rejects empty-password requests with 401 even when the web UI has no password set, so any `https://` instance must have a password configured
 - `color` is used in charts to distinguish each instance visually
 - `master: true` designates the sync source for the Pi-hole Sync feature — exactly one instance should be marked master
-- `hot_spare: true` marks a replica as a dormant VIP secondary (see [Low-traffic or hot-standby Pi-holes](#low-traffic-or-hot-standby-pi-holes) below). Cannot be combined with `master: true` — MyPi logs a warning and ignores `hot_spare` if both are set on the same instance
 
 #### HTTP vs HTTPS
 
 Both `http://` and `https://` URLs are supported. If your Pi-hole is configured with HTTPS (including a self-signed certificate), simply use `https://` in the `url` field — MyPi accepts self-signed certificates without any additional configuration. Using HTTPS is recommended when your Pi-hole is reachable over a network segment you don't fully control.
 
-#### Low-traffic or hot-standby Pi-holes
+#### Flapping on a Raspberry Pi 3
 
-Pi-holes that sit behind a VIP as a standby, or otherwise receive very little DNS traffic, can occasionally flap in MyPi's view. Pi-hole v6's embedded webserver (CivetWeb) closes idle keepalive TCP sockets on a short timeout; between 60 s stats polls the socket can go stale, so the next poll's first request fails (`ConnectError` / `RemoteProtocolError`) before MyPi reconnects. This is not a Pi-hole-side block — session counts and `webserver.api.max_sessions` are not involved, and Pi-hole v6 does not expose a CivetWeb keepalive knob.
+Pi-hole v6 running on a Raspberry Pi 3B/3B+ can intermittently wedge its embedded webserver (CivetWeb, bundled into `pihole-FTL`) at the TLS handshake stage. An A/B on identical MyPi / Pi-hole v6 setups (RPi3 vs RPi5, same LAN, same FTL build) caught the RPi3 dropping into 5-minute sustained TLS-handshake timeouts while the RPi5 stayed clean. Fingerprint from the MyPi side: bursts of `ConnectError` / `ConnectTimeout: _ssl.c:993: The handshake operation timed out` on the polls, and `nc -z <pi>:443` from another LAN host *passes* during the same window (the kernel still completes the three-way handshake into the listen backlog; FTL just never picks up the socket).
 
-MyPi mitigates this on **three** layers:
+MyPi absorbs short bursts — the collector evicts the persistent httpx client on `ssl.SSLError` / `httpx.ConnectError` / `httpx.RemoteProtocolError`, the sync path retries the teleporter POST once on the same error classes, and a 3-strike per-instance circuit breaker (`CIRCUIT_FAIL_THRESHOLD` / `CIRCUIT_COOLDOWN_SECONDS`) keeps a single blip from tripping Pushover. Multi-minute wedges are outside what any client-side hardening can fix; only `sudo systemctl restart pihole-FTL` on the affected Pi clears them. If this is persistent on a specific Pi, migrating it to a Pi 4 or Pi 5 is the durable fix.
 
-1. **Self-heal on the stats/queries polls** — the collector evicts the persistent client on `ssl.SSLError` / `httpx.ConnectError` / `httpx.RemoteProtocolError` and the next poll opens a fresh connection.
-2. **Self-heal on the sync path** (added in 1.9.0) — `_sync_replica` evicts and retries the teleporter POST once on the same error classes. Before 1.9.0, a single half-open socket during sync would fail the replica outright and fire a Pushover.
-3. **Per-instance circuit breaker** — 3 consecutive failures → 5 min cooldown on that instance (tunable via `CIRCUIT_FAIL_THRESHOLD` / `CIRCUIT_COOLDOWN_SECONDS`).
-
-> **Note on `max_keepalive_connections=2`.** The HTTP client is deliberately configured with keepalive enabled (`max_keepalive_connections=2` in `app/services/pihole_client.py::open`) rather than forced-close. The 1.7.6 release briefly ran `max_keepalive_connections=0`, which traded slightly fewer half-opens for **two TLS handshakes per minute per instance**. On slow hardware (specifically a Raspberry Pi 3 running civetweb/mbedTLS) this periodically wedged FTL's TLS session table, producing recurring `SSLV3_ALERT_HANDSHAKE_FAILURE` episodes. Re-enabling keepalive in dev.10 fixed it. The self-heal layers above exist to absorb the residual idle-close symptom without paying that handshake tax — do not disable keepalive without re-reading the `hardening-review` CHANGELOG first.
-
-If flaps still reach you after that, two levers:
-
-- **Mark the replica as `hot_spare: true` in `pihole_instances.yml`** — sync-failure Pushover is suppressed for hot spares if *all* failing replicas in the sync are hot spares; a mixed primary/spare failure still pages. The stats-poll offline alert is NOT suppressed — a hot spare going genuinely unreachable still fires the normal offline notification (adjustable via the offline-alert retry count).
-- **Raise the offline-alert retry count** in **Settings → Notifications** so a single cooldown window (≈5 missed polls) can't on its own trigger Pushover. A value of 8–10 turns the breaker into a silent absorber for transient idle-socket flaps while still paging on a real outage.
-- **Lengthen `STATS_POLL_INTERVAL` / `QUERIES_POLL_INTERVAL`** for the whole fleet if idle-socket flaps are widespread — less useful when only a subset of instances are low-traffic, since it slows recovery detection for everyone.
+> **Note on `max_keepalive_connections=2`.** The HTTP client is deliberately configured with keepalive enabled (`max_keepalive_connections=2` in `app/services/pihole_client.py::open`) rather than forced-close. The 1.7.6 release briefly ran `max_keepalive_connections=0`, which traded slightly fewer half-opens for **two TLS handshakes per minute per instance** — a known amplifier of the RPi3 wedge above. Re-enabling keepalive in dev.10 reduced but did not eliminate it. Do not disable keepalive without re-reading the `hardening-review` CHANGELOG first.
 
 ---
 
