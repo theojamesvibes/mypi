@@ -90,18 +90,23 @@ def upgrade() -> None:
     )
 
     # 5. Create the Default site (Main).
+    # asyncpg is strict about parameter types: a Python str bound to a UUID
+    # column raises DatatypeMismatchError unless the cast is explicit in SQL.
+    # ::uuid makes this work uniformly under asyncpg, psycopg2, and psycopg3.
     default_site_id = uuid.uuid4()
     op.execute(
         sa.text(
             "INSERT INTO sites (id, name, slug, is_main, is_active, sort_order) "
-            "VALUES (:id, 'Default', 'default', TRUE, TRUE, 0)"
+            "VALUES (CAST(:id AS uuid), 'Default', 'default', TRUE, TRUE, 0)"
         ).bindparams(id=str(default_site_id))
     )
 
     # 6. Backfill: point every existing instance at Default.
     op.execute(
-        sa.text("UPDATE pihole_instances SET site_id = :sid WHERE site_id IS NULL")
-        .bindparams(sid=str(default_site_id))
+        sa.text(
+            "UPDATE pihole_instances SET site_id = CAST(:sid AS uuid) "
+            "WHERE site_id IS NULL"
+        ).bindparams(sid=str(default_site_id))
     )
 
     # 7. Enforce NOT NULL now that every row has a site_id.
