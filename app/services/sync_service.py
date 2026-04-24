@@ -23,8 +23,7 @@ from app.services.client_manager import close_client, get_client, save_sid
 
 # Transient socket failures that the collector already self-heals by evicting
 # the persistent client.  Sync's _sync_replica uses the same class list to
-# retry post_teleporter once on idle-keepalive half-opens — the dominant
-# symptom on low-traffic replicas (VIP hot spares, dormant boxes).
+# retry post_teleporter once on idle-keepalive half-opens.
 _TRANSIENT_SYNC_ERRORS = (ssl.SSLError, httpx.ConnectError, httpx.RemoteProtocolError)
 
 logger = logging.getLogger(__name__)
@@ -35,7 +34,6 @@ class InstanceSyncResult:
     name: str
     status: Literal["success", "error"]
     error: str | None = None
-    is_hot_spare: bool = False
 
 
 @dataclass
@@ -144,7 +142,6 @@ async def _persist_sync_state(state: SyncState) -> None:
                     "name": r.name,
                     "status": r.status,
                     "error": r.error,
-                    "is_hot_spare": r.is_hot_spare,
                 }
                 for r in state.results
             ],
@@ -202,7 +199,6 @@ async def load_schedule() -> None:
                         name=r["name"],
                         status=r["status"],
                         error=r.get("error"),
-                        is_hot_spare=r.get("is_hot_spare", False),
                     )
                     for r in data.get("results", [])
                 ],
@@ -387,9 +383,9 @@ async def run_sync(
                     except _TRANSIENT_SYNC_ERRORS as exc:
                         # Idle keepalive half-open: the persistent TCP socket
                         # was closed server-side between uses and the first
-                        # request on it failed.  Classic on VIP hot spares and
-                        # low-traffic replicas.  Evict and retry once with a
-                        # fresh client — same self-heal the collector does.
+                        # request on it failed.  Classic on low-traffic
+                        # replicas.  Evict and retry once with a fresh
+                        # client — same self-heal the collector does.
                         logger.warning(
                             "Transient connection error syncing to %s (%s: %s) — "
                             "evicting client and retrying once",
@@ -424,16 +420,13 @@ async def run_sync(
                             logger.warning("Gravity on replica %s failed (non-fatal): %s", replica.name, g_exc)
 
                     logger.info("Sync to %s succeeded", replica.name)
-                    return InstanceSyncResult(
-                        name=replica.name, status="success", is_hot_spare=replica.is_hot_spare,
-                    )
+                    return InstanceSyncResult(name=replica.name, status="success")
                 except Exception as exc:
                     logger.warning("Sync to %s failed: %s", replica.name, exc)
                     return InstanceSyncResult(
                         name=replica.name,
                         status="error",
                         error=str(exc),
-                        is_hot_spare=replica.is_hot_spare,
                     )
 
             results = list(await asyncio.gather(*[_sync_replica(r) for r in replicas]))
@@ -461,28 +454,15 @@ async def run_sync(
 
         _spawn(_persist_sync_state(_state))
         if _state.status == "error":
-            failed = [r for r in _state.results if r.status == "error"]
             if _state.error:
-                # Master-level failure (no teleporter exported, no master
-                # configured, etc.) — hot-spare filter does not apply.
                 _spawn(pushover_service.notify_sync_failure(_state.error))
-            elif any(not r.is_hot_spare for r in failed):
-                # At least one non-hot-spare replica failed — page with the
-                # full list (including any hot spares that also failed) so
-                # the operator sees the whole picture.
-                body = "; ".join(
-                    f"{r.name}: {r.error or 'unknown error'}" for r in failed
-                )
-                _spawn(pushover_service.notify_sync_failure(body))
-            elif failed:
-                # Only hot-spare replicas failed.  Record in sync_last_result
-                # (UI still shows it) but suppress Pushover — a dormant VIP
-                # standby failing post-retry isn't worth paging about.  Stats
-                # poll will still page if the spare is actually offline.
-                logger.info(
-                    "Sync failures on hot-spare replica(s) only — Pushover suppressed: %s",
-                    ", ".join(r.name for r in failed),
-                )
+            else:
+                failed = [r for r in _state.results if r.status == "error"]
+                if failed:
+                    body = "; ".join(
+                        f"{r.name}: {r.error or 'unknown error'}" for r in failed
+                    )
+                    _spawn(pushover_service.notify_sync_failure(body))
         # Refresh Pi-hole version info after sync — FTL may have restarted on
         # replicas after the teleporter import, so give it a moment to come back.
         _spawn(_refresh_versions_post_sync())
