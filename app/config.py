@@ -179,10 +179,14 @@ def _parse_site(item: dict, fallback_index: int) -> SiteConfig:
         )
     instances = [_parse_instance(x) for x in raw_instances[:settings.max_pihole_instances]]
 
+    # `default_site: true` is the friendly alias; `main: true` stays as
+    # back-compat. Either (or both) flips the Main flag.
+    is_main = bool(item.get("default_site", False)) or bool(item.get("main", False))
+
     return SiteConfig(
         name=name,
         slug=slug,
-        main=bool(item.get("main", False)),
+        main=is_main,
         instances=instances,
     )
 
