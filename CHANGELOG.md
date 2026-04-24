@@ -4,6 +4,25 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.10.0] — 2026-04-23
+
+Removed the `hot_spare` YAML flag and its Pushover-suppression plumbing shipped in 1.9.0. That feature was built for a symptom — a "VIP standby" replica flapping through sync — that a side-by-side A/B later attributed to `pihole-FTL` on a Raspberry Pi 3 wedging at the TLS handshake rather than anything hot-spare-specific. The RPi5 replacement under identical MyPi / FTL config never exhibited the flap. Suppressing notifications for a whole class of replicas was papering over an RPi3-specific FTL bug, so the flag is gone. The general-purpose sync-path retry on transient socket errors (`ssl.SSLError` / `httpx.ConnectError` / `httpx.RemoteProtocolError`) stays — it was never hot-spare-specific.
+
+### Removed
+- **`hot_spare: true` field in `pihole_instances.yml`** and its Pushover-suppression branch in `sync_service.py`. A sync failure on any replica now always pages (subject to the existing per-instance circuit breaker and offline-alert retry count).
+- **`is_hot_spare` column** on `pihole_instances` (dropped via migration `0012`). Also removed from `GET /api/instances`, `GET /api/instances/stale`, and `GET /api/sync/status.results[]`.
+- **`app/services/sync_service.py::InstanceSyncResult.is_hot_spare`**, all the load / persist / pushover-filter code that referenced it, and the master-vs-hot-spare branching in `app/config.py::load_instance_configs`.
+
+### Documentation
+- **README "Low-traffic or hot-standby Pi-holes" section** rewritten as **"Flapping on a Raspberry Pi 3"**. Documents the 2026-04-23 A/B that isolated the wedge to `pihole-FTL` on RPi3 hardware (kernel accepts SYN, FTL never picks up the socket), the diagnostic fingerprint (`nc -z` passes while `curl` / `httpx` time out at TLS handshake), and the recovery (`systemctl restart pihole-FTL`; migrate to Pi 4/5 for a durable fix).
+- `pihole_instances.yml.example` — removed the dormant-standby block and the `hot_spare:` field documentation.
+
+### Migration notes
+- `alembic upgrade head` runs `0012_drop_hot_spare`, which drops the `is_hot_spare` column. No data loss beyond the flag itself — the column only recorded configuration state, not observations.
+- If you had `hot_spare: true` in `pihole_instances.yml`, remove it before restarting the container (leaving it won't break anything; MyPi ignores unknown YAML keys, but it's dead config).
+
+---
+
 ## [1.9.4] — 2026-04-23
 
 Diagnostic: the collector's poll-failure WARN logged the exception's `str()` but not its type. `httpx.ConnectError()` and similar bare exceptions produce an empty string, so operators saw `Failed to poll stats for pihole4:` with no way to distinguish `ConnectError` from `ReadError` from `SSLError` from `RemoteProtocolError`. This was blocking diagnosis of intermittent wedges on an old Raspberry Pi 3 test target whose hardware telemetry was otherwise clean (no under-voltage, no SD I/O errors, no NIC counter errors, no memory pressure).

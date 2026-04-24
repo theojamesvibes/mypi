@@ -35,7 +35,6 @@ class InstanceResult(BaseModel):
     name: str
     status: str
     error: str | None = None
-    is_hot_spare: bool = False
 
 
 class SyncStatusResponse(BaseModel):
@@ -54,7 +53,7 @@ def _state_to_response(state: sync_service.SyncState) -> SyncStatusResponse:
         completed_at=state.completed_at.isoformat() if state.completed_at else None,
         master=state.master,
         results=[
-            InstanceResult(name=r.name, status=r.status, error=r.error, is_hot_spare=r.is_hot_spare)
+            InstanceResult(name=r.name, status=r.status, error=r.error)
             for r in state.results
         ],
         error=state.error,
