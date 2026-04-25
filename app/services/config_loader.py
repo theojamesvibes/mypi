@@ -229,6 +229,21 @@ async def sync_sites_and_instances(db: AsyncSession) -> None:
                 "Failed to close client for deactivated instance %s: %s", key, exc,
             )
 
+    # Per-site VIP cluster summary — logged at startup so the operator can
+    # confirm at a glance that vip_master / vip_replica YAML flags were
+    # picked up. Only sites with at least one VIP-flagged instance get a
+    # line; non-VIP deployments stay quiet.
+    for sc in site_configs:
+        master = next((i.name for i in sc.instances if i.vip_role == "master"), None)
+        replicas = [i.name for i in sc.instances if i.vip_role == "replica"]
+        if master or replicas:
+            logger.info(
+                "VIP cluster in site '%s': vip_master=%s, vip_replicas=%s",
+                sc.name,
+                master or "(none)",
+                replicas or "(none)",
+            )
+
     active_site_count = len(site_configs) - len(orphan_sites)
     total_instances = sum(len(sc.instances) for sc in site_configs)
     logger.info(
