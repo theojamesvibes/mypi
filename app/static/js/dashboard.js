@@ -416,13 +416,7 @@ async function loadCombined() {
     const clientsFooter = document.getElementById('stat-footer-clients');
     if (clientsFooter) clientsFooter.textContent = fmtNum(summary.totals.unique_clients) + ' unique clients';
 
-    // Blocklist footer → any master URL (prefer the Main site's master).
-    const master = instances.find(i => i.is_master) || null;
-    if (master && master.url) {
-      _masterUrl = master.url;
-      const blFooter = document.getElementById('stat-footer-blocklist');
-      if (blFooter) blFooter.href = master.url.replace(/\/+$/, '') + '/admin/groups-lists';
-    }
+    // No Manage Lists footer on Combined — see combined.html for rationale.
 
     // Blocklist agreement across all online instances (any site).
     const onlineInsts = instances.filter(i => i.status === 'online' && i.domains_on_blocklist != null);

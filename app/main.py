@@ -17,6 +17,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from cryptography.fernet import Fernet
 
 from app.api import auth as auth_router
+from app.api import display as display_router
 from app.api import domains as domains_router
 from app.api import health as health_router
 from app.api import instances as instances_router
@@ -313,6 +314,7 @@ app.include_router(domains_router.router)
 app.include_router(sync_router.router)
 app.include_router(sync_router.site_router)
 app.include_router(notifications_router.router)
+app.include_router(display_router.router)
 app.include_router(poll_settings_router.router)
 app.include_router(version_router.router)
 
