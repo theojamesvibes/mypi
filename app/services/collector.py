@@ -39,6 +39,7 @@ from app.models.site import Site
 from app.models.user import RevokedToken
 from app.services import pihole_version_check
 from app.services import pushover as pushover_service
+from app.services import query_stream
 from app.services import sync_service
 from app.services.client_manager import close_client, close_all_clients, get_client, save_sid
 
@@ -712,6 +713,9 @@ async def _poll_queries_for(instance: PiholeInstance) -> None:
                 db.add_all(new_logs)
                 await db.commit()
                 logger.info("Stored %d new queries for %s", len(new_logs), instance.name)
+                # Wake any /api/queries/stream subscribers so the Live view
+                # refetches only when there's actually something new.
+                query_stream.publish(instance.id, instance.site_id, len(new_logs))
 
         # Advance the watermark to the most recent timestamp we've seen.
         max_ts = max(q.timestamp.timestamp() for q in queries)
@@ -821,6 +825,10 @@ async def _store_queries(instance: PiholeInstance, queries: list) -> int:
         if new_logs:
             db.add_all(new_logs)
             await db.commit()
+            # Same wake-the-Live-view publish as the live poll path.
+            # Backfill commits historical rows the user's table is unlikely
+            # to be paginated to anyway, so the extra refetch is cheap.
+            query_stream.publish(instance.id, instance.site_id, len(new_logs))
         return len(new_logs)
 
 
