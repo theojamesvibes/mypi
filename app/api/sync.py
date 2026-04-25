@@ -37,6 +37,7 @@ class InstanceResult(BaseModel):
     name: str
     status: str
     error: str | None = None
+    vip_role: str | None = None
 
 
 class SyncStatusResponse(BaseModel):
@@ -44,6 +45,7 @@ class SyncStatusResponse(BaseModel):
     started_at: str | None = None
     completed_at: str | None = None
     master: str | None = None
+    master_vip_role: str | None = None
     results: list[InstanceResult] = []
     error: str | None = None
 
@@ -54,8 +56,9 @@ def _state_to_response(state: sync_service.SyncState) -> SyncStatusResponse:
         started_at=state.started_at.isoformat() if state.started_at else None,
         completed_at=state.completed_at.isoformat() if state.completed_at else None,
         master=state.master,
+        master_vip_role=state.master_vip_role,
         results=[
-            InstanceResult(name=r.name, status=r.status, error=r.error)
+            InstanceResult(name=r.name, status=r.status, error=r.error, vip_role=r.vip_role)
             for r in state.results
         ],
         error=state.error,

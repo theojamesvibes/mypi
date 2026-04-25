@@ -83,6 +83,20 @@ function instanceDot(status) {
   return `<span class="instance-dot ${cls}"></span>`;
 }
 
+// VIP cluster membership pill. Visually distinct from the existing primary
+// "master" badge so an instance that's both sync-master AND vip_master
+// renders both pills next to each other without confusion. Returns ''
+// when role is null/undefined so callers can interpolate unconditionally.
+function vipPill(role) {
+  if (role === 'master') {
+    return '<span class="badge bg-info ms-1" style="font-size:0.65rem;" title="VIP cluster: configured-active node">vip-master</span>';
+  }
+  if (role === 'replica') {
+    return '<span class="badge bg-secondary ms-1" style="font-size:0.65rem;" title="VIP cluster: standby">vip-replica</span>';
+  }
+  return '';
+}
+
 async function apiFetch(url) {
   const res = await fetch(url, { credentials: 'include', cache: 'no-store' });
   if (res.status === 401) { window.location.href = '/login'; return null; }
@@ -333,6 +347,7 @@ function renderInstancesTable(instances) {
         <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${escHtml(inst.color)};margin-right:6px;"></span>
         <strong>${escHtml(inst.name)}</strong>
         ${inst.is_master ? '<span class="badge bg-primary ms-1" style="font-size:0.65rem;">master</span>' : ''}
+        ${vipPill(inst.vip_role)}
       </td>
       <td>${instanceDot(inst.status)}${escHtml(inst.status)}</td>
       <td class="text-end">${fmtNum(inst.dns_queries_today)}</td>
@@ -471,6 +486,7 @@ function renderCombinedInstancesTable(instances) {
         <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${escHtml(inst.color)};margin-right:6px;"></span>
         <strong>${escHtml(inst.name)}</strong>
         ${inst.is_master ? '<span class="badge bg-primary ms-1" style="font-size:0.65rem;">master</span>' : ''}
+        ${vipPill(inst.vip_role)}
       </td>
       <td>${instanceDot(inst.status)}${escHtml(inst.status)}</td>
       <td class="text-end">${fmtNum(inst.dns_queries_today)}</td>
@@ -980,6 +996,7 @@ async function loadSettingsInstances() {
         <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${i.color};margin-right:6px;"></span>
         ${escHtml(i.name)}
         ${i.is_master ? '<span class="badge bg-primary ms-1" style="font-size:0.65rem;">master</span>' : ''}
+        ${vipPill(i.vip_role)}
       </td>
       <td class="small"><a href="${escHtml(i.url.replace(/\/+$/, '') + '/admin')}" target="_blank" class="text-muted">${escHtml(i.url)}</a></td>
       <td>${instanceDot(i.status)}${i.status}</td>
@@ -1475,7 +1492,7 @@ function renderSyncStatus(data) {
   }
 
   const masterRow = data.master
-    ? `<div><i class="bi bi-check-circle text-success me-1"></i><strong>${escHtml(data.master)}</strong><span class="badge bg-primary ms-1" style="font-size:0.65rem;">master</span></div>`
+    ? `<div><i class="bi bi-check-circle text-success me-1"></i><strong>${escHtml(data.master)}</strong><span class="badge bg-primary ms-1" style="font-size:0.65rem;">master</span>${vipPill(data.master_vip_role)}</div>`
     : '';
 
   const rows = (data.results || []).map(r => {
@@ -1483,7 +1500,7 @@ function renderSyncStatus(data) {
       ? '<i class="bi bi-check-circle text-success me-1"></i>'
       : '<i class="bi bi-x-circle text-danger me-1"></i>';
     const err = r.error ? ` — <span class="text-danger">${escHtml(r.error)}</span>` : '';
-    return `<div>${icon}<strong>${escHtml(r.name)}</strong>${err}</div>`;
+    return `<div>${icon}<strong>${escHtml(r.name)}</strong>${vipPill(r.vip_role)}${err}</div>`;
   }).join('');
 
   result.innerHTML = `${masterRow}${rows}<div class="text-muted mt-1">Completed: ${finished}</div>`;
