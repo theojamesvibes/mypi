@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import AsyncIterator
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +18,62 @@ from app.models.pihole import PiholeInstance, QueryLog
 from app.models.site import Site
 from app.models.user import User
 from app.schemas.queries import ClientSummary, QueryLogEntry, QueryLogPage
+from app.services import query_stream
+
+# Heartbeat cadence for SSE streams. Idle proxies / load balancers commonly
+# kill connections at 30–60s; sending a comment every 25s keeps the channel
+# warm without adding meaningful traffic. Lower bound is the publish path —
+# a real tick within the heartbeat window will preempt the timeout via the
+# queue.get() resolution.
+_SSE_HEARTBEAT_SECONDS = 25.0
+
+
+async def _query_stream_sse(
+    request: Request, site_id: uuid.UUID | None,
+) -> AsyncIterator[bytes]:
+    """SSE generator for /api/queries/stream and the per-site variant.
+
+    Yields:
+      - one `event: open` on connection so the client knows the channel
+        is established (useful for the "use SSE if it works, otherwise
+        poll" fallback in dashboard.js — connection failure shows up as
+        an `error` event before this fires).
+      - `event: tick` whenever query_stream.publish is called for a
+        matching site_id. Multiple ticks queued during a slow read are
+        coalesced into one — the client only cares "did anything happen,"
+        not "how many things."
+      - `: keepalive` comment every `_SSE_HEARTBEAT_SECONDS` while idle.
+
+    The `async with subscribe(...)` context manager guarantees the
+    subscription is unregistered when the generator exits — including on
+    client disconnect, which Starlette signals via CancelledError.
+    """
+    async with query_stream.subscribe(site_id) as queue:
+        yield b"event: open\ndata: \n\n"
+        while True:
+            try:
+                await asyncio.wait_for(queue.get(), timeout=_SSE_HEARTBEAT_SECONDS)
+                # Drain any backlog so a flurry of inserts collapses into
+                # a single client refetch.
+                while not queue.empty():
+                    try:
+                        queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                yield b"event: tick\ndata: \n\n"
+            except asyncio.TimeoutError:
+                yield b": keepalive\n\n"
+
+
+_SSE_HEADERS = {
+    # SSE responses must not be cached. `no-transform` blocks gzip, which
+    # would buffer bytes and defeat the point of streaming.
+    "Cache-Control": "no-cache, no-transform",
+    # nginx-specific hint to disable proxy buffering. Traefik (the user's
+    # setup) doesn't buffer SSE by default, so this is for portability if
+    # someone fronts MyPi with nginx.
+    "X-Accel-Buffering": "no",
+}
 
 router = APIRouter(prefix="/api/queries", tags=["queries"])
 
@@ -154,6 +213,21 @@ async def get_client_summary(
     ]
 
 
+@router.get("/stream", include_in_schema=False)
+async def stream_queries(
+    request: Request,
+    _: User = Depends(get_current_user),
+) -> StreamingResponse:
+    """Cross-site SSE feed of query-row insertion ticks. Used by the
+    Combined view's live ticker and any consumer that doesn't pin to a
+    specific site."""
+    return StreamingResponse(
+        _query_stream_sse(request, site_id=None),
+        media_type="text/event-stream",
+        headers=_SSE_HEADERS,
+    )
+
+
 # ── Per-site variants ────────────────────────────────────────────────────────
 
 site_router = APIRouter(prefix="/api/sites/{slug}/queries", tags=["queries (per-site)"])
@@ -283,3 +357,19 @@ async def get_client_summary_for_site(
         )
         for row in result.fetchall()
     ]
+
+
+@site_router.get("/stream", include_in_schema=False)
+async def stream_queries_for_site(
+    request: Request,
+    site: Site = Depends(resolve_site),
+    _: User = Depends(get_current_user),
+) -> StreamingResponse:
+    """Per-site SSE feed of query-row insertion ticks. Subscribed by the
+    /queries page's Live toggle so it only refetches when the site has
+    actually seen new traffic, instead of polling every 2 s."""
+    return StreamingResponse(
+        _query_stream_sse(request, site_id=site.id),
+        media_type="text/event-stream",
+        headers=_SSE_HEADERS,
+    )

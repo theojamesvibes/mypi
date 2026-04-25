@@ -4,6 +4,29 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.11.0-dev.19] — 2026-04-25
+
+Last queue item before the 1.11.0 soak-and-merge.
+
+### Added
+- **SSE transport for the /queries Live view.** The Live toggle on `/queries` (and `/queries/<slug>`) now subscribes to a server-sent events stream and only refetches when the collector actually commits new rows, instead of polling `/api/queries` every 2 s regardless of whether anything changed. Net effect: idle dashboards stop hammering the API; the perceived latency on a busy network is the same or better because ticks fire as soon as the collector commits, not on the next 2 s tick boundary.
+- **`/api/queries/stream` and `/api/sites/{slug}/queries/stream`** — SSE endpoints that emit `event: tick` for each batch of new rows committed for a matching site (or any site, on the global path). 25 s heartbeat keeps the channel warm through idle proxies. Cookie-auth same as the rest of the API; no new auth path.
+- **`app/services/query_stream.py`** — in-process pub/sub with bounded per-subscriber queues (maxsize=4). Slow consumers drop ticks rather than backpressuring the collector, since "did anything happen" is all the consumer needs and the next tick that fits still triggers a refetch.
+
+### Changed
+- `app/services/collector.py` — both insert paths (`_poll_queries_for` and `_store_queries`, used by the live poll and the backfill path respectively) now call `query_stream.publish(instance_id, site_id, count)` after the commit. publish is sync and exception-swallowing — a publish failure can never break the collector's commit path.
+- `app/static/js/dashboard.js::toggleLiveView` — now opens an EventSource against the per-site `/queries/stream` endpoint when toggled on; the existing 2 s poll is retained as a fallback that turns on automatically if SSE errors out (e.g. behind a proxy that buffers SSE) and turns off again when SSE reconnects. Closing the toggle tears down both. New helpers `_startLivePollFallback` and `_stopLiveSubscriptions` keep the on/off paths symmetric.
+
+### Why SSE not WebSockets
+This deferred discussion goes back to 2026-04-19. SSE fits the channel better than WebSockets because the traffic is unidirectional (server → client tick), it works over plain HTTP/1.1 with no upgrade handshake, and EventSource sends same-origin cookies automatically — so authentication works through the existing JWT/session cookie path with zero additional plumbing. WebSockets would have required a separate auth flow and an upgrade-aware reverse-proxy config.
+
+### Migration notes
+- No DB schema changes.
+- No new settings / no opt-in. The Live toggle Just Works™ — uses SSE if the browser supports it, falls back to the existing 2 s poll otherwise. Older browsers (basically just IE) automatically get the original behaviour.
+- This is the last 1.11.0-dev item before the soak. Plan: leave dev.19 running for a long soak, then merge `multisite` → `main` and cut 1.11.0.
+
+---
+
 ## [1.11.0-dev.18] — 2026-04-25
 
 Bug fix on top of dev.17.

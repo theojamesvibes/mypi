@@ -719,6 +719,27 @@ function setSort(col) {
   loadQueries(1);
 }
 
+// SSE handle for the Live view. Replaces the 2 s setInterval poll with
+// an EventSource that ticks only when the collector commits new rows.
+// Falls back to the original poll on any connection / browser failure.
+let _liveEventSource = null;
+
+function _startLivePollFallback() {
+  if (_liveInterval) return;
+  _liveInterval = setInterval(() => loadQueries(1), 2000);
+}
+
+function _stopLiveSubscriptions() {
+  if (_liveEventSource) {
+    try { _liveEventSource.close(); } catch (e) { /* ignore */ }
+    _liveEventSource = null;
+  }
+  if (_liveInterval) {
+    clearInterval(_liveInterval);
+    _liveInterval = null;
+  }
+}
+
 function toggleLiveView(on) {
   const icon = document.getElementById('live-icon');
   const refreshBtn = document.getElementById('refresh-btn');
@@ -731,10 +752,40 @@ function toggleLiveView(on) {
     const ts = document.getElementById('sort-timestamp');
     if (ts) ts.textContent = '↓';
     loadQueries(1);
-    _liveInterval = setInterval(() => loadQueries(1), 2000);
+
+    // Prefer SSE — wakes us only when the collector actually commits new
+    // rows, vs the old "refetch every 2 s regardless." Fall back to the
+    // poll if EventSource is unavailable or the stream errors out (proxy
+    // that buffers SSE, server unreachable, etc.).
+    if (typeof EventSource === 'undefined') {
+      _startLivePollFallback();
+      return;
+    }
+    try {
+      const url = window.siteApiUrl('/queries/stream');
+      _liveEventSource = new EventSource(url, { withCredentials: true });
+      _liveEventSource.addEventListener('tick', () => loadQueries(1));
+      _liveEventSource.addEventListener('open', () => {
+        // SSE is healthy; if the fallback poll was running, retire it.
+        if (_liveInterval) {
+          clearInterval(_liveInterval);
+          _liveInterval = null;
+        }
+      });
+      _liveEventSource.onerror = () => {
+        // Connection-level error. EventSource auto-retries internally,
+        // but we don't want to leave the user staring at a stale table
+        // while it does, so kick the poll into life as a safety net.
+        // The 'open' handler above turns the poll off again if SSE
+        // reconnects successfully.
+        _startLivePollFallback();
+      };
+    } catch (e) {
+      _liveEventSource = null;
+      _startLivePollFallback();
+    }
   } else {
-    clearInterval(_liveInterval);
-    _liveInterval = null;
+    _stopLiveSubscriptions();
     if (icon) icon.style.display = 'none';
     if (refreshBtn) refreshBtn.disabled = false;
   }
