@@ -4,6 +4,21 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.11.0-dev.18] — 2026-04-25
+
+Bug fix on top of dev.17.
+
+### Fixed
+- **Top Clients showed no local clients** after dev.17. Two compounding mistakes in the new self-traffic filter:
+  1. **NULL-handling bug.** The WHERE clause `NOT (client_ip IN (...) OR client_name IN (...))` silently dropped every row whose `client_name` is NULL because of SQL three-valued logic: `NULL IN (...)` is NULL, `FALSE OR NULL = NULL`, and `NOT NULL = NULL` fails the WHERE. Most LAN devices don't have PTR records, so their query rows have NULL `client_name` — the filter was hiding all of them. Each branch is now NULL-guarded with `client_name IS NOT NULL` / `client_ip IS NOT NULL` so a NULL field never poisons the comparison.
+  2. **Over-broad exclusion list.** dev.17 also excluded the configured Pi-hole instances' LAN IPs (extracted from each instance's URL). That's redundant — Pi-hole already logs its own self-traffic with `client_name = "pi.hole"` or `client_ip = 127.0.0.1`, so the LAN-IP exclusion didn't add coverage but did risk hiding the Pi-hole host itself when it acted as a normal DNS client (e.g. unbound, recursors). Filter is now name-aliases (`pi.hole`, `localhost`) + loopback IPs (`127.0.0.1`, `::1`) only. No DB-driven instance lookup, no per-site scoping needed for the exclusion content.
+
+### Changed
+- `app/api/stats.py` — removed `_self_exclusions` helper (no longer needed since the exclusion list is constants). `_top_body` now takes a single `hide_self: bool` parameter instead of `excluded_clients: set[str] | None`. Both `get_top` and `get_top_for_site` simplified.
+- `_SELF_IP_ALIASES = frozenset({"127.0.0.1", "::1"})` added next to the existing `_SELF_NAME_ALIASES`.
+
+---
+
 ## [1.11.0-dev.17] — 2026-04-25
 
 Two queue items off the list.
