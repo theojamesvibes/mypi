@@ -62,6 +62,25 @@ _offline_retry_count: dict[str, int] = {}
 # Resets to 0 when the instance recovers.  Used to enforce offline_alert_max_count.
 _offline_alert_count: dict[str, int] = {}
 
+# Stalled-state tracking. Catches the "split-state" failure mode where a
+# Pi-hole's admin/web API keeps responding (so the offline check passes) but
+# the underlying FTL has stopped logging queries — DNS port 53 may be dead
+# or the query-log subsystem may have wedged, depending on which subsystem
+# of FTL got stuck. Symptom: dns_queries_today counter and the per-instance
+# query watermark both stop advancing while stats polls keep succeeding.
+# Seen in the wild after the v6.6.0 → 6.6.1 upgrade left pihole1 half-up
+# (incident on 2026-04-24, see project_pihole_upgrade_split_state.md).
+_prev_dns_queries_today: dict[str, int] = {}
+_stall_count: dict[str, int] = {}
+_stall_alerted: dict[str, bool] = {}
+
+# Number of consecutive online polls with neither dns_queries_today nor the
+# query watermark advancing before we flag an instance as stalled. With the
+# 60-second poll interval this is 5 minutes — long enough that low-traffic
+# instances with brief idle gaps don't trip it, short enough that a real
+# wedge gets caught well before a human notices.
+_STALL_THRESHOLD_POLLS = 5
+
 # Fire-and-forget Pushover notification tasks. asyncio keeps only weak refs
 # to bare `create_task(...)` — stash each task here and log any exception so
 # that a failed notify doesn't silently vanish.
@@ -184,6 +203,96 @@ async def _get_site_name(site_id: uuid.UUID) -> str:
     return name or str(site_id)
 
 
+def _check_stalled(
+    instance: PiholeInstance, snapshot: StatsSnapshot, site_name: str,
+) -> None:
+    """Detect the "admin alive, query logging dead" split-state.
+
+    Two independent signals must both be flat for `_STALL_THRESHOLD_POLLS`
+    polls before we alert: the cumulative `dns_queries_today` counter
+    (Pi-hole's own number) and `_last_seen_ts` (the watermark we maintain
+    from `/api/queries`). Requiring both reduces false positives on
+    legitimate idle moments — Pi-hole's counter ticks for cached and
+    forwarded queries alike, so on a working instance at least one of the
+    two will move within ~5 minutes even at low traffic.
+
+    Midnight rollover (counter reset to a smaller value) is treated as a
+    natural reset and clears stall state, never as evidence of stall.
+    """
+    key = str(instance.id)
+    new_count = snapshot.dns_queries_today or 0
+    prev_count = _prev_dns_queries_today.get(key)
+    new_watermark = _last_seen_ts.get(key)
+    prev_watermark = _prev_watermark_for_stall.get(key)
+
+    # Bootstrap on first poll — establish baseline; no decision yet.
+    if prev_count is None:
+        _prev_dns_queries_today[key] = new_count
+        _prev_watermark_for_stall[key] = new_watermark
+        return
+
+    # Counter went backwards → midnight rollover or FTL restart resetting
+    # the daily counter. Reset all stall state.
+    if new_count < prev_count:
+        _prev_dns_queries_today[key] = new_count
+        _prev_watermark_for_stall[key] = new_watermark
+        _stall_count.pop(key, None)
+        if _stall_alerted.pop(key, None):
+            # Don't fire a recovery alert for a counter reset — confusing.
+            logger.info(
+                "Stall state cleared for %s due to counter rollover.",
+                instance.name,
+            )
+        return
+
+    counter_advanced = new_count > prev_count
+    watermark_advanced = (
+        new_watermark is not None
+        and (prev_watermark is None or new_watermark > prev_watermark)
+    )
+
+    _prev_dns_queries_today[key] = new_count
+    _prev_watermark_for_stall[key] = new_watermark
+
+    if counter_advanced or watermark_advanced:
+        # Healthy poll. Clear any pending stall and fire a recovery alert
+        # if we'd previously paged for this instance.
+        _stall_count.pop(key, None)
+        if _stall_alerted.pop(key, None):
+            logger.info(
+                "Instance %s recovered from stalled state.", instance.name,
+            )
+            _spawn(pushover_service.notify_instance_recovered_from_stall(
+                instance.name, site_name=site_name, site_id=instance.site_id,
+            ))
+        return
+
+    # Both signals flat — increment stall counter.
+    stalls = _stall_count.get(key, 0) + 1
+    _stall_count[key] = stalls
+
+    if stalls == _STALL_THRESHOLD_POLLS and not _stall_alerted.get(key):
+        _stall_alerted[key] = True
+        logger.error(
+            "Instance %s appears stalled — admin API responsive but "
+            "dns_queries_today and query watermark have not advanced for "
+            "%d consecutive polls (~%d minutes). Likely FTL split-state; "
+            "consider `systemctl restart pihole-FTL` on the host.",
+            instance.name, stalls, stalls,
+        )
+        _spawn(pushover_service.notify_instance_stalled(
+            instance.name, site_name=site_name, site_id=instance.site_id,
+        ))
+
+
+# Tracks the watermark seen at the moment of the last stats poll, so the
+# stall check compares "watermark now" vs "watermark last poll" rather than
+# "watermark now" vs "earliest watermark ever". A poll that actually advances
+# the watermark therefore clears stall state on the very next poll, even if
+# the instance was previously busy and `_last_seen_ts` was already populated.
+_prev_watermark_for_stall: dict[str, float | None] = {}
+
+
 async def _poll_stats_for(instance: PiholeInstance, site_name: str = "") -> None:
     key = str(instance.id)
     try:
@@ -271,6 +380,17 @@ async def _poll_stats_for(instance: PiholeInstance, site_name: str = "") -> None
                 instance.name, site_name=site_name, site_id=instance.site_id,
             ))
     _prev_status[key] = snapshot.status
+
+    # Stalled-state detection — only meaningful when the stats poll succeeded.
+    # See `_prev_dns_queries_today` doc comment above for the failure mode this
+    # catches.
+    if snapshot.status == "online":
+        _check_stalled(instance, snapshot, site_name)
+    else:
+        # Outage: clear stall state so a recovery doesn't replay a stale alert.
+        _prev_dns_queries_today.pop(key, None)
+        _stall_count.pop(key, None)
+        _stall_alerted.pop(key, None)
 
     # Notify sync service if this is the master (enables auto-gravity detection).
     # Per-site as of Phase 4b — each site's master has its own blocklist-count
@@ -415,6 +535,8 @@ async def prune_inactive_state() -> None:
     for state_dict in (
         _last_seen_ts, _prev_status, _offline_retry_count, _offline_alert_count,
         _consec_failures, _cooldown_until, _last_failure_at,
+        _prev_dns_queries_today, _prev_watermark_for_stall,
+        _stall_count, _stall_alerted,
     ):
         for key in list(state_dict):
             if key not in active_keys:
@@ -652,3 +774,7 @@ async def shutdown() -> None:
     _consec_failures.clear()
     _cooldown_until.clear()
     _last_failure_at.clear()
+    _prev_dns_queries_today.clear()
+    _prev_watermark_for_stall.clear()
+    _stall_count.clear()
+    _stall_alerted.clear()

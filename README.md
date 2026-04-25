@@ -1,6 +1,6 @@
 # MyPi
 [![build](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/docker-publish.yml?style=flat-square)](https://github.com/theojamesvibes/mypi/actions)
-[![version](https://img.shields.io/badge/version-1.11.0--dev.12-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
+[![version](https://img.shields.io/badge/version-1.11.0--dev.13-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
 [![platform](https://img.shields.io/badge/platform-linux%2Famd64%20|%20linux%2Farm64-teal?style=flat-square)](https://github.com/theojamesvibes/mypi/pkgs/container/mypi)
 
 > **⚠️ Vibe Code Disclosure**
@@ -62,6 +62,7 @@ A self-hosted dashboard that consolidates up to 10 locally running [Pi-hole](htt
 ### Pushover Notifications
 - Push alerts to any device via [Pushover](https://pushover.net) (iOS, Android, desktop)
 - Configurable alerts: sync failure, instance offline/back online, high block rate
+- **Stalled-state alerts** — fires when a Pi-hole's admin API still answers but its query log has stopped advancing (the "split-state" failure that can follow a Pi-hole upgrade where FTL comes back half-up). Suggests `systemctl restart pihole-FTL` in the alert body.
 - **High block rate** alert requires ≥7 days of data to establish a baseline before firing
 - No-logs and block-rate thresholds are configurable in Settings
 - Credentials (App Token + User Key) stored encrypted in PostgreSQL, survive restarts
