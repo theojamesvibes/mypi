@@ -197,12 +197,16 @@ async function loadDashboard() {
     // Per-instance table — uses time-windowed counts from summary
     renderInstancesTable(instances);
 
-    // Top tables — blocked and clients are drillable
-    renderTopTable('top-permitted', top.top_permitted, r => r.domain, r => fmtNum(r.count));
+    // Top tables — all three are drillable. Permitted and Clients show every
+    // matching query; Blocked filters to blocked-only since that's the intent
+    // of the panel (the same domain may also have permitted queries that
+    // would dilute the drill).
+    renderTopTable('top-permitted', top.top_permitted, r => r.domain, r => fmtNum(r.count),
+      r => ({ label: `Permitted: ${r.domain}`, domain: r.domain }));
     renderTopTable('top-blocked', top.top_blocked, r => r.domain, r => fmtNum(r.count),
       r => ({ label: `Blocked: ${r.domain}`, domain: r.domain, blocked: true }));
     renderTopTable('top-clients', top.top_clients, r => r.client, r => fmtNum(r.count),
-      r => ({ label: `Client queries: ${r.client}`, client: r.client, blocked: true }));
+      r => ({ label: `Client queries: ${r.client}`, client: r.client }));
 
   } catch (err) {
     console.error('Dashboard load error:', err);

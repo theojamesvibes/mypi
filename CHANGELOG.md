@@ -4,6 +4,28 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.11.0-dev.13] — 2026-04-25
+
+Two fixes that came out of the same incident: the Pi-hole upgrade earlier this evening left pihole1's FTL in a "split-state" (admin API responsive, query logging frozen) for ~4.5 hours, and while diagnosing it we found that Top Clients drill-downs return zero rows for any client whose traffic is mostly permitted.
+
+### Fixed
+- **Top Clients drill-down on the per-site dashboard.** Clicking a client (e.g. `wtranon.myssdomain.net`, `pi.hole`, or any LAN host with no blocked traffic) used to open the drill modal with a stale `blocked=true` filter copied from the Top *Blocked* panel, so any client whose queries were all permitted appeared empty. Filter dropped — the drill now shows every matching query, blocked or not. Top *Blocked* still legitimately filters to blocked-only.
+
+### Added
+- **Top Permitted drill-down on the per-site dashboard.** Previously you could drill into Top Blocked and Top Clients but not Top Permitted; now all three top-N panels are drillable.
+- **Stalled-state detection in the collector.** After each successful stats poll, MyPi compares Pi-hole's `dns_queries_today` counter and our internal `/api/queries` watermark to their values from the previous poll. If both are flat for 5 consecutive polls (~5 minutes) and the admin API is still responsive, the instance is flagged as stalled and a Pushover notification fires (reuses the existing instance-offline alert toggle). On recovery — either signal advancing — a "recovered" notification fires. Midnight counter rollover is treated as a natural reset, never as evidence of stall. Catches the failure mode pihole1 hit tonight: after the FTL upgrade restart, port 53 / query logging stopped while the admin API kept answering, so the existing online check passed and no alert was raised. Detection is in-memory only; state clears on container restart and on instance deactivation.
+
+### Changed
+- `app/services/collector.py` — added `_check_stalled` plus the four supporting state dicts (`_prev_dns_queries_today`, `_prev_watermark_for_stall`, `_stall_count`, `_stall_alerted`), wired into `_poll_stats_for` and pruned alongside the existing per-instance state in `prune_inactive_state` and `shutdown`.
+- `app/services/pushover.py` — added `notify_instance_stalled` and `notify_instance_recovered_from_stall`, mirroring the offline/back-online pattern. Wording calls out the likely fix (`systemctl restart pihole-FTL`).
+
+### Migration notes
+- No DB changes.
+- Existing offline alert config governs stalled alerts too; nothing to opt into. If you have offline alerts disabled, you also won't see stalled alerts (this matches user expectation — both are "your Pi-hole isn't really working" alerts).
+- Threshold (5 polls) is hardcoded for now. If 5 minutes turns out to be too aggressive or too slow for any deployment, we'll surface it as a Settings field next release.
+
+---
+
 ## [1.11.0-dev.12] — 2026-04-24
 
 Cross-site dashboard plus two small quality-of-life changes for the multi-site UX.
