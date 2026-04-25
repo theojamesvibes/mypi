@@ -359,3 +359,49 @@ async def notify_instance_back_online(
         title="MyPi Alert",
         site_id=site_id,
     )
+
+
+async def notify_instance_stalled(
+    name: str,
+    site_name: str = "",
+    site_id: uuid.UUID | None = None,
+) -> None:
+    """Pi-hole's admin API still answers but the query log has stopped
+    advancing — typical aftermath of a Pi-hole upgrade leaving FTL half-up.
+    Reuses the offline alert toggle so users who've muted offline alerts
+    don't get woken up twice; a dedicated stalled-alert setting can come
+    later if the two need to diverge.
+    """
+    if site_id is not None:
+        cfg = await _resolve_site_config(site_id)
+        if cfg is None or not cfg["alert_instance_offline"]:
+            return
+    elif not _alert_instance_offline:
+        return
+    await send(
+        _with_site(
+            f"Instance stalled: {name} — admin API responsive but query "
+            f"logging frozen. Try `systemctl restart pihole-FTL` on the host.",
+            site_name,
+        ),
+        title="MyPi Alert",
+        site_id=site_id,
+    )
+
+
+async def notify_instance_recovered_from_stall(
+    name: str,
+    site_name: str = "",
+    site_id: uuid.UUID | None = None,
+) -> None:
+    if site_id is not None:
+        cfg = await _resolve_site_config(site_id)
+        if cfg is None or not cfg["alert_instance_offline"]:
+            return
+    elif not _alert_instance_offline:
+        return
+    await send(
+        _with_site(f"Instance recovered: {name} — query logging resumed.", site_name),
+        title="MyPi Alert",
+        site_id=site_id,
+    )
