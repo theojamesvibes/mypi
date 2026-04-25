@@ -465,6 +465,18 @@ async def settings_page_for_site(
     )
 
 
+@app.get("/combined", response_class=HTMLResponse, include_in_schema=False)
+async def combined_page(request: Request, current_user=Depends(get_current_user_optional)):
+    if current_user is None:
+        return RedirectResponse(url="/login", status_code=303)
+    if current_user.password_change_required:
+        return RedirectResponse(url="/change-password", status_code=303)
+    return templates.TemplateResponse(
+        "combined.html",
+        {"request": request, "user": current_user, "site_slug": ""},
+    )
+
+
 @app.get("/change-password", response_class=HTMLResponse, include_in_schema=False)
 async def change_password_page(request: Request, current_user=Depends(get_current_user_optional)):
     if current_user is None:

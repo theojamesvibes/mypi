@@ -357,6 +357,202 @@ function renderTopTable(tbodyId, rows, labelFn, countFn, drillFn) {
   `).join('');
 }
 
+// ─── Combined Information ────────────────────────────────────────────────────
+
+// Map of instance_id → { site_name, site_slug, color } for the ticker to
+// resolve site attribution on incoming /api/queries rows. Refilled by
+// loadCombined() on each cycle.
+const _combinedInstanceMap = {};
+
+async function loadCombined() {
+  const { since, hours, bucketMinutes, spanHours } = getTimeParams();
+  const tp = since ? `since=${encodeURIComponent(since)}` : `hours=${hours}`;
+
+  try {
+    // Combined view always hits the global (non-per-site) endpoints — they
+    // already aggregate across every active instance of every active site.
+    const [summary, history, top] = await Promise.all([
+      apiFetch('/api/stats/summary?' + tp),
+      apiFetch('/api/stats/history?' + tp + '&bucket_minutes=' + bucketMinutes),
+      apiFetch('/api/stats/top?' + tp + '&limit=10'),
+    ]);
+
+    if (!summary) return;
+    const instances = summary.instances || [];
+
+    // Refresh the id→site map used by the ticker.
+    for (const inst of instances) {
+      _combinedInstanceMap[inst.id] = {
+        site_name: inst.site_name || '',
+        site_slug: inst.site_slug || '',
+        color: inst.color || '#6c757d',
+      };
+    }
+
+    // Stat cards
+    document.getElementById('total-queries').textContent = fmtNum(summary.totals.dns_queries_today);
+    document.getElementById('queries-blocked').textContent = fmtNum(summary.totals.queries_blocked);
+    document.getElementById('percent-blocked').textContent = fmtPct(summary.totals.percent_blocked);
+    document.getElementById('blocklist-size').textContent = fmtNum(summary.totals.domains_on_blocklist);
+    const clientsFooter = document.getElementById('stat-footer-clients');
+    if (clientsFooter) clientsFooter.textContent = fmtNum(summary.totals.unique_clients) + ' unique clients';
+
+    // Blocklist footer → any master URL (prefer the Main site's master).
+    const master = instances.find(i => i.is_master) || null;
+    if (master && master.url) {
+      _masterUrl = master.url;
+      const blFooter = document.getElementById('stat-footer-blocklist');
+      if (blFooter) blFooter.href = master.url.replace(/\/+$/, '') + '/admin/groups-lists';
+    }
+
+    // Blocklist agreement across all online instances (any site).
+    const onlineInsts = instances.filter(i => i.status === 'online' && i.domains_on_blocklist != null);
+    const blocklistValues = onlineInsts.map(i => i.domains_on_blocklist);
+    const allAgree = blocklistValues.length === 0 || blocklistValues.every(v => v === blocklistValues[0]);
+    const cardBlocklist = document.getElementById('card-blocklist');
+    const blWarning = document.getElementById('blocklist-warning');
+    if (!allAgree) {
+      cardBlocklist.classList.remove('stat-card-green');
+      cardBlocklist.classList.add('stat-card-red');
+      if (blWarning) blWarning.classList.remove('d-none');
+    } else {
+      cardBlocklist.classList.remove('stat-card-red');
+      cardBlocklist.classList.add('stat-card-green');
+      if (blWarning) blWarning.classList.add('d-none');
+    }
+
+    _drillHours = hours || 24;
+    _drillSince = since || null;
+    updateStatusBadge(instances);
+    const lu = document.getElementById('last-updated');
+    if (lu) lu.textContent = 'Updated ' + new Date().toLocaleTimeString();
+
+    renderQueriesChart(history.buckets, bucketMinutes, spanHours);
+    renderTypeChart(summary.totals);
+    renderCombinedInstancesTable(instances);
+
+    renderTopTable('top-permitted', top.top_permitted, r => r.domain, r => fmtNum(r.count));
+    renderTopTable('top-blocked', top.top_blocked, r => r.domain, r => fmtNum(r.count),
+      r => ({ label: 'Blocked: ' + r.domain, domain: r.domain, blocked: true }));
+  } catch (err) {
+    console.error('Combined load error:', err);
+  }
+}
+
+function renderCombinedInstancesTable(instances) {
+  const tbody = document.getElementById('instances-tbody');
+  if (!tbody) return;
+  if (!instances.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-3">No instances configured.</td></tr>';
+    return;
+  }
+
+  // Sort: site name asc, then master first, then instance name.
+  const sorted = [...instances].sort((a, b) => {
+    const sa = a.site_name || '';
+    const sb = b.site_name || '';
+    if (sa !== sb) return sa.localeCompare(sb);
+    if (a.is_master !== b.is_master) return a.is_master ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  tbody.innerHTML = sorted.map(inst => `
+    <tr>
+      <td>
+        ${inst.site_name
+          ? `<a href="/dashboard/${encodeURIComponent(inst.site_slug || '')}" class="badge text-decoration-none" style="background:${escHtml(inst.color)};color:#fff;font-weight:500;">${escHtml(inst.site_name)}</a>`
+          : '<span class="text-muted small">—</span>'}
+      </td>
+      <td>
+        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${escHtml(inst.color)};margin-right:6px;"></span>
+        <strong>${escHtml(inst.name)}</strong>
+        ${inst.is_master ? '<span class="badge bg-primary ms-1" style="font-size:0.65rem;">master</span>' : ''}
+      </td>
+      <td>${instanceDot(inst.status)}${escHtml(inst.status)}</td>
+      <td class="text-end">${fmtNum(inst.dns_queries_today)}</td>
+      <td class="text-end">${fmtNum(inst.queries_blocked)}</td>
+      <td class="text-end">${fmtPct(inst.percent_blocked)}</td>
+      <td class="text-end">${fmtNum(inst.domains_on_blocklist)}</td>
+      <td class="text-end">${fmtNum(inst.unique_clients)}</td>
+      <td class="text-muted small">${inst.last_seen_at ? fmtTime(inst.last_seen_at) : '—'}</td>
+    </tr>
+  `).join('');
+}
+
+// Ticker — polls /api/queries every 3s, animates new rows in at the top,
+// resolves each row's site via _combinedInstanceMap.
+let _combinedTickerInterval = null;
+let _combinedTickerSeen = new Set();
+const COMBINED_TICKER_MAX = 15;
+
+function startCombinedTicker() {
+  if (_combinedTickerInterval) return;
+  tickCombinedTicker();
+  _combinedTickerInterval = setInterval(tickCombinedTicker, 3000);
+}
+
+async function tickCombinedTicker() {
+  const list = document.getElementById('combined-ticker');
+  const status = document.getElementById('combined-ticker-status');
+  if (!list) return;
+  try {
+    const data = await apiFetch('/api/queries?page=1&page_size=' + COMBINED_TICKER_MAX);
+    if (!data || !data.items) return;
+    const items = data.items;
+    if (!items.length) {
+      if (status) status.textContent = 'no queries yet';
+      return;
+    }
+
+    // First paint: seed list without animation.
+    const firstPaint = _combinedTickerSeen.size === 0;
+    const fresh = firstPaint
+      ? items
+      : items.filter(q => !_combinedTickerSeen.has(q.id));
+
+    if (firstPaint) {
+      list.innerHTML = '';
+    }
+
+    // Newest first. fresh is already newest-first from the API.
+    for (const q of fresh) {
+      _combinedTickerSeen.add(q.id);
+      const li = document.createElement('li');
+      li.className = 'combined-ticker-row' + (firstPaint ? '' : ' combined-ticker-row-new');
+      li.innerHTML = renderCombinedTickerRow(q);
+      list.insertBefore(li, list.firstChild);
+    }
+
+    // Trim excess.
+    while (list.children.length > COMBINED_TICKER_MAX) {
+      list.removeChild(list.lastChild);
+    }
+
+    if (status) {
+      status.textContent = items.length ? items.length + ' recent' : 'idle';
+    }
+  } catch (err) {
+    if (status) status.textContent = 'paused (network)';
+  }
+}
+
+function renderCombinedTickerRow(q) {
+  const info = _combinedInstanceMap[q.instance_id] || {};
+  const siteName = info.site_name || q.instance_name || '';
+  const color = info.color || '#6c757d';
+  const blocked = BLOCKED_STATUSES.has(q.status);
+  const icon = blocked
+    ? '<i class="bi bi-shield-fill-x text-danger me-1"></i>'
+    : '<i class="bi bi-shield-fill-check text-success me-1"></i>';
+  return (
+    '<span class="combined-ticker-time">' + fmtTimeShort(q.timestamp) + '</span>' +
+    '<span class="combined-ticker-site" style="background:' + escHtml(color) + ';">' + escHtml(siteName) + '</span>' +
+    '<span class="combined-ticker-instance text-muted small">' + escHtml(q.instance_name || '') + '</span>' +
+    '<span class="combined-ticker-domain">' + icon + escHtml(q.domain || '—') + '</span>' +
+    '<span class="combined-ticker-client text-muted small">' + escHtml(q.client_name || q.client_ip || '') + '</span>'
+  );
+}
+
 // ─── Query Log ───────────────────────────────────────────────────────────────
 
 let currentPage = 1;

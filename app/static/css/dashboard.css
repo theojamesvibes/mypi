@@ -56,6 +56,20 @@ body {
 .sidebar-logo i { font-size: 1.5rem; }
 .sidebar-subtitle { font-size: 0.7rem; color: #6d8a96; margin-top: 2px; }
 
+.sidebar-logo-link {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+.sidebar-logo-link:hover { opacity: 0.85; }
+.sidebar-logo-link:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.4);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 .sidebar-nav {
   list-style: none;
   margin: 8px 0 0;
@@ -346,3 +360,75 @@ body.login-body {
 [data-bs-theme="dark"] .status-cached    { background: #0d2a45; color: #6aadee; }
 [data-bs-theme="dark"] .status-blocked   { background: #3a1a1a; color: #e88080; }
 [data-bs-theme="dark"] .status-other     { background: #2b2e30; color: #adb5bd; }
+
+/* ─── Combined Information — live ticker ──────────────────────────────────── */
+
+.combined-ticker-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #dc3545;
+  margin-right: 6px;
+  box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.5);
+  animation: combined-ticker-pulse 2s infinite;
+  vertical-align: middle;
+}
+
+@keyframes combined-ticker-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7); }
+  70%  { box-shadow: 0 0 0 8px rgba(220, 53, 69, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0); }
+}
+
+.combined-ticker-list {
+  max-height: 260px;
+  overflow-y: auto;
+  font-size: 0.82rem;
+}
+
+.combined-ticker-row {
+  display: grid;
+  grid-template-columns: 84px 96px 110px 1fr 180px;
+  gap: 10px;
+  align-items: center;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--bs-border-color-translucent);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.combined-ticker-row:last-child { border-bottom: 0; }
+
+.combined-ticker-row-new {
+  animation: combined-ticker-flash 1.5s ease-out;
+}
+
+@keyframes combined-ticker-flash {
+  0%   { background: rgba(13, 110, 253, 0.18); }
+  100% { background: transparent; }
+}
+
+.combined-ticker-time   { color: var(--bs-secondary-color); font-variant-numeric: tabular-nums; }
+.combined-ticker-site {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  color: #fff;
+  font-weight: 500;
+  font-size: 0.72rem;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.combined-ticker-instance { overflow: hidden; text-overflow: ellipsis; }
+.combined-ticker-domain   { overflow: hidden; text-overflow: ellipsis; }
+.combined-ticker-client   { overflow: hidden; text-overflow: ellipsis; text-align: right; }
+
+@media (max-width: 900px) {
+  .combined-ticker-row {
+    grid-template-columns: 70px 80px 1fr;
+  }
+  .combined-ticker-instance,
+  .combined-ticker-client { display: none; }
+}

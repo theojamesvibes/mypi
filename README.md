@@ -1,6 +1,6 @@
 # MyPi
 [![build](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/docker-publish.yml?style=flat-square)](https://github.com/theojamesvibes/mypi/actions)
-[![version](https://img.shields.io/badge/version-1.11.0--dev.11-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
+[![version](https://img.shields.io/badge/version-1.11.0--dev.12-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
 [![platform](https://img.shields.io/badge/platform-linux%2Famd64%20|%20linux%2Farm64-teal?style=flat-square)](https://github.com/theojamesvibes/mypi/pkgs/container/mypi)
 
 > **⚠️ Vibe Code Disclosure**
@@ -30,6 +30,16 @@ A self-hosted dashboard that consolidates up to 10 locally running [Pi-hole](htt
 - **Query type breakdown** — Doughnut chart (Forwarded / Cached / Blocked / Other)
 - **Per-system panel** — Each Pi-hole shown individually with its own stats and online/offline badge
 - **Top Permitted Domains, Top Blocked Domains, Top Clients** — Clickable rows open a drill-down modal with all matching queries for that domain or client
+- **Clickable MyPi logo** in the sidebar — navigates to the dashboard from any other page; on the dashboard itself it refreshes the data in place without a full page reload
+- **Site name in page titles** — on multi-site deployments, per-slug pages show the current site name in both the browser tab title and the in-page heading (e.g. `Dashboard: WTR`)
+
+### Combined Information (multi-site)
+- Shown only when **≥2 active sites** are configured. Aggregates every active Pi-hole instance across every active site into a single screen.
+- Same four headline stat cards summed across sites; single aggregate **DNS Queries over Time** chart; Query Types pie.
+- **Pi-hole Systems** table lists every instance across all sites with a colored site pill, so you can see which instance belongs to which site at a glance.
+- **Top Permitted / Top Blocked** panels — merged by domain across sites (Top Clients is intentionally omitted because IP collisions between sites refer to different physical machines).
+- **Live Activity ticker** — the 15 most recent queries across all sites, color-tagged by site, new rows animated in every ~3 seconds.
+- Read-only: actions (sync, instance enable/disable, etc.) remain on the per-site pages.
 
 ### Query Log
 - Consolidated query log across all instances with instance badge per row

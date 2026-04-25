@@ -15,7 +15,7 @@ SESSION_COOKIE_MAX_AGE = 60 * 60 * 8  # 8 hours
 # Slugs that would clash with API route segments or reserved URL space.
 # Enforced for user-provided slugs in YAML; the system-generated `default`
 # slug used when wrapping legacy flat `instances:` YAML is exempt.
-RESERVED_SLUGS = frozenset({"sites", "inactive", "admin", "main"})
+RESERVED_SLUGS = frozenset({"sites", "inactive", "admin", "main", "combined"})
 
 _SLUG_STRIP_RE = re.compile(r"[^a-z0-9]+")
 _SLUG_EDGE_RE = re.compile(r"(^-+)|(-+$)")
