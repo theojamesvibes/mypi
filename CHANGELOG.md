@@ -4,6 +4,20 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.11.0-dev.16] — 2026-04-25
+
+### Added
+- **`vip-master` / `vip-replica` pills** on the Pi-hole systems table (per-site dashboard, Combined view, and the Settings instances panel) and on the Sync result rows. Renders next to the existing `master` badge (sync master) so an instance that's both sync-master and vip_master shows two pills side-by-side. `vip-master` uses Bootstrap's `bg-info` (teal) and `vip-replica` uses `bg-secondary` to stay visually distinct from the primary `master` badge.
+
+### Changed
+- `app/schemas/instance.py::InstanceStatus` and `app/api/instances.py::_build_status` — surface `vip_role`.
+- `app/api/stats.py::_summary_body` — adds `vip_role` to each per-instance dict (powers the Combined view + per-site systems table).
+- `app/services/sync_service.py` — `InstanceSyncResult` gains `vip_role`, `SyncState` gains `master_vip_role`. Both are persisted in the `sync_last_result` JSON and restored on startup.
+- `app/api/sync.py::InstanceResult` and `SyncStatusResponse` — surface the new fields.
+- `app/static/js/dashboard.js` — new `vipPill(role)` helper, slotted into the four render sites.
+
+---
+
 ## [1.11.0-dev.15] — 2026-04-25
 
 ### Added

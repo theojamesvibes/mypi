@@ -13,6 +13,9 @@ class InstanceStatus(BaseModel):
     color: str
     is_active: bool
     is_master: bool = False
+    # None / "master" / "replica" — VIP cluster membership; surfaced for the
+    # systems-table pill in the dashboard.
+    vip_role: str | None = None
     last_seen_at: datetime | None = None
     status: str = "unknown"  # online / offline / unknown
 

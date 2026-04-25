@@ -30,6 +30,7 @@ def _build_status(inst: PiholeInstance, snapshots: dict) -> InstanceStatus:
         color=inst.color,
         is_active=inst.is_active,
         is_master=inst.is_master,
+        vip_role=inst.vip_role,
         last_seen_at=inst.last_seen_at,
         status=snap.status if snap else "unknown",
         dns_queries_today=snap.dns_queries_today if snap else 0,
