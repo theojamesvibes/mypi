@@ -161,6 +161,7 @@ async def _summary_body(
             "url": inst.url,
             "color": inst.color,
             "is_master": inst.is_master,
+            "vip_role": inst.vip_role,
             "is_active": inst.is_active,
             "last_seen_at": inst.last_seen_at.isoformat() if inst.last_seen_at else None,
             "status": snap.status if snap else "unknown",

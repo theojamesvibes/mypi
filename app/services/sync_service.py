@@ -44,6 +44,9 @@ class InstanceSyncResult:
     name: str
     status: Literal["success", "error"]
     error: str | None = None
+    # None / "master" / "replica" — surfaced so the sync-result UI can pill
+    # the row alongside the per-replica status icon.
+    vip_role: str | None = None
 
 
 @dataclass
@@ -52,6 +55,10 @@ class SyncState:
     started_at: datetime | None = None
     completed_at: datetime | None = None
     master: str | None = None
+    # None / "master" / "replica" — for the master row in the sync-result UI.
+    # Independent of `is_master`: a sync master may or may not also be the
+    # currently-active VIP node.
+    master_vip_role: str | None = None
     results: list[InstanceSyncResult] = field(default_factory=list)
     error: str | None = None
 
@@ -172,9 +179,10 @@ async def _persist_sync_state(site_id: uuid.UUID, state: SyncState) -> None:
             "completed_at": state.completed_at.isoformat() if state.completed_at else None,
             "started_at": state.started_at.isoformat() if state.started_at else None,
             "master": state.master,
+            "master_vip_role": state.master_vip_role,
             "error": state.error,
             "results": [
-                {"name": r.name, "status": r.status, "error": r.error}
+                {"name": r.name, "status": r.status, "error": r.error, "vip_role": r.vip_role}
                 for r in state.results
             ],
         }
@@ -244,10 +252,12 @@ async def _load_site_schedule(site_id: uuid.UUID, site_name: str) -> None:
                 started_at=datetime.fromisoformat(data["started_at"]) if data.get("started_at") else None,
                 completed_at=datetime.fromisoformat(data["completed_at"]) if data.get("completed_at") else None,
                 master=data.get("master"),
+                master_vip_role=data.get("master_vip_role"),
                 error=data.get("error"),
                 results=[
                     InstanceSyncResult(
                         name=r["name"], status=r["status"], error=r.get("error"),
+                        vip_role=r.get("vip_role"),
                     )
                     for r in data.get("results", [])
                 ],
@@ -471,13 +481,16 @@ async def run_sync(
                             logger.warning("Gravity on replica %s failed (non-fatal): %s", replica.name, g_exc)
 
                     logger.info("Sync to %s succeeded", replica.name)
-                    return InstanceSyncResult(name=replica.name, status="success")
+                    return InstanceSyncResult(
+                        name=replica.name, status="success", vip_role=replica.vip_role,
+                    )
                 except Exception as exc:
                     logger.warning("Sync to %s failed: %s", replica.name, exc)
                     return InstanceSyncResult(
                         name=replica.name,
                         status="error",
                         error=str(exc),
+                        vip_role=replica.vip_role,
                     )
 
             results = list(await asyncio.gather(*[_sync_replica(r) for r in replicas]))
@@ -490,6 +503,7 @@ async def run_sync(
                 started_at=_state_by_site[sid_key].started_at,
                 completed_at=datetime.now(timezone.utc),
                 master=master.name,
+                master_vip_role=master.vip_role,
                 results=results,
             )
 
