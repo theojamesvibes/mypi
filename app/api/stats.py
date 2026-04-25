@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import and_, case, distinct, func, select
+from sqlalchemy import and_, case, distinct, func, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api._site_dep import resolve_site
@@ -22,6 +23,19 @@ from app.schemas.stats import (
     TopDomain,
     TopStatsResponse,
 )
+from app.services.site_settings import get_json_setting, get_main_site_id
+
+# Top Clients self-traffic filter setting key. JSON boolean. Default true.
+# Mirrors Pi-hole's own admin UI behaviour, which hides queries originating
+# from Pi-hole itself (pi.hole / localhost / the Pi-hole's own IP) so the
+# Top Clients table reflects real LAN clients instead of Pi-hole's hourly
+# PTR refresh, gravity URL resolution, version checks, etc.
+HIDE_SELF_IN_TOP_CLIENTS_KEY = "hide_pihole_self_in_top_clients"
+HIDE_SELF_DEFAULT = True
+# Self-name aliases that don't depend on configured instance URLs. Pi-hole
+# resolves its own short hostname to one of these; both appear in query
+# logs for Pi-hole's internal traffic.
+_SELF_NAME_ALIASES = frozenset({"pi.hole", "localhost"})
 
 router = APIRouter(prefix="/api/stats", tags=["stats"])
 
@@ -205,6 +219,49 @@ async def _site_instance_ids(db: AsyncSession, site_id: uuid.UUID) -> list[uuid.
     return [row[0] for row in result.fetchall()]
 
 
+async def _self_exclusions(
+    db: AsyncSession, instance_ids: list[uuid.UUID] | None,
+) -> set[str]:
+    """Build the set of host strings to filter out of Top Clients.
+
+    Includes `pi.hole` / `localhost` plus the hostname extracted from each
+    in-scope Pi-hole's `url` field. Each extracted host is matched against
+    both `client_ip` and `client_name` in the WHERE clause so it catches
+    both ways Pi-hole logs its own self-traffic (sometimes by IP, sometimes
+    by reverse-resolved name).
+
+    `instance_ids=None` means "global scope" → consider every active
+    Pi-hole. A non-None list scopes the URL fetch to that site's instances
+    so per-site Top Clients only suppresses self-traffic from that site.
+    """
+    q = select(PiholeInstance.url).where(PiholeInstance.is_active.is_(True))
+    if instance_ids is not None:
+        if not instance_ids:
+            return set(_SELF_NAME_ALIASES)
+        q = q.where(PiholeInstance.id.in_(instance_ids))
+    result = await db.execute(q)
+    hosts: set[str] = set(_SELF_NAME_ALIASES)
+    for (url,) in result.fetchall():
+        host = urlparse(url).hostname if url else None
+        if host:
+            hosts.add(host)
+    return hosts
+
+
+async def _should_hide_pihole_self(
+    db: AsyncSession, site_id: uuid.UUID | None,
+) -> bool:
+    """Resolve the Top Clients self-filter toggle. Reads from the site's
+    site_settings (with main fallback); for the global endpoint
+    (`site_id is None`) we read from main directly. Default true."""
+    target_id = site_id if site_id is not None else await get_main_site_id(db)
+    if target_id is None:
+        return HIDE_SELF_DEFAULT
+    return bool(await get_json_setting(
+        db, target_id, HIDE_SELF_IN_TOP_CLIENTS_KEY, default=HIDE_SELF_DEFAULT,
+    ))
+
+
 @router.get("/history", response_model=HistoryResponse)
 async def get_history(
     hours: int = Query(default=24, ge=1, le=720),
@@ -299,7 +356,13 @@ async def get_top(
         since_dt = since if since.tzinfo else since.replace(tzinfo=timezone.utc)
     else:
         since_dt = datetime.now(timezone.utc) - timedelta(hours=hours)
-    return await _top_body(db, since_dt, instance_id, limit, site_instance_ids=None)
+    excluded_clients: set[str] | None = None
+    if await _should_hide_pihole_self(db, site_id=None):
+        excluded_clients = await _self_exclusions(db, instance_ids=None)
+    return await _top_body(
+        db, since_dt, instance_id, limit,
+        site_instance_ids=None, excluded_clients=excluded_clients,
+    )
 
 
 async def _top_body(
@@ -308,6 +371,7 @@ async def _top_body(
     instance_id: uuid.UUID | None,
     limit: int,
     site_instance_ids: list[uuid.UUID] | None = None,
+    excluded_clients: set[str] | None = None,
 ) -> TopStatsResponse:
     domain_q = (
         select(QueryLog.domain, QueryLog.status, func.count(QueryLog.id).label("cnt"))
@@ -335,6 +399,16 @@ async def _top_body(
         client_q = client_q.where(QueryLog.instance_id == instance_id)
     if site_instance_ids is not None:
         client_q = client_q.where(QueryLog.instance_id.in_(site_instance_ids))
+    if excluded_clients:
+        # Hide rows where either client_ip OR client_name matches one of the
+        # configured Pi-hole hosts (or the pi.hole / localhost aliases).
+        # Same set on both sides — IPs and names are conflated because
+        # Pi-hole logs self-traffic both ways depending on PTR availability.
+        excluded_list = list(excluded_clients)
+        client_q = client_q.where(not_(or_(
+            QueryLog.client_ip.in_(excluded_list),
+            QueryLog.client_name.in_(excluded_list),
+        )))
 
     domain_result, client_result = (
         await db.execute(domain_q),
@@ -422,4 +496,10 @@ async def get_top_for_site(
     else:
         since_dt = datetime.now(timezone.utc) - timedelta(hours=hours)
     scope = await _site_instance_ids(db, site.id)
-    return await _top_body(db, since_dt, instance_id, limit, site_instance_ids=scope)
+    excluded_clients: set[str] | None = None
+    if await _should_hide_pihole_self(db, site_id=site.id):
+        excluded_clients = await _self_exclusions(db, instance_ids=scope)
+    return await _top_body(
+        db, since_dt, instance_id, limit,
+        site_instance_ids=scope, excluded_clients=excluded_clients,
+    )

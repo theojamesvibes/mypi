@@ -208,6 +208,30 @@
       </div>
     </div>
 
+    <!-- Display preferences -->
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header"><i class="bi bi-eye me-1"></i>Display</div>
+        <div class="card-body">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="hide-pihole-self">
+            <label class="form-check-label small" for="hide-pihole-self">
+              Hide Pi-hole self-traffic in Top Clients
+              <span class="text-muted d-block" style="font-size:0.7rem;">
+                Excludes <code>pi.hole</code>, <code>localhost</code>, and the configured Pi-hole instance hostnames so Top Clients shows real LAN clients instead of Pi-hole's own internal queries (PTR refresh, gravity URL resolution, version checks). Mirrors Pi-hole's admin UI behaviour.
+              </span>
+            </label>
+          </div>
+          <div class="mt-2">
+            <button class="btn btn-sm btn-outline-secondary" onclick="saveDisplaySettings()">
+              <i class="bi bi-save me-1"></i>Save
+            </button>
+            <span id="display-save-status" class="ms-2 small text-muted"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Session Timeout (moved above Pushover) -->
     <div class="col-12">
       <div class="card">
@@ -512,7 +536,39 @@
   loadSessionTimeout();
   loadVersionCheckSettings();
   loadPollInterval();
+  loadDisplaySettings();
   initThemeButtons();
+
+  async function loadDisplaySettings() {
+    try {
+      const resp = await fetch('/api/display-settings', { credentials: 'include' });
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const cb = document.getElementById('hide-pihole-self');
+      if (cb) cb.checked = !!data.hide_pihole_self_in_top_clients;
+    } catch {}
+  }
+
+  async function saveDisplaySettings() {
+    const status = document.getElementById('display-save-status');
+    const cb = document.getElementById('hide-pihole-self');
+    if (status) { status.textContent = ''; status.className = 'ms-2 small text-muted'; }
+    try {
+      const resp = await fetch('/api/display-settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          hide_pihole_self_in_top_clients: !!(cb && cb.checked),
+        }),
+      });
+      if (resp.status === 401) { window.location.href = '/login'; return; }
+      if (!resp.ok) throw new Error('save failed');
+      if (status) { status.textContent = 'Saved'; status.className = 'ms-2 small text-success'; }
+    } catch {
+      if (status) { status.textContent = 'Save failed'; status.className = 'ms-2 small text-danger'; }
+    }
+  }
 
   async function loadPollInterval() {
     try {
