@@ -4,6 +4,16 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.11.0-dev.15] — 2026-04-25
+
+### Added
+- **VIP cluster summary in startup log.** When `pihole_instances.yml` has any `vip_master` / `vip_replica` flags, `config_loader.sync_sites_and_instances` now emits one INFO line per site at startup naming the master and the replica list — operators can confirm at a glance that the YAML flags were picked up without having to query the DB. Sites with no VIP-flagged instances stay quiet.
+
+### Changed
+- `app/services/config_loader.py` — added the per-site VIP summary loop just before the existing "Config sync complete" line.
+
+---
+
 ## [1.11.0-dev.14] — 2026-04-25
 
 The dev.13 stalled-state detector was firing all night against a Pi-hole sitting behind a VIP as a hot standby — by design that node sees no DNS traffic until failover, so its `dns_queries_today` counter and query watermark are flat indefinitely, and the new detector couldn't tell "wedged" from "idle by role." This release re-introduces explicit cluster-membership flags so the detector knows when "no traffic" is normal, and adds a transfer-detection signal as a side benefit.
