@@ -4,6 +4,29 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.11.0-dev.17] — 2026-04-25
+
+Two queue items off the list.
+
+### Added
+- **Hide Pi-hole self-traffic in Top Clients (default on, toggleable).** `pi.hole`, `localhost`, and any `client_ip` / `client_name` matching one of MyPi's configured Pi-hole instance hostnames are now excluded from the Top Clients aggregation. Mirrors Pi-hole's own admin UI behaviour — the Top Clients table now reflects real LAN clients instead of being dominated by Pi-hole's own internal traffic (hourly client-name PTR refresh, gravity URL resolution, version checks, DNSSEC validation chains; on WTR alone the noise was ~44k entries/day). Site-scoped: per-site Top Clients excludes only that site's instance hostnames; the global endpoint excludes every active instance. Filter applies only to the Top Clients aggregation in `stats.py::_top_body`; the raw query log is unaffected, so users can still inspect self-traffic when they want it. Toggleable under Settings → Display.
+- **`hide_pihole_self_in_top_clients` setting** (JSON boolean, default true). Stored in `site_settings` under Main; reads from any site fall back to Main via the established inheritance pattern, so the toggle behaves as a single global switch.
+- **`/api/display-settings` GET/PUT** — new flat endpoint pair for user-facing display preferences. New display toggles will be added here rather than spawning more single-field endpoints.
+- **Settings → Display panel** with the toggle and a save button.
+
+### Changed
+- `app/api/stats.py` — added `_self_exclusions` (host-set builder; reads PiholeInstance.url and combines with `pi.hole` / `localhost`) and `_should_hide_pihole_self` (resolves the toggle with main-fallback). `_top_body` accepts `excluded_clients: set[str] | None` and applies `WHERE NOT (client_ip IN ... OR client_name IN ...)` to the client query only. Both the global `get_top` and per-site `get_top_for_site` opt in.
+- `app/api/display.py` — new file.
+- `app/main.py` — wires the new router.
+- `app/templates/settings.html` — Display panel + load/save JS.
+- `app/templates/combined.html` and `app/static/js/dashboard.js::loadCombined` — removed the Manage Lists footer from the Combined dashboard's Domains-on-Blocklist card. The footer pointed at one master, which is meaningless across sites with their own masters. Per-site dashboards keep the footer.
+
+### Migration notes
+- No DB schema changes; new key lives in the existing `site_settings` table.
+- Toggle defaults to true on first read, so existing deployments get the filter applied immediately. To restore the old behaviour, untick "Hide Pi-hole self-traffic in Top Clients" under Settings → Display.
+
+---
+
 ## [1.11.0-dev.16] — 2026-04-25
 
 ### Added
