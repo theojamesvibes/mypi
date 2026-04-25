@@ -65,12 +65,20 @@ async def _summary_body(
     inst_filters = [PiholeInstance.is_active.is_(True)]
     if site_id is not None:
         inst_filters.append(PiholeInstance.site_id == site_id)
+    # Join Site so the per-instance payload can carry site name/slug for the
+    # Combined view's instance table. Site rows are always present for active
+    # instances (FK enforced); a LEFT join only for safety against orphan rows.
     result = await db.execute(
-        select(PiholeInstance)
+        select(PiholeInstance, Site)
+        .outerjoin(Site, PiholeInstance.site_id == Site.id)
         .where(*inst_filters)
         .order_by(PiholeInstance.is_master.desc(), PiholeInstance.name)
     )
-    instances = result.scalars().all()
+    instances_with_site = result.all()
+    instances = [row[0] for row in instances_with_site]
+    site_by_instance: dict[uuid.UUID, Site | None] = {
+        row[0].id: row[1] for row in instances_with_site
+    }
     all_snapshots = await _latest_snapshots_by_instance(db)
 
     # When scoping to a site, constrain QueryLog aggregates + snapshot lookups
@@ -146,6 +154,7 @@ async def _summary_body(
         snap = snapshots.get(inst.id)
         i_total, i_blocked, i_clients = inst_agg.get(inst.id, (0, 0, 0))
         i_pct = round(i_blocked / i_total * 100, 1) if i_total > 0 else 0.0
+        site = site_by_instance.get(inst.id)
         per_instance.append({
             "id": str(inst.id),
             "name": inst.name,
@@ -155,6 +164,10 @@ async def _summary_body(
             "is_active": inst.is_active,
             "last_seen_at": inst.last_seen_at.isoformat() if inst.last_seen_at else None,
             "status": snap.status if snap else "unknown",
+            # Site attribution — consumed by the Combined view.
+            "site_id": str(site.id) if site else None,
+            "site_name": site.name if site else None,
+            "site_slug": site.slug if site else None,
             # Time-windowed query counts from QueryLog:
             "dns_queries_today": i_total,
             "queries_blocked": i_blocked,

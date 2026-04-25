@@ -4,6 +4,25 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.11.0-dev.12] — 2026-04-24
+
+Cross-site dashboard plus two small quality-of-life changes for the multi-site UX.
+
+### Added
+- **Combined Information page** at `/combined` — aggregate dashboard covering every active instance across every active site. Included widgets: the four headline stat cards (summed across sites), DNS Queries over Time (single aggregate line), Query Types pie, a Pi-hole Systems table with a **Site** column, and Top Permitted / Top Blocked (merged by domain across sites — Top Clients is omitted because IP collisions between sites refer to different machines). A live-activity ticker at the top shows the 15 most recent queries across all sites, color-tagged by site, with new rows animated in every ~3s. Nav item appears only when ≥2 active sites are configured; hidden on single-site deployments. Read-only — actions (sync, enable/disable, etc.) stay on per-site pages. Backend reuses the existing `/api/stats/*` global endpoints, which already aggregate across every active instance; `_summary_body` now populates `site_id` / `site_name` / `site_slug` on each per-instance payload so the Combined view can attribute instances back to their site.
+- **`combined` added to `RESERVED_SLUGS`** in `app/config.py`. Any site slug resolving to `combined` is rejected at YAML parse with the existing reserved-slug error. Belt-and-suspenders: the nav item is also hidden whenever only one site is configured.
+- **Site name in per-screen titles** — on per-slug pages (`/dashboard/<slug>`, `/queries/<slug>`, `/settings/<slug>`) the tab title and in-page heading now append `: <SiteName>` so you can tell at a glance which site you're viewing. Driven client-side by the existing `/api/sites` fetch in `base.html`; legacy `/`, `/queries`, `/settings` URLs and `/combined` are unchanged.
+- **Clickable MyPi logo** in the sidebar. Clicking it navigates to the dashboard (for the currently-selected site on multi-site deployments). When already on the dashboard, it calls `loadDashboard()` for an in-place refresh instead of a full page reload, so filter state and chart range are preserved. Middle-click / ctrl-click still open in a new tab.
+
+### Changed
+- `app/api/stats.py::_summary_body` joins `PiholeInstance → Site` and returns the site id/name/slug on each per-instance dict. Optional fields; existing clients ignoring them are unaffected.
+
+### Migration notes
+- No DB migration.
+- No action needed on upgrade: the Combined nav item simply appears when a deployment has ≥2 active sites. Single-site deployments are visually unchanged apart from the clickable logo (which was a no-op affordance before).
+
+---
+
 ## [1.11.0-dev.11] — 2026-04-24
 
 Multi-site YAML ergonomics — friendlier field name for the Main flag, optional slugs are now documented up-front, and renaming the default site through YAML is supported in-place (no orphans, no data loss).
