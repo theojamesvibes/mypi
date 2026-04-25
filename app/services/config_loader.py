@@ -124,6 +124,7 @@ async def sync_sites_and_instances(db: AsyncSession) -> None:
                     color=inst_cfg.color,
                     is_active=True,
                     is_master=inst_cfg.master,
+                    vip_role=inst_cfg.vip_role,
                 )
                 db.add(instance)
                 logger.info(
@@ -135,6 +136,7 @@ async def sync_sites_and_instances(db: AsyncSession) -> None:
                 instance.api_password = inst_cfg.password
                 instance.color = inst_cfg.color
                 instance.is_master = inst_cfg.master
+                instance.vip_role = inst_cfg.vip_role
                 instance.is_active = True
                 logger.debug(
                     "Updated Pi-hole instance: %s under site '%s'",

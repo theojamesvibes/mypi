@@ -4,6 +4,31 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.11.0-dev.14] — 2026-04-25
+
+The dev.13 stalled-state detector was firing all night against a Pi-hole sitting behind a VIP as a hot standby — by design that node sees no DNS traffic until failover, so its `dns_queries_today` counter and query watermark are flat indefinitely, and the new detector couldn't tell "wedged" from "idle by role." This release re-introduces explicit cluster-membership flags so the detector knows when "no traffic" is normal, and adds a transfer-detection signal as a side benefit.
+
+### Added
+- **`vip_master` / `vip_replica` YAML flags** on instances. Both optional; absence preserves the previous behaviour. At most one `vip_master` per site (extras are demoted with a warning); many `vip_replica` allowed. Flags are independent of `master:` (the sync master). New nullable `vip_role` column on `pihole_instances` (migration 0016) backs the flag.
+- **VIP-aware stall detection.** Per-instance stall alerts are skipped for any node in a VIP cluster. A new group-level alert (`notify_vip_group_stalled`) fires only if *every* node in the cluster has been flat for ≥ 5 polls (~5 minutes) AND the cluster has historically seen at least one advance — so a fresh install with no traffic doesn't false-positive. Truly-dead instances are still caught by the existing offline check.
+- **VIP transfer alert.** When the active node in a VIP cluster shifts (master → replica or back), a `notify_vip_transfer` Pushover alert fires, gated by a new opt-in toggle on Settings → Pushover (default off). Detection waits for the candidate node to advance for `_VIP_TRANSFER_CONFIRM_POLLS = 2` consecutive polls before declaring the transfer, so a single transient on the master doesn't bounce the active label.
+
+### Changed
+- `app/services/collector.py` — `_check_stalled` split: a new `_instance_advanced` helper centralises the "did it advance this poll?" check and returns the boolean. Per-instance stall now early-returns for any instance with `vip_role is not None`. New `_check_vip_state` runs once per `poll_stats_for_site` and handles transfer detection + group-level stall. New site-keyed dicts (`_vip_active_node`, `_vip_group_stall_alerted`, `_site_poll_seq`) and instance-keyed dicts (`_vip_last_advance_seq`, `_vip_advance_streak`) tracked + pruned alongside the existing state.
+- `poll_stats_for_site` now collects `(snapshot, advanced)` tuples from each per-instance poll and passes them into the VIP check after `asyncio.gather` completes. Switched to `return_exceptions=True` so a single instance crashing the poll doesn't take VIP bookkeeping offline for the rest of the cluster.
+- `app/services/pushover.py` — added `_alert_on_vip_transfer` setting (default false), persisted in the `pushover_settings` site_settings JSON. Three new alert helpers: `notify_vip_transfer`, `notify_vip_group_stalled`, `notify_vip_group_recovered`. Group stall reuses the offline alert toggle; transfer has its own dedicated toggle.
+- `app/api/notifications.py` — `PushoverSettingsRequest` gains `alert_on_vip_transfer`.
+- `app/templates/settings.html` + `app/static/js/dashboard.js` — added "VIP transfer" alert checkbox under the existing alert events column.
+- `app/services/config_loader.py` — passes `vip_role` through on insert/update.
+- `app/config.py` — `_parse_instance` reads `vip_master` / `vip_replica` (mutually exclusive); `_parse_site` enforces "one vip_master per site."
+
+### Migration notes
+- Migration 0016 adds a nullable `vip_role` VARCHAR(16) on `pihole_instances`. Existing rows get NULL and behave exactly as before.
+- To opt a cluster in, set `vip_master: true` on the active node and `vip_replica: true` on each standby in the same site, then restart.
+- The transfer alert is opt-in via Settings → Pushover. The group-stall alert reuses the existing instance-offline toggle so users who've muted offline alerts don't get woken up twice.
+
+---
+
 ## [1.11.0-dev.13] — 2026-04-25
 
 Two fixes that came out of the same incident: the Pi-hole upgrade earlier this evening left pihole1's FTL in a "split-state" (admin API responsive, query logging frozen) for ~4.5 hours, and while diagnosing it we found that Top Clients drill-downs return zero rows for any client whose traffic is mostly permitted.

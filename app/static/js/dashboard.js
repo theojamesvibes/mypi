@@ -1559,6 +1559,7 @@ async function loadPushoverSettings() {
   set('po-alert-sync-failure', data.alert_sync_failure);
   set('po-alert-offline', data.alert_instance_offline);
   set('po-alert-block-rate', data.alert_high_block_rate);
+  set('po-alert-vip-transfer', data.alert_on_vip_transfer);
   set('po-block-rate-pct', data.block_rate_threshold_pct);
   set('po-offline-retries', data.offline_alert_retries ?? 1);
   set('po-offline-max-count', data.offline_alert_max_count ?? 1);
@@ -1573,6 +1574,7 @@ async function savePushoverSettings() {
     alert_sync_failure: get('po-alert-sync-failure')?.checked ?? true,
     alert_instance_offline: get('po-alert-offline')?.checked ?? true,
     alert_high_block_rate: get('po-alert-block-rate')?.checked ?? false,
+    alert_on_vip_transfer: get('po-alert-vip-transfer')?.checked ?? false,
     block_rate_threshold_pct: parseFloat(get('po-block-rate-pct')?.value || '50'),
     offline_alert_retries: parseInt(get('po-offline-retries')?.value || '1'),
     offline_alert_max_count: parseInt(get('po-offline-max-count')?.value || '1'),

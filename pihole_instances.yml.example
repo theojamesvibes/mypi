@@ -85,3 +85,31 @@ instances:
 # `slug:` explicitly only when the derived one is awkward or when you want
 # shorter URLs. Reserved slugs you can't use: `sites`, `inactive`, `admin`,
 # `main`.
+#
+# ─── VIP cluster flags (optional) ─────────────────────────────────────────────
+# If a pair (or more) of Pi-holes shares a virtual IP via keepalived, mark
+# the configured-active node `vip_master: true` and each standby
+# `vip_replica: true`. Effects:
+#
+#   - Per-instance "queries stopped advancing" stall alerts are suppressed
+#     for any node in the cluster (idle is the normal state on a standby).
+#   - A single group-level alert fires only if EVERY node in the cluster
+#     goes flat at once — meaning the whole VIP is dead.
+#   - A separate "VIP transfer" alert fires when the active node changes
+#     (master ↔ replica). Off by default; enable in Settings → Pushover.
+#
+# These flags are independent of `master:` (the sync master). At most one
+# vip_master per site; many vip_replicas allowed. Both flags optional;
+# omit them entirely to keep the previous behaviour.
+#
+# Example:
+#   instances:
+#     - name: "pihole-primary"
+#       url: "https://192.168.1.10"
+#       password: "..."
+#       master: true       # sync master (gravity / teleporter source)
+#       vip_master: true   # currently-active node in the VIP cluster
+#     - name: "pihole-standby"
+#       url: "https://192.168.1.11"
+#       password: "..."
+#       vip_replica: true
