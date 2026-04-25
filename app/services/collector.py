@@ -81,6 +81,41 @@ _stall_alerted: dict[str, bool] = {}
 # wedge gets caught well before a human notices.
 _STALL_THRESHOLD_POLLS = 5
 
+# VIP cluster state. When `vip_master` / `vip_replica` are set in YAML, the
+# collector tracks which node in the cluster is currently serving traffic
+# and emits a "VIP transfer" alert when the active node changes (from master
+# to replica or back). Per-instance stall alerts are suppressed for any
+# instance with a non-NULL vip_role — idle is normal on a standby — but a
+# group-level stall fires if every node in the cluster is flat at once
+# (the whole VIP is dead).
+#
+# `_vip_last_advance_seq[instance_key]` — site-poll sequence at which this
+#   instance last advanced its counter or watermark. Used by the per-site
+#   VIP check to identify the most-recently-active node.
+# `_vip_active_node[site_id]` — which instance the cluster is currently
+#   considered to be serving from. Initially seeded from the configured
+#   vip_master on first observation.
+# `_vip_advance_streak[instance_key]` — consecutive site-polls this VIP
+#   instance has advanced. A transfer alert requires a streak of >=
+#   `_VIP_TRANSFER_CONFIRM_POLLS` so a single hiccup doesn't bounce the
+#   active node back and forth.
+# `_vip_group_stall_alerted[site_id]` — set true after the cluster-stall
+#   alert has fired; cleared when any node advances again.
+# `_site_poll_seq[site_id]` — incrementing counter, one per completed
+#   `poll_stats_for_site` run. Used as the time axis for VIP tracking so
+#   the logic doesn't depend on wall clock.
+_vip_last_advance_seq: dict[str, int] = {}
+_vip_active_node: dict[uuid.UUID, uuid.UUID | None] = {}
+_vip_advance_streak: dict[str, int] = {}
+_vip_group_stall_alerted: dict[uuid.UUID, bool] = {}
+_site_poll_seq: dict[uuid.UUID, int] = {}
+
+# Polls of sustained advance required on a candidate before we declare the
+# active node has shifted. With a 60s poll interval, 2 polls = ~2 min —
+# tight enough to catch a real failover quickly, loose enough that a single
+# transient on the master doesn't cause a phantom transfer.
+_VIP_TRANSFER_CONFIRM_POLLS = 2
+
 # Fire-and-forget Pushover notification tasks. asyncio keeps only weak refs
 # to bare `create_task(...)` — stash each task here and log any exception so
 # that a failed notify doesn't silently vanish.
@@ -203,21 +238,17 @@ async def _get_site_name(site_id: uuid.UUID) -> str:
     return name or str(site_id)
 
 
-def _check_stalled(
-    instance: PiholeInstance, snapshot: StatsSnapshot, site_name: str,
-) -> None:
-    """Detect the "admin alive, query logging dead" split-state.
+def _instance_advanced(
+    instance: PiholeInstance, snapshot: StatsSnapshot,
+) -> bool | None:
+    """Update the per-instance dns_queries_today / watermark baselines and
+    return True if either advanced this poll, False if both were flat.
+    Returns None on the bootstrap poll (no prior baseline).
 
-    Two independent signals must both be flat for `_STALL_THRESHOLD_POLLS`
-    polls before we alert: the cumulative `dns_queries_today` counter
-    (Pi-hole's own number) and `_last_seen_ts` (the watermark we maintain
-    from `/api/queries`). Requiring both reduces false positives on
-    legitimate idle moments — Pi-hole's counter ticks for cached and
-    forwarded queries alike, so on a working instance at least one of the
-    two will move within ~5 minutes even at low traffic.
-
-    Midnight rollover (counter reset to a smaller value) is treated as a
-    natural reset and clears stall state, never as evidence of stall.
+    Centralizes the "did this instance see traffic this poll?" question
+    used by both the per-instance stall detector and the per-site VIP
+    check. Midnight rollover (counter reset) clears any pending stall
+    state and is treated as a non-advance (caller decides what to do).
     """
     key = str(instance.id)
     new_count = snapshot.dns_queries_today or 0
@@ -225,25 +256,22 @@ def _check_stalled(
     new_watermark = _last_seen_ts.get(key)
     prev_watermark = _prev_watermark_for_stall.get(key)
 
-    # Bootstrap on first poll — establish baseline; no decision yet.
     if prev_count is None:
         _prev_dns_queries_today[key] = new_count
         _prev_watermark_for_stall[key] = new_watermark
-        return
+        return None
 
-    # Counter went backwards → midnight rollover or FTL restart resetting
-    # the daily counter. Reset all stall state.
     if new_count < prev_count:
+        # Midnight rollover or FTL restart. Treat as reset.
         _prev_dns_queries_today[key] = new_count
         _prev_watermark_for_stall[key] = new_watermark
         _stall_count.pop(key, None)
         if _stall_alerted.pop(key, None):
-            # Don't fire a recovery alert for a counter reset — confusing.
             logger.info(
                 "Stall state cleared for %s due to counter rollover.",
                 instance.name,
             )
-        return
+        return False
 
     counter_advanced = new_count > prev_count
     watermark_advanced = (
@@ -253,10 +281,29 @@ def _check_stalled(
 
     _prev_dns_queries_today[key] = new_count
     _prev_watermark_for_stall[key] = new_watermark
+    return counter_advanced or watermark_advanced
 
-    if counter_advanced or watermark_advanced:
-        # Healthy poll. Clear any pending stall and fire a recovery alert
-        # if we'd previously paged for this instance.
+
+def _check_stalled(
+    instance: PiholeInstance, advanced: bool | None, site_name: str,
+) -> None:
+    """Per-instance stall detector for non-VIP instances.
+
+    Two independent signals must both be flat for `_STALL_THRESHOLD_POLLS`
+    polls before we alert: the cumulative `dns_queries_today` counter
+    and the `/api/queries` watermark. Requiring both reduces false
+    positives on legitimate idle moments. Skipped for VIP-grouped
+    instances (vip_role is not None) — idle is normal on a standby and a
+    cluster-level check in `_check_vip_state` replaces it.
+    """
+    if instance.vip_role is not None:
+        return  # VIP-aware path handles this in _check_vip_state.
+    if advanced is None:
+        return  # Bootstrap poll — no prior baseline yet.
+
+    key = str(instance.id)
+
+    if advanced:
         _stall_count.pop(key, None)
         if _stall_alerted.pop(key, None):
             logger.info(
@@ -267,7 +314,6 @@ def _check_stalled(
             ))
         return
 
-    # Both signals flat — increment stall counter.
     stalls = _stall_count.get(key, 0) + 1
     _stall_count[key] = stalls
 
@@ -285,6 +331,144 @@ def _check_stalled(
         ))
 
 
+async def _check_vip_state(
+    site_id: uuid.UUID,
+    site_name: str,
+    poll_outcomes: list[tuple[PiholeInstance, StatsSnapshot, bool | None]],
+) -> None:
+    """Per-site VIP cluster detector.
+
+    Runs after every site stats poll. Looks at the subset of instances in
+    `poll_outcomes` whose `vip_role` is "master" or "replica" and:
+
+      1. Maintains `_vip_last_advance_seq` for each VIP node.
+      2. Identifies the "currently active" node (most-recently-advanced).
+      3. Fires `notify_vip_transfer` when the active node changes, gated
+         by `_VIP_TRANSFER_CONFIRM_POLLS` consecutive advancing polls on
+         the candidate so a single transient doesn't bounce the active
+         label.
+      4. Fires `notify_vip_group_stalled` when every node in the cluster
+         has gone flat for `_STALL_THRESHOLD_POLLS` polls (the whole VIP
+         is dead). Recovery clears the alert; a future flat run can fire
+         again.
+
+    Bootstrap: a cluster that has *never* seen any node advance since
+    process start can't distinguish "fresh install with no traffic yet"
+    from "real outage." We require at least one observed advance from
+    any node in the cluster before the group-stall alert can fire.
+    Truly-dead instances are still caught by the existing offline check.
+    """
+    vip_outcomes = [
+        (inst, snap, adv) for inst, snap, adv in poll_outcomes
+        if inst.vip_role in ("master", "replica") and snap.status == "online"
+    ]
+    if not vip_outcomes:
+        return
+
+    seq = _site_poll_seq.get(site_id, 0) + 1
+    _site_poll_seq[site_id] = seq
+
+    # Update per-instance advance bookkeeping.
+    any_advanced_this_poll = False
+    ever_advanced = False
+    for inst, _snap, advanced in vip_outcomes:
+        key = str(inst.id)
+        if advanced:
+            _vip_last_advance_seq[key] = seq
+            _vip_advance_streak[key] = _vip_advance_streak.get(key, 0) + 1
+            any_advanced_this_poll = True
+        elif advanced is False:
+            _vip_advance_streak[key] = 0
+        # advanced is None on bootstrap → don't update streak yet.
+        if key in _vip_last_advance_seq:
+            ever_advanced = True
+
+    # Seed the active node on the very first poll where we can determine
+    # one. Prefer the configured vip_master so a fresh start doesn't
+    # mis-label whichever replica happens to advance first.
+    if site_id not in _vip_active_node:
+        configured_master = next(
+            (inst for inst, _, _ in vip_outcomes if inst.vip_role == "master"),
+            None,
+        )
+        _vip_active_node[site_id] = (
+            configured_master.id if configured_master else None
+        )
+
+    # Transfer detection — pick the node with the highest streak that
+    # also has the most recent advance. If the current active node also
+    # advanced this poll, it stays put; only when *another* node has
+    # been advancing for `_VIP_TRANSFER_CONFIRM_POLLS` polls in a row
+    # while the current active has gone idle do we declare a transfer.
+    current_active_id = _vip_active_node.get(site_id)
+    current_active_inst = next(
+        (inst for inst, _, _ in vip_outcomes if inst.id == current_active_id),
+        None,
+    )
+    current_active_idle = (
+        current_active_inst is None
+        or _vip_advance_streak.get(str(current_active_inst.id), 0) == 0
+    )
+
+    if current_active_idle and any_advanced_this_poll:
+        # Look for a confirmed challenger.
+        challenger: PiholeInstance | None = None
+        for inst, _snap, _adv in vip_outcomes:
+            if inst.id == current_active_id:
+                continue
+            streak = _vip_advance_streak.get(str(inst.id), 0)
+            if streak >= _VIP_TRANSFER_CONFIRM_POLLS:
+                # Prefer the configured vip_master if multiple nodes
+                # qualify — closest match to "the cluster's normal state."
+                if challenger is None or inst.vip_role == "master":
+                    challenger = inst
+
+        if challenger is not None and challenger.id != current_active_id:
+            old_name = (
+                current_active_inst.name if current_active_inst else "unknown"
+            )
+            logger.warning(
+                "VIP transfer in site '%s': active node %s → %s "
+                "(streak=%d).",
+                site_name, old_name, challenger.name,
+                _vip_advance_streak.get(str(challenger.id), 0),
+            )
+            _vip_active_node[site_id] = challenger.id
+            _spawn(pushover_service.notify_vip_transfer(
+                old_name=old_name,
+                new_name=challenger.name,
+                site_name=site_name,
+                site_id=site_id,
+            ))
+
+    # Group stall — every VIP node has been flat for >= threshold polls
+    # AND the cluster has at least one historical advance to anchor
+    # against (so a fresh install with no traffic doesn't fire).
+    if ever_advanced:
+        all_flat = all(
+            seq - _vip_last_advance_seq.get(str(inst.id), seq)
+            >= _STALL_THRESHOLD_POLLS
+            for inst, _snap, _adv in vip_outcomes
+        )
+        if all_flat and not _vip_group_stall_alerted.get(site_id):
+            _vip_group_stall_alerted[site_id] = True
+            names = ", ".join(inst.name for inst, _, _ in vip_outcomes)
+            logger.error(
+                "VIP cluster stalled in site '%s' — every node (%s) has "
+                "been flat for >= %d polls. The whole VIP appears dead.",
+                site_name, names, _STALL_THRESHOLD_POLLS,
+            )
+            _spawn(pushover_service.notify_vip_group_stalled(
+                names=names, site_name=site_name, site_id=site_id,
+            ))
+        elif any_advanced_this_poll and _vip_group_stall_alerted.get(site_id):
+            _vip_group_stall_alerted[site_id] = False
+            logger.info("VIP cluster in site '%s' recovered.", site_name)
+            _spawn(pushover_service.notify_vip_group_recovered(
+                site_name=site_name, site_id=site_id,
+            ))
+
+
 # Tracks the watermark seen at the moment of the last stats poll, so the
 # stall check compares "watermark now" vs "watermark last poll" rather than
 # "watermark now" vs "earliest watermark ever". A poll that actually advances
@@ -293,7 +477,17 @@ def _check_stalled(
 _prev_watermark_for_stall: dict[str, float | None] = {}
 
 
-async def _poll_stats_for(instance: PiholeInstance, site_name: str = "") -> None:
+async def _poll_stats_for(
+    instance: PiholeInstance, site_name: str = "",
+) -> tuple[StatsSnapshot, bool | None]:
+    """Poll stats for one instance, persist a snapshot, and run alert
+    bookkeeping (online/offline, per-instance stall for non-VIP).
+
+    Returns `(snapshot, advanced)` so the per-site VIP check can correlate
+    advance signals across the cluster after every site poll completes.
+    `advanced` is True/False on a normal poll, None on the bootstrap poll
+    or on midnight rollover.
+    """
     key = str(instance.id)
     try:
         if not _breaker_allows(key, instance.name):
@@ -381,16 +575,23 @@ async def _poll_stats_for(instance: PiholeInstance, site_name: str = "") -> None
             ))
     _prev_status[key] = snapshot.status
 
-    # Stalled-state detection — only meaningful when the stats poll succeeded.
-    # See `_prev_dns_queries_today` doc comment above for the failure mode this
-    # catches.
+    # Stall / VIP detection — only meaningful when the stats poll succeeded.
+    # Compute the advance signal once and hand it to both the per-instance
+    # stall path (skipped for VIP-grouped instances) and the per-site VIP
+    # path (called from `poll_stats_for_site` after the gather).
+    advanced: bool | None
     if snapshot.status == "online":
-        _check_stalled(instance, snapshot, site_name)
+        advanced = _instance_advanced(instance, snapshot)
+        _check_stalled(instance, advanced, site_name)
     else:
-        # Outage: clear stall state so a recovery doesn't replay a stale alert.
+        advanced = None
         _prev_dns_queries_today.pop(key, None)
         _stall_count.pop(key, None)
         _stall_alerted.pop(key, None)
+        # An offline VIP node also resets its advance streak so a brief
+        # outage on the master doesn't leave a stale streak that causes a
+        # phantom transfer the moment it reappears.
+        _vip_advance_streak.pop(key, None)
 
     # Notify sync service if this is the master (enables auto-gravity detection).
     # Per-site as of Phase 4b — each site's master has its own blocklist-count
@@ -399,6 +600,8 @@ async def _poll_stats_for(instance: PiholeInstance, site_name: str = "") -> None
     if instance.is_master and snapshot.status == "online":
         await sync_service.notify_blocklist_count(instance.site_id, snapshot.domains_on_blocklist)
 
+    return snapshot, advanced
+
 
 async def poll_stats_for_site(site_id: uuid.UUID) -> None:
     """Poll stats for every active instance in one site."""
@@ -406,7 +609,26 @@ async def poll_stats_for_site(site_id: uuid.UUID) -> None:
     if not instances:
         return
     site_name = await _get_site_name(site_id)
-    await asyncio.gather(*[_poll_stats_for(inst, site_name=site_name) for inst in instances])
+    results = await asyncio.gather(
+        *[_poll_stats_for(inst, site_name=site_name) for inst in instances],
+        return_exceptions=True,
+    )
+    # Re-pair results with their instance and filter out exceptions so a
+    # single instance crashing the poll doesn't break VIP bookkeeping for
+    # the rest of the cluster.
+    poll_outcomes: list[tuple[PiholeInstance, StatsSnapshot, bool | None]] = []
+    for inst, res in zip(instances, results):
+        if isinstance(res, BaseException):
+            logger.warning(
+                "_poll_stats_for(%s) raised: %s: %s",
+                inst.name, type(res).__name__, res,
+            )
+            continue
+        snapshot, advanced = res
+        poll_outcomes.append((inst, snapshot, advanced))
+
+    if any(inst.vip_role in ("master", "replica") for inst, _, _ in poll_outcomes):
+        await _check_vip_state(site_id, site_name, poll_outcomes)
 
 
 async def _fetch_version_for(instance: PiholeInstance) -> None:
@@ -537,11 +759,27 @@ async def prune_inactive_state() -> None:
         _consec_failures, _cooldown_until, _last_failure_at,
         _prev_dns_queries_today, _prev_watermark_for_stall,
         _stall_count, _stall_alerted,
+        _vip_last_advance_seq, _vip_advance_streak,
     ):
         for key in list(state_dict):
             if key not in active_keys:
                 stale_keys.add(key)
                 del state_dict[key]
+
+    # Site-keyed VIP state: drop entries for sites whose only VIP-flagged
+    # instances are all gone (they may have been demoted via YAML edit).
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(PiholeInstance.site_id).where(
+                PiholeInstance.is_active.is_(True),
+                PiholeInstance.vip_role.is_not(None),
+            )
+        )
+        active_vip_site_ids = {row[0] for row in result.fetchall()}
+    for site_state in (_vip_active_node, _vip_group_stall_alerted, _site_poll_seq):
+        for site_key in list(site_state):
+            if site_key not in active_vip_site_ids:
+                del site_state[site_key]
 
     for key in stale_keys:
         try:
@@ -778,3 +1016,8 @@ async def shutdown() -> None:
     _prev_watermark_for_stall.clear()
     _stall_count.clear()
     _stall_alerted.clear()
+    _vip_last_advance_seq.clear()
+    _vip_advance_streak.clear()
+    _vip_active_node.clear()
+    _vip_group_stall_alerted.clear()
+    _site_poll_seq.clear()

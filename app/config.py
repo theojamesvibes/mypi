@@ -100,12 +100,17 @@ class PiholeInstanceConfig:
         password: str,
         color: str,
         master: bool = False,
+        vip_role: str | None = None,
     ):
         self.name = name
         self.url = url.rstrip("/")
         self.password = password
         self.color = color
         self.master = master
+        # None / "master" / "replica" — VIP cluster membership. The collector
+        # uses this to suppress per-instance stall alerts for replicas (idle
+        # is the normal state on a standby) and to detect VIP transfer events.
+        self.vip_role = vip_role
 
 
 class SiteConfig:
@@ -154,12 +159,28 @@ def validate_slug(slug: str, source: str) -> None:
 
 
 def _parse_instance(item: dict) -> PiholeInstanceConfig:
+    # vip_master / vip_replica are mutually exclusive. Cross-instance
+    # validation (one vip_master per site) happens in _parse_site.
+    is_vip_master = bool(item.get("vip_master", False))
+    is_vip_replica = bool(item.get("vip_replica", False))
+    vip_role: str | None = None
+    if is_vip_master and is_vip_replica:
+        logging.getLogger(__name__).warning(
+            "Instance '%s' has both vip_master and vip_replica set — "
+            "ignoring both. Pick one.", item.get("name", "?"),
+        )
+    elif is_vip_master:
+        vip_role = "master"
+    elif is_vip_replica:
+        vip_role = "replica"
+
     return PiholeInstanceConfig(
         name=item["name"],
         url=item["url"],
         password=item.get("password", ""),
         color=item.get("color", "#3c8dbc"),
         master=bool(item.get("master", False)),
+        vip_role=vip_role,
     )
 
 
@@ -178,6 +199,20 @@ def _parse_site(item: dict, fallback_index: int) -> SiteConfig:
             name, len(raw_instances), settings.max_pihole_instances,
         )
     instances = [_parse_instance(x) for x in raw_instances[:settings.max_pihole_instances]]
+
+    # One vip_master per site. If multiple are flagged, keep the first and
+    # demote the rest to plain (no vip_role) — they likely intended a single
+    # cluster and listing two masters is almost certainly a YAML mistake.
+    vip_masters = [i for i in instances if i.vip_role == "master"]
+    if len(vip_masters) > 1:
+        winner = vip_masters[0]
+        for loser in vip_masters[1:]:
+            logging.getLogger(__name__).warning(
+                "Site '%s' has multiple vip_master instances; '%s' is the "
+                "vip_master, '%s' demoted to plain (no vip_role).",
+                name, winner.name, loser.name,
+            )
+            loser.vip_role = None
 
     # `default_site: true` is the friendly alias; `main: true` stays as
     # back-compat. Either (or both) flips the Main flag.

@@ -21,6 +21,7 @@ class PushoverSettingsRequest(BaseModel):
     alert_sync_failure: bool = True
     alert_instance_offline: bool = True
     alert_high_block_rate: bool = False
+    alert_on_vip_transfer: bool = False
     block_rate_threshold_pct: float = 50.0
     offline_alert_max_count: int = 1
     offline_alert_retries: int = 1
@@ -52,6 +53,7 @@ async def save_settings(
             alert_sync_failure=req.alert_sync_failure,
             alert_instance_offline=req.alert_instance_offline,
             alert_high_block_rate=req.alert_high_block_rate,
+            alert_on_vip_transfer=req.alert_on_vip_transfer,
             block_rate_threshold_pct=req.block_rate_threshold_pct,
             offline_alert_max_count=req.offline_alert_max_count,
             offline_alert_retries=req.offline_alert_retries,

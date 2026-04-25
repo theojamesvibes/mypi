@@ -50,6 +50,11 @@ _enabled: bool = False
 _alert_sync_failure: bool = True
 _alert_instance_offline: bool = True
 _alert_high_block_rate: bool = False
+# VIP cluster transfer alert — fired when the active node in a VIP cluster
+# changes (master → replica or back). Defaults off because most operators
+# don't need to know the moment failover happens; the affected node will
+# still page via the offline / group-stall paths if it actually went down.
+_alert_on_vip_transfer: bool = False
 
 # Thresholds
 _block_rate_threshold_pct: float = 50.0
@@ -100,6 +105,7 @@ async def _resolve_site_config(site_id: uuid.UUID) -> Optional[dict]:
         "alert_sync_failure": data.get("alert_sync_failure", True),
         "alert_instance_offline": data.get("alert_instance_offline", True),
         "alert_high_block_rate": data.get("alert_high_block_rate", False),
+        "alert_on_vip_transfer": data.get("alert_on_vip_transfer", False),
         "block_rate_threshold_pct": data.get("block_rate_threshold_pct", 50.0),
         "offline_alert_max_count": data.get("offline_alert_max_count", 1),
         "offline_alert_retries": data.get("offline_alert_retries", 1),
@@ -168,6 +174,7 @@ async def load_settings() -> None:
     """
     global _app_token, _user_key, _enabled
     global _alert_sync_failure, _alert_instance_offline, _alert_high_block_rate
+    global _alert_on_vip_transfer
     global _block_rate_threshold_pct, _offline_alert_max_count, _offline_alert_retries
 
     try:
@@ -193,6 +200,7 @@ async def load_settings() -> None:
         _alert_sync_failure = data.get("alert_sync_failure", True)
         _alert_instance_offline = data.get("alert_instance_offline", True)
         _alert_high_block_rate = data.get("alert_high_block_rate", False)
+        _alert_on_vip_transfer = data.get("alert_on_vip_transfer", False)
         _block_rate_threshold_pct = data.get("block_rate_threshold_pct", 50.0)
         _offline_alert_max_count = data.get("offline_alert_max_count", 1)
         _offline_alert_retries = data.get("offline_alert_retries", 1)
@@ -215,10 +223,12 @@ async def save_settings(
     block_rate_threshold_pct: float,
     offline_alert_max_count: int = 1,
     offline_alert_retries: int = 1,
+    alert_on_vip_transfer: bool = False,
 ) -> None:
     """Save Pushover settings to DB and update in-memory state."""
     global _app_token, _user_key, _enabled
     global _alert_sync_failure, _alert_instance_offline, _alert_high_block_rate
+    global _alert_on_vip_transfer
     global _block_rate_threshold_pct, _offline_alert_max_count, _offline_alert_retries
 
     payload = json.dumps({
@@ -228,6 +238,7 @@ async def save_settings(
         "alert_sync_failure": alert_sync_failure,
         "alert_instance_offline": alert_instance_offline,
         "alert_high_block_rate": alert_high_block_rate,
+        "alert_on_vip_transfer": alert_on_vip_transfer,
         "block_rate_threshold_pct": block_rate_threshold_pct,
         "offline_alert_max_count": offline_alert_max_count,
         "offline_alert_retries": offline_alert_retries,
@@ -253,6 +264,7 @@ async def save_settings(
     _alert_sync_failure = alert_sync_failure
     _alert_instance_offline = alert_instance_offline
     _alert_high_block_rate = alert_high_block_rate
+    _alert_on_vip_transfer = alert_on_vip_transfer
     _block_rate_threshold_pct = block_rate_threshold_pct
     _offline_alert_max_count = offline_alert_max_count
     _offline_alert_retries = offline_alert_retries
@@ -276,6 +288,7 @@ def get_settings() -> dict:
         "alert_sync_failure": _alert_sync_failure,
         "alert_instance_offline": _alert_instance_offline,
         "alert_high_block_rate": _alert_high_block_rate,
+        "alert_on_vip_transfer": _alert_on_vip_transfer,
         "block_rate_threshold_pct": _block_rate_threshold_pct,
         "offline_alert_max_count": _offline_alert_max_count,
         "offline_alert_retries": _offline_alert_retries,
@@ -291,6 +304,7 @@ def get_settings_raw() -> dict:
         "alert_sync_failure": _alert_sync_failure,
         "alert_instance_offline": _alert_instance_offline,
         "alert_high_block_rate": _alert_high_block_rate,
+        "alert_on_vip_transfer": _alert_on_vip_transfer,
         "block_rate_threshold_pct": _block_rate_threshold_pct,
         "offline_alert_max_count": _offline_alert_max_count,
         "offline_alert_retries": _offline_alert_retries,
@@ -403,5 +417,73 @@ async def notify_instance_recovered_from_stall(
     await send(
         _with_site(f"Instance recovered: {name} — query logging resumed.", site_name),
         title="MyPi Alert",
+        site_id=site_id,
+    )
+
+
+async def notify_vip_transfer(
+    old_name: str,
+    new_name: str,
+    site_name: str = "",
+    site_id: uuid.UUID | None = None,
+) -> None:
+    """The active node in a VIP cluster shifted from `old_name` to
+    `new_name`. Gated by the dedicated `alert_on_vip_transfer` toggle —
+    independent of the offline / sync-failure paths because most operators
+    don't need to know about every failover."""
+    if site_id is not None:
+        cfg = await _resolve_site_config(site_id)
+        if cfg is None or not cfg.get("alert_on_vip_transfer"):
+            return
+    elif not _alert_on_vip_transfer:
+        return
+    await send(
+        _with_site(
+            f"VIP transfer: now serving from {new_name} (was {old_name}).",
+            site_name,
+        ),
+        title="MyPi VIP Transfer",
+        site_id=site_id,
+    )
+
+
+async def notify_vip_group_stalled(
+    names: str,
+    site_name: str = "",
+    site_id: uuid.UUID | None = None,
+) -> None:
+    """Every node in a VIP cluster has gone flat — the whole VIP appears
+    dead. Reuses the offline alert toggle: if you've muted offline alerts
+    you don't get woken up here either."""
+    if site_id is not None:
+        cfg = await _resolve_site_config(site_id)
+        if cfg is None or not cfg["alert_instance_offline"]:
+            return
+    elif not _alert_instance_offline:
+        return
+    await send(
+        _with_site(
+            f"VIP cluster stalled — every node ({names}) has stopped "
+            f"serving DNS. The whole VIP appears dead.",
+            site_name,
+        ),
+        title="MyPi VIP Down",
+        site_id=site_id,
+    )
+
+
+async def notify_vip_group_recovered(
+    site_name: str = "",
+    site_id: uuid.UUID | None = None,
+) -> None:
+    if site_id is not None:
+        cfg = await _resolve_site_config(site_id)
+        if cfg is None or not cfg["alert_instance_offline"]:
+            return
+    elif not _alert_instance_offline:
+        return
+    await send(
+        _with_site("VIP cluster recovered — at least one node is serving DNS again.", site_name),
+        title="MyPi VIP",
         site_id=site_id,
     )
