@@ -336,6 +336,7 @@ async def _check_vip_state(
     site_id: uuid.UUID,
     site_name: str,
     poll_outcomes: list[tuple[PiholeInstance, StatsSnapshot, bool | None]],
+    configured_vip_count: int,
 ) -> None:
     """Per-site VIP cluster detector.
 
@@ -445,7 +446,12 @@ async def _check_vip_state(
     # Group stall — every VIP node has been flat for >= threshold polls
     # AND the cluster has at least one historical advance to anchor
     # against (so a fresh install with no traffic doesn't fire).
-    if ever_advanced:
+    # Require positive observation of every configured VIP node this poll:
+    # an offline/missing node returns no signal, and treating that as "flat"
+    # combined with a quiet standby produced false alerts on transient
+    # master TLS blips. Per-instance offline alerts cover real outages.
+    all_observed_online = len(vip_outcomes) == configured_vip_count
+    if ever_advanced and all_observed_online:
         all_flat = all(
             seq - _vip_last_advance_seq.get(str(inst.id), seq)
             >= _STALL_THRESHOLD_POLLS
@@ -628,8 +634,13 @@ async def poll_stats_for_site(site_id: uuid.UUID) -> None:
         snapshot, advanced = res
         poll_outcomes.append((inst, snapshot, advanced))
 
-    if any(inst.vip_role in ("master", "replica") for inst, _, _ in poll_outcomes):
-        await _check_vip_state(site_id, site_name, poll_outcomes)
+    configured_vip_count = sum(
+        1 for inst in instances if inst.vip_role in ("master", "replica")
+    )
+    if configured_vip_count:
+        await _check_vip_state(
+            site_id, site_name, poll_outcomes, configured_vip_count,
+        )
 
 
 async def _fetch_version_for(instance: PiholeInstance) -> None:
