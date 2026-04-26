@@ -4,6 +4,19 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.11.0-dev.20] — 2026-04-26
+
+Soak-window false-positive fix.
+
+### Fixed
+- **VIP "cluster stalled" alert no longer fires on a single transient TLS blip on the master.** Overnight the WTR site fired `VIP cluster stalled in site 'WTR' — every node (pihole3) has been flat for >= 5 polls` after pihole1 had a one-poll `SSLError: [SSL] record layer failure` and recovered on the very next poll. Root cause: `_check_vip_state` filtered offline snapshots out of `vip_outcomes` before evaluating the all-flat condition, so when the master blipped offline the check ran on just the standby — which is naturally flat for hours at a time because the VIP isn't on it — and tripped immediately.
+- `app/services/collector.py::_check_vip_state` now takes a `configured_vip_count` argument and only evaluates the group-stall condition when *every* configured VIP node was observed online this poll (`len(vip_outcomes) == configured_vip_count`). One offline or missing node defers the decision rather than firing — real outages are still caught by the per-instance offline alert path. `poll_stats_for_site` computes the count from `instances` (pre-gather, so a raised poll task can't make the count look smaller than it is).
+
+### Why
+A hot-spare cluster's standby is flat by design. The previous logic only required the *online subset* of VIP nodes to be flat, which meant any transient master failure would unmask the standby's natural quietness as a "whole VIP dead" condition. The fix preserves the original alert's intent (every node simultaneously dead) while requiring positive observation rather than absence-of-signal.
+
+---
+
 ## [1.11.0-dev.19] — 2026-04-25
 
 Last queue item before the 1.11.0 soak-and-merge.
