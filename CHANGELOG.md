@@ -4,6 +4,18 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.11.0-dev.21] — 2026-05-01
+
+VIP transfer alert: longer confirm window.
+
+### Changed
+- **Raised `_VIP_TRANSFER_CONFIRM_POLLS` from 2 to 5** in `app/services/collector.py`. A VIP transfer is now declared only after the standby has been advancing its query watermark for 5 consecutive site-polls (~5 min at the 60s poll cadence) while the current active is idle — up from 2 polls (~2 min).
+
+### Why
+At 2 polls a longer-lived master blip (TLS handshake stall, brief FTL wedge, a gravity run that briefly stops counting) could overlap with a small burst of traffic the standby legitimately answered, producing a phantom transfer alert that immediately self-reverted. 5 polls of sustained advance is a much stronger signal that traffic has actually shifted, while still catching a real failover well within the alerting tolerance for this dashboard. The "candidate must be advancing" requirement is unchanged — a standby that briefly answers a single query and then goes quiet again still won't trip the gate.
+
+---
+
 ## [1.11.0-dev.20] — 2026-04-26
 
 Soak-window false-positive fix.

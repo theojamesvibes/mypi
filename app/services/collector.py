@@ -112,10 +112,14 @@ _vip_group_stall_alerted: dict[uuid.UUID, bool] = {}
 _site_poll_seq: dict[uuid.UUID, int] = {}
 
 # Polls of sustained advance required on a candidate before we declare the
-# active node has shifted. With a 60s poll interval, 2 polls = ~2 min —
-# tight enough to catch a real failover quickly, loose enough that a single
-# transient on the master doesn't cause a phantom transfer.
-_VIP_TRANSFER_CONFIRM_POLLS = 2
+# active node has shifted. With a 60s poll interval, 5 polls = ~5 min —
+# loose enough that a longer-lived blip on the master (TLS handshake stall,
+# brief FTL wedge, gravity run) doesn't cause a phantom transfer to the
+# standby just because it happened to serve a few queries during the gap.
+# The candidate must be *processing traffic* (advancing query watermark)
+# for all 5 consecutive polls — a standby that briefly answers a query and
+# then goes quiet again won't trip the gate.
+_VIP_TRANSFER_CONFIRM_POLLS = 5
 
 # Fire-and-forget Pushover notification tasks. asyncio keeps only weak refs
 # to bare `create_task(...)` — stash each task here and log any exception so
