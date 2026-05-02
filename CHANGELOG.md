@@ -4,6 +4,19 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [1.11.0-dev.22] — 2026-05-01
+
+Dependabot wave 1: low-risk dependency bumps.
+
+### Changed
+- **`apscheduler` 3.10.4 → 3.11.2** (`requirements.txt`). Routine bump on a stable scheduler; `AsyncIOScheduler` + `add_job` surface unchanged.
+- **`cryptography` 44.0.0 → 47.0.0** (`requirements.txt`). Pulled in transitively via `python-jose[cryptography]`; we don't import `cryptography` directly. Brings security fixes and current OpenSSL bindings.
+
+### Why
+Both bumps are low-blast-radius and safe to land during the 1.11.0 soak. Supersedes Dependabot PRs #23 and #25 (closed in favour of this multisite commit so the bumps soak alongside dev.21). Higher-risk bumps (fastapi, uvicorn, bcrypt, python 3.14 base image) are deferred to post-1.11.0 per the wave-2/3 plan.
+
+---
+
 ## [1.11.0-dev.21] — 2026-05-01
 
 VIP transfer alert: longer confirm window.
