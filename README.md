@@ -1,5 +1,6 @@
 # MyPi
 [![build](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/docker-publish.yml?style=flat-square)](https://github.com/theojamesvibes/mypi/actions)
+[![tests](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/test.yml?style=flat-square&label=tests)](https://github.com/theojamesvibes/mypi/actions/workflows/test.yml)
 [![version](https://img.shields.io/badge/version-2.0.5-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
 [![platform](https://img.shields.io/badge/platform-linux%2Famd64%20|%20linux%2Farm64-teal?style=flat-square)](https://github.com/theojamesvibes/mypi/pkgs/container/mypi)
 
@@ -416,30 +417,38 @@ mypi/
 │       ├── 0002_add_session_sid.py
 │       ├── 0003_add_is_master.py
 │       └── 0004_app_settings.py
-└── app/
-    ├── main.py               # FastAPI app entry point + scheduler lifecycle
-    ├── config.py             # Settings (pydantic-settings + YAML loader)
-    ├── database.py           # Async SQLAlchemy engine
-    ├── auth.py               # JWT + API key auth helpers
-    ├── models/               # SQLAlchemy ORM models
-    ├── schemas/              # Pydantic request/response schemas
-    ├── api/                  # FastAPI route handlers
-    │   ├── auth.py
-    │   ├── domains.py        # Block/unblock domain endpoints
-    │   ├── instances.py
-    │   ├── notifications.py  # Pushover settings + test/validate endpoints
-    │   ├── queries.py
-    │   ├── stats.py
-    │   └── sync.py
-    ├── services/
-    │   ├── pihole_client.py  # Pi-hole v6 REST API client (teleporter support)
-    │   ├── client_manager.py # Shared persistent client registry (one session per instance)
-    │   ├── collector.py      # APScheduler background jobs + offline alerts
-    │   ├── config_loader.py  # YAML → DB sync
-    │   ├── pushover.py       # Pushover notification service
-    │   └── sync_service.py   # Pi-hole config sync (master → replicas)
-    ├── static/               # CSS + JS
-    └── templates/            # Jinja2 HTML templates
+├── app/
+│   ├── main.py               # FastAPI app entry point + scheduler lifecycle
+│   ├── config.py             # Settings (pydantic-settings + YAML loader)
+│   ├── database.py           # Async SQLAlchemy engine
+│   ├── auth.py               # JWT + API key auth helpers
+│   ├── models/               # SQLAlchemy ORM models
+│   ├── schemas/              # Pydantic request/response schemas
+│   ├── api/                  # FastAPI route handlers
+│   │   ├── auth.py
+│   │   ├── domains.py        # Block/unblock domain endpoints
+│   │   ├── instances.py
+│   │   ├── notifications.py  # Pushover settings + test/validate endpoints
+│   │   ├── queries.py
+│   │   ├── stats.py
+│   │   └── sync.py
+│   ├── services/
+│   │   ├── pihole_client.py  # Pi-hole v6 REST API client (teleporter support)
+│   │   ├── client_manager.py # Shared persistent client registry (one session per instance)
+│   │   ├── collector.py      # APScheduler background jobs + offline alerts
+│   │   ├── config_loader.py  # YAML → DB sync
+│   │   ├── pushover.py       # Pushover notification service
+│   │   └── sync_service.py   # Pi-hole config sync (master → replicas)
+│   ├── static/               # CSS + JS
+│   └── templates/            # Jinja2 HTML templates
+├── tests/                    # pytest suite (unit + integration + e2e smoke)
+│   ├── unit/                 # pure-function tests, no DB / no httpx
+│   ├── services/             # service-layer tests with respx mocks
+│   ├── integration/          # FastAPI + Postgres testcontainer
+│   └── e2e/smoke.sh          # bash smoke against a deployed instance
+├── requirements.txt          # runtime deps
+├── requirements-dev.txt      # test-suite deps (testcontainers, respx, pytest-cov)
+└── scripts/test.sh           # local pytest runner
 ```
 
 ---
@@ -477,6 +486,35 @@ export SECRET_KEY="dev-secret-key"
 alembic upgrade head
 uvicorn app.main:app --reload --port 8080
 ```
+
+---
+
+## Testing
+
+MyPi ships with a **212-case pytest suite** plus a bash smoke for live deployments. The suite runs on every push and PR to `main` via [`.github/workflows/test.yml`](.github/workflows/test.yml) and gates a **55% coverage floor** (current actual: 57.42%) — a PR that drops coverage below the floor fails the build.
+
+```bash
+# Local — pytest in a venv on demand
+pip install -r requirements-dev.txt
+./scripts/test.sh                          # all 212 tests, ~30 s
+./scripts/test.sh tests/unit               # unit suite only
+
+# E2E smoke against a running container
+./tests/e2e/smoke.sh https://mypi.example  # unauthenticated checks
+MYPI_USER=admin MYPI_PASSWORD=… \
+  ./tests/e2e/smoke.sh https://mypi.example  # full login → /me → logout flow
+```
+
+**Layout:**
+
+- `tests/unit/` — pure-function tests for `auth`, `config`, `query_stream`, sync ZIP validator. No DB, no network.
+- `tests/services/` — service-layer tests for `pihole_client` (respx-mocked HTTP) and the `collector` state machines (circuit breaker, VIP transfer detection, stall detection).
+- `tests/integration/` — FastAPI ASGI transport + Postgres testcontainer. Covers login/logout/JTI revocation, API-key flow incl. legacy SHA-256 auto-upgrade, change-password, middleware, sites/sync/notifications APIs, sync_service orchestration, Pushover encrypt/decrypt, version_check.
+- `tests/e2e/smoke.sh` — bash smoke against a live deployment.
+
+**Regression guards** are explicit for every security/connection-management hardening that's shipped: bcrypt 72-byte truncation behaviour, login timing-equalisation, JWT algorithm allowlist (rejects forged `alg=none`), API-key `last_used_at` write-coalescing, SSE subscriber cap, body-size 413, YAML loud-fail with line/column, VIP transfer 5-poll confirmation, group-stall every-node-online requirement, Pi-hole client 401-retry, FTL-restart chunked-read swallow, Pushover credentials never leak via the API.
+
+The container image does **not** include the test suite (only `app/` is COPY'd in `Dockerfile`); `requirements-dev.txt` is dev-only.
 
 ---
 
