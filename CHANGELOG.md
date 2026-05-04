@@ -4,6 +4,29 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.0.0] — 2026-05-03
+
+First major release. Cuts the `multisite` development line (dev.0–dev.22) to a stable tag after a clean soak on the production cluster.
+
+### Headline
+- **Multi-site.** A single MyPi instance now aggregates multiple independent Pi-hole *sites* (each a master + optional replicas), with per-site polling, sync, query history, settings, and an API surface scoped by site slug. Single-site deployments are unaffected — `default_site` in `pihole_instances.yml` keeps the old layout working.
+- **VIP / hot-spare cluster awareness.** `vip_master` / `vip_replica` YAML flags suppress per-instance stall alerts on standbys; group-stall fires only when every configured VIP node is observed online and flat; transfer alerts confirm over a 5-poll window before firing.
+- **Live queries over SSE.** `/queries` Live view now subscribes to `/api/queries/stream` (and the per-site variant) and only refetches when the collector commits new rows. Falls back to polling automatically if SSE is buffered by a proxy.
+- **Combined view.** New `/combined` page rolls per-site dashboards into a single screen with site-name page titles and a clickable logo.
+
+### Why a 2.0
+The DB schema gained four migrations (`0013_multisite` → `0016_add_vip_role`), the API grew a `/api/sites/{slug}/...` namespace, settings moved from `app_settings` to per-site `site_settings`, and the collector / sync / pushover services were rewritten to be site-aware. None of that breaks the single-site path, but the storage and API shape changed enough that a major bump is the honest signal.
+
+### Notes for upgraders
+- Run migrations on first boot (Alembic auto-runs in `lifespan`). 0015 moves existing global settings into the default site's `site_settings` row.
+- Existing `pihole_instances.yml` files keep working; opt into multi-site by adding a `sites:` block (see `pihole_instances.yml.example`).
+- Wave-1 dependency bumps (apscheduler 3.11.2, cryptography 47.0.0) are included; wave-2/3 (fastapi, uvicorn, bcrypt, python 3.14 base image) remain deferred.
+
+### Per-step history
+The full dev.0–dev.22 changelog entries below this section document each phase of the multisite rollout, the VIP work, the SSE transport, the Top Clients fixes, and the wave-1 dependency bumps. They are kept verbatim for traceability.
+
+---
+
 ## [1.11.0-dev.22] — 2026-05-01
 
 Dependabot wave 1: low-risk dependency bumps.
