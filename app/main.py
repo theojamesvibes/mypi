@@ -327,14 +327,14 @@ async def swagger_ui(request: Request):
     # (light/dark/system) via localStorage['mypi-theme'] — same logic as base.html.
     if not settings.enable_api_docs:
         raise HTTPException(status_code=404)
-    return templates.TemplateResponse("docs.html", {"request": request})
+    return templates.TemplateResponse(request, "docs.html", {})
 
 
 # ── Web UI routes ─────────────────────────────────────────────────────────────
 
 @app.get("/login", response_class=HTMLResponse, include_in_schema=False)
 async def login_page(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request})
+    return templates.TemplateResponse(request, "login.html", {})
 
 
 @app.post("/login", include_in_schema=False)
@@ -350,7 +350,7 @@ async def login_form(request: Request, response: Response, db=Depends(get_db)):
 
     if user is None or not verify_password(password, user.hashed_password):
         return templates.TemplateResponse(
-            "login.html", {"request": request, "error": "Invalid username or password"}, status_code=401
+            request, "login.html", {"error": "Invalid username or password"}, status_code=401
         )
 
     expire_minutes = session_settings.effective_minutes(session_settings.get_timeout_minutes())
@@ -393,8 +393,8 @@ async def dashboard(request: Request, current_user=Depends(get_current_user_opti
     if current_user.password_change_required:
         return RedirectResponse(url="/change-password", status_code=303)
     return templates.TemplateResponse(
-        "dashboard.html",
-        {"request": request, "user": current_user, "site_slug": ""},
+        request, "dashboard.html",
+        {"user": current_user, "site_slug": ""},
     )
 
 
@@ -408,8 +408,8 @@ async def dashboard_for_site(
     if current_user.password_change_required:
         return RedirectResponse(url="/change-password", status_code=303)
     return templates.TemplateResponse(
-        "dashboard.html",
-        {"request": request, "user": current_user, "site_slug": slug},
+        request, "dashboard.html",
+        {"user": current_user, "site_slug": slug},
     )
 
 
@@ -420,8 +420,8 @@ async def queries_page(request: Request, current_user=Depends(get_current_user_o
     if current_user.password_change_required:
         return RedirectResponse(url="/change-password", status_code=303)
     return templates.TemplateResponse(
-        "queries.html",
-        {"request": request, "user": current_user, "site_slug": ""},
+        request, "queries.html",
+        {"user": current_user, "site_slug": ""},
     )
 
 
@@ -435,8 +435,8 @@ async def queries_page_for_site(
     if current_user.password_change_required:
         return RedirectResponse(url="/change-password", status_code=303)
     return templates.TemplateResponse(
-        "queries.html",
-        {"request": request, "user": current_user, "site_slug": slug},
+        request, "queries.html",
+        {"user": current_user, "site_slug": slug},
     )
 
 
@@ -447,8 +447,8 @@ async def settings_page(request: Request, current_user=Depends(get_current_user_
     if current_user.password_change_required:
         return RedirectResponse(url="/change-password", status_code=303)
     return templates.TemplateResponse(
-        "settings.html",
-        {"request": request, "user": current_user, "site_slug": ""},
+        request, "settings.html",
+        {"user": current_user, "site_slug": ""},
     )
 
 
@@ -462,8 +462,8 @@ async def settings_page_for_site(
     if current_user.password_change_required:
         return RedirectResponse(url="/change-password", status_code=303)
     return templates.TemplateResponse(
-        "settings.html",
-        {"request": request, "user": current_user, "site_slug": slug},
+        request, "settings.html",
+        {"user": current_user, "site_slug": slug},
     )
 
 
@@ -474,8 +474,8 @@ async def combined_page(request: Request, current_user=Depends(get_current_user_
     if current_user.password_change_required:
         return RedirectResponse(url="/change-password", status_code=303)
     return templates.TemplateResponse(
-        "combined.html",
-        {"request": request, "user": current_user, "site_slug": ""},
+        request, "combined.html",
+        {"user": current_user, "site_slug": ""},
     )
 
 
@@ -483,7 +483,7 @@ async def combined_page(request: Request, current_user=Depends(get_current_user_
 async def change_password_page(request: Request, current_user=Depends(get_current_user_optional)):
     if current_user is None:
         return RedirectResponse(url="/login", status_code=303)
-    return templates.TemplateResponse("change_password.html", {"request": request, "user": current_user})
+    return templates.TemplateResponse(request, "change_password.html", {"user": current_user})
 
 
 @app.post("/change-password", include_in_schema=False)
@@ -498,7 +498,7 @@ async def change_password_form(request: Request, db=Depends(get_db), current_use
 
     def _error(msg: str):
         return templates.TemplateResponse(
-            "change_password.html", {"request": request, "user": current_user, "error": msg}, status_code=422
+            request, "change_password.html", {"user": current_user, "error": msg}, status_code=422
         )
 
     if not verify_password(current_pw, current_user.hashed_password):

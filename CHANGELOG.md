@@ -4,6 +4,15 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.0.2] — 2026-05-04
+
+### Starlette signature compat (caught during 2.0.1 soak)
+Newer Starlette (pulled in by fastapi 0.136) dropped support for the legacy `TemplateResponse(name, context)` form — it now requires `TemplateResponse(request, name, context)`. The old form silently passes the context dict where `name` is expected, which then becomes a Jinja2 cache key and raises `TypeError: cannot use 'tuple' as a dict key (unhashable type: 'dict')`.
+
+All 13 call sites in `app/main.py` updated to the new signature; `request` removed from the per-call context dicts since Starlette injects it via `request_context_processor`.
+
+---
+
 ## [2.0.1] — 2026-05-04
 
 ### Dependabot wave 2/3 — supersedes #11, #13, #26, #27, #28
