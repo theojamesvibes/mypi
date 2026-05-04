@@ -30,4 +30,10 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8080/api/health || exit 1
 
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8080"]
+# --proxy-headers + --forwarded-allow-ips=* makes uvicorn rewrite request.client
+# from X-Forwarded-For so slowapi rate-limits per real client IP, not per Traefik
+# peer IP (which would lump every external request into one bucket and either
+# DoS the limiter or disable it). MyPi is intended to run behind a reverse proxy
+# (Traefik/nginx/caddy); operators exposing it directly should override these
+# flags via FORWARDED_ALLOW_IPS env or a custom command.
+CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8080 --proxy-headers --forwarded-allow-ips=*"]

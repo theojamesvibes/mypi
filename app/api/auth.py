@@ -15,6 +15,7 @@ from app.auth import (
     hash_password,
     require_mutation,
     verify_password,
+    verify_user_password,
 )
 from app.config import SESSION_COOKIE_NAME, settings
 from app.database import get_db
@@ -40,7 +41,9 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 async def login(request: Request, body: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.username == body.username, User.is_active.is_(True)))
     user = result.scalar_one_or_none()
-    if user is None or not verify_password(body.password, user.hashed_password):
+    # verify_user_password runs bcrypt against a dummy hash when user is None
+    # so response time doesn't leak whether the username is registered.
+    if not verify_user_password(body.password, user):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
     expire_minutes = session_settings.effective_minutes(session_settings.get_timeout_minutes())
