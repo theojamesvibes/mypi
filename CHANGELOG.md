@@ -4,6 +4,18 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.0.4] — 2026-05-04
+
+### Security hardening — wave 2 of 3
+Closes the medium-priority items from the 2.0.2 review.
+
+- **Default admin password no longer exploitable in the deploy gap.** `INITIAL_ADMIN_PASSWORD` default changed from `"changeme"` to `""`. When unset, `_bootstrap()` generates a `secrets.token_urlsafe(16)` random password, logs it once at WARN, and forces a password change on first login. Closes the window where a fresh deployment exposed before the operator's first login could be hijacked by an attacker logging in as `admin/changeme` and changing the password themselves. Operators who explicitly set `INITIAL_ADMIN_PASSWORD` in their `.env` keep the old behaviour.
+- **JWT algorithm locked to HMAC family.** `app/auth.py` adds `_VALID_JWT_ALGORITHMS = {HS256, HS384, HS512}`. Both encode and decode now route through `_jwt_algorithm()`, which falls back to HS256 with a warning when `settings.algorithm` is outside the allow-list. Closes the operator-footgun path where setting `ALGORITHM=none` in `.env` would let python-jose accept unsigned tokens.
+
+No DB migration, no config change required. Existing deployments with users already in the DB skip the bootstrap path entirely.
+
+---
+
 ## [2.0.3] — 2026-05-04
 
 ### Security hardening — wave 1 of 3

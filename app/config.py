@@ -36,7 +36,12 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60 * 8  # 8 hours
 
     initial_admin_user: str = "admin"
-    initial_admin_password: str = "changeme"
+    # Empty by default — _bootstrap() generates a random password on first
+    # run when none is set, logs it once, and forces a change on first login.
+    # This closes the deploy-gap window where an attacker could log in as
+    # admin/changeme and lock out the legitimate operator before they got
+    # to change the password themselves.
+    initial_admin_password: str = ""
 
     # Fernet key for encrypting Pi-hole API passwords at rest.
     # Generate with: python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"

@@ -78,6 +78,30 @@ def _api_key_salt() -> str:
     return settings.api_key_salt or settings.secret_key
 
 
+# Allow-list — only HMAC-family algorithms are accepted by both encode and
+# decode. Guards against the "ALGORITHM=none in .env" footgun where
+# python-jose would happily accept unsigned tokens when "none" is listed.
+# RS256/ES256 etc. would require an asymmetric keypair we don't ship, so
+# they're not in the list either.
+_VALID_JWT_ALGORITHMS: frozenset[str] = frozenset({"HS256", "HS384", "HS512"})
+
+
+def _jwt_algorithm() -> str:
+    """Return the configured algorithm validated to be HMAC-family.
+
+    If `settings.algorithm` is anything outside the allow-list (including
+    the "none" footgun), fall back to HS256 and log a warning. Both encode
+    and decode call this so the two sides can never diverge.
+    """
+    if settings.algorithm in _VALID_JWT_ALGORITHMS:
+        return settings.algorithm
+    logger.warning(
+        "ALGORITHM=%r is not in the supported set %s — using HS256.",
+        settings.algorithm, sorted(_VALID_JWT_ALGORITHMS),
+    )
+    return "HS256"
+
+
 def create_access_token(subject: str, expire_minutes: int | None = None) -> str:
     minutes = expire_minutes if expire_minutes is not None else settings.access_token_expire_minutes
     expire = datetime.now(timezone.utc) + timedelta(minutes=minutes)
@@ -85,14 +109,14 @@ def create_access_token(subject: str, expire_minutes: int | None = None) -> str:
     return jwt.encode(
         {"sub": subject, "exp": expire, "jti": jti},
         _jwt_key(),
-        algorithm=settings.algorithm,
+        algorithm=_jwt_algorithm(),
     )
 
 
 def _decode_token_claims(token: str) -> dict | None:
     """Decode a JWT and return its full claims dict, or None if invalid."""
     try:
-        return jwt.decode(token, _jwt_key(), algorithms=[settings.algorithm])
+        return jwt.decode(token, _jwt_key(), algorithms=[_jwt_algorithm()])
     except JWTError:
         return None
 
