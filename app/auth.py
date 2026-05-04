@@ -27,12 +27,18 @@ logger = logging.getLogger(__name__)
 _readonly_flag: ContextVar[bool] = ContextVar("mypi_auth_readonly", default=False)
 
 
+# bcrypt 5.0 raises ValueError on >72-byte input to hashpw; 4.x silently truncated.
+# Truncate on both sides so existing stored hashes (made from truncated bytes under
+# 4.x) keep verifying and no caller is forced to handle a new exception path.
+_BCRYPT_MAX_BYTES = 72
+
+
 def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    return bcrypt.hashpw(password.encode()[:_BCRYPT_MAX_BYTES], bcrypt.gensalt()).decode()
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return bcrypt.checkpw(plain.encode(), hashed.encode())
+    return bcrypt.checkpw(plain.encode()[:_BCRYPT_MAX_BYTES], hashed.encode())
 
 
 def _jwt_key() -> str:

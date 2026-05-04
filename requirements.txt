@@ -1,5 +1,5 @@
-fastapi==0.115.6
-uvicorn[standard]==0.32.1
+fastapi==0.136.1
+uvicorn[standard]==0.46.0
 sqlalchemy[asyncio]==2.0.49
 asyncpg==0.31.0
 alembic==1.18.4
@@ -8,8 +8,8 @@ pydantic==2.13.3
 pydantic-settings==2.14.0
 pyyaml==6.0.3
 python-jose[cryptography]==3.5.0
-bcrypt==4.3.0
-python-multipart==0.0.26
+bcrypt==5.0.0
+python-multipart==0.0.27
 jinja2==3.1.6
 apscheduler==3.11.2
 cryptography==47.0.0
