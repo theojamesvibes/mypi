@@ -28,7 +28,7 @@ from app.api import sites as sites_router
 from app.api import stats as stats_router
 from app.api import sync as sync_router
 from app.api import version as version_router
-from app.auth import _decode_token_claims, get_current_user, get_current_user_optional, hash_password, verify_password
+from app.auth import _decode_token_claims, get_current_user, get_current_user_optional, hash_password, verify_password, verify_user_password
 from app.config import SESSION_COOKIE_NAME, settings
 from app.database import AsyncSessionLocal, get_db
 from app.limiter import limiter
@@ -344,11 +344,13 @@ async def login_form(request: Request, response: Response, db=Depends(get_db)):
     username = form.get("username", "")
     password = form.get("password", "")
 
-    from app.auth import create_access_token, verify_password
+    from app.auth import create_access_token
     result = await db.execute(select(User).where(User.username == username, User.is_active.is_(True)))
     user = result.scalar_one_or_none()
 
-    if user is None or not verify_password(password, user.hashed_password):
+    # verify_user_password runs bcrypt against a dummy hash when user is None
+    # so response time doesn't leak whether the username is registered.
+    if not verify_user_password(password, user):
         return templates.TemplateResponse(
             request, "login.html", {"error": "Invalid username or password"}, status_code=401
         )
