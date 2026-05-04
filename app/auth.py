@@ -20,6 +20,13 @@ from app.models.user import ApiKey, RevokedToken, User
 
 logger = logging.getLogger(__name__)
 
+# How often `last_used_at` on an API key is allowed to be written. An iOS
+# client polling once every 30s would otherwise commit a write transaction
+# on *every* request just to bump this column. Coalescing to once per
+# minute keeps the "when was this key last used" UX accurate without the
+# write amplification.
+_API_KEY_LAST_USED_COALESCE_SECONDS = 60
+
 # Per-request marker: True when the current principal was authenticated via a
 # read-only API key. `require_mutation` raises 403 when this is set. Stored
 # in a ContextVar so FastAPI's dependency graph doesn't need to thread an
@@ -32,6 +39,15 @@ _readonly_flag: ContextVar[bool] = ContextVar("mypi_auth_readonly", default=Fals
 # 4.x) keep verifying and no caller is forced to handle a new exception path.
 _BCRYPT_MAX_BYTES = 72
 
+# Pre-computed once at module load. The plaintext is irrelevant — we never
+# want it to verify successfully — but checkpw against this hash takes the
+# same wall-clock time as a real password check, so login responses don't
+# leak whether the submitted username exists. Used by verify_user_password
+# below when the user lookup returned None.
+_DUMMY_BCRYPT_HASH: str = bcrypt.hashpw(
+    b"unused-dummy-for-timing-equalization", bcrypt.gensalt()
+).decode()
+
 
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode()[:_BCRYPT_MAX_BYTES], bcrypt.gensalt()).decode()
@@ -39,6 +55,17 @@ def hash_password(password: str) -> str:
 
 def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(plain.encode()[:_BCRYPT_MAX_BYTES], hashed.encode())
+
+
+def verify_user_password(plain: str, user: User | None) -> bool:
+    """Verify *plain* against *user*'s hash, or against a fixed dummy hash
+    when *user* is None. Always pays the cost of one bcrypt verify so the
+    response time of a login attempt doesn't reveal whether a username is
+    registered. Returns False whenever *user* is None.
+    """
+    target = user.hashed_password if user is not None else _DUMMY_BCRYPT_HASH
+    matched = bcrypt.checkpw(plain.encode()[:_BCRYPT_MAX_BYTES], target.encode())
+    return bool(matched and user is not None)
 
 
 def _jwt_key() -> str:
@@ -133,6 +160,7 @@ async def get_current_user(
             select(ApiKey).where(ApiKey.key_hash == hmac_hash, ApiKey.is_active.is_(True))
         )
         api_key = result.scalar_one_or_none()
+        legacy_upgraded = False
 
         # Fallback: try legacy plain-SHA256 hash for keys created before 1.4.0
         if api_key is None:
@@ -142,16 +170,30 @@ async def get_current_user(
             )
             api_key = result.scalar_one_or_none()
             if api_key:
-                # Transparently upgrade to HMAC-SHA256
+                # Transparently upgrade to HMAC-SHA256 — must commit so the
+                # next request finds it under the new hash.
                 api_key.key_hash = hmac_hash
                 api_key.key_hash_algo = "hmac-sha256"
+                legacy_upgraded = True
 
         if api_key:
             result2 = await db.execute(select(User).where(User.id == api_key.user_id, User.is_active.is_(True)))
             user = result2.scalar_one_or_none()
             if user:
-                api_key.last_used_at = datetime.now(timezone.utc)
-                await db.commit()
+                # Coalesce last_used_at writes — bumping it on every request
+                # would commit a write transaction per API call (heavy for
+                # iOS clients polling stats). Once-per-minute resolution is
+                # plenty for the "last used" UI.
+                now = datetime.now(timezone.utc)
+                last_used_stale = (
+                    api_key.last_used_at is None
+                    or (now - api_key.last_used_at).total_seconds()
+                    > _API_KEY_LAST_USED_COALESCE_SECONDS
+                )
+                if last_used_stale:
+                    api_key.last_used_at = now
+                if legacy_upgraded or last_used_stale:
+                    await db.commit()
                 if api_key.is_read_only:
                     is_readonly = True
                 logger.info('api-key "%s" → %s %s', api_key.name, request.method, request.url.path)

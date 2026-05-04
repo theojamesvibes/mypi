@@ -4,6 +4,19 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.0.3] — 2026-05-04
+
+### Security hardening — wave 1 of 3
+Closes the highest-priority items from the 2.0.2 security and connection-management review.
+
+- **Rate limiter now sees real client IPs.** `Dockerfile` adds `--proxy-headers --forwarded-allow-ips=*` to the uvicorn invocation. Behind Traefik/nginx the limiter was previously rate-limiting the proxy peer IP — meaning every external request shared one bucket and a single attacker could either burn the bucket to DoS legitimate users or effectively disable the limiter for distributed attempts. With proxy headers honored, slowapi keys per real client.
+- **Login no longer leaks usernames via timing.** `app/auth.py` adds `verify_user_password(plain, user)` that runs bcrypt against a fixed dummy hash when `user is None`, equalising response time between "username not found" and "wrong password". Both `/api/auth/login` (JSON) and the web `/login` form now use it. Existing user-authenticated paths (change-password, etc.) keep the direct `verify_password` since the user is already resolved by the auth dependency — no enumeration vector there.
+- **API-key `last_used_at` writes coalesced.** `get_current_user` no longer commits a write transaction on every API request. The column now updates at most once per minute per key (configurable via `_API_KEY_LAST_USED_COALESCE_SECONDS`), preserving "when was this key last used" UX without the write amplification an iOS client polling every 30s would otherwise produce. Legacy SHA-256 → HMAC hash auto-upgrade still commits unconditionally (one-shot, must persist).
+
+Operators upgrading from 2.0.x get all three fixes automatically; no DB migration, no config change required.
+
+---
+
 ## [2.0.2] — 2026-05-04
 
 ### Starlette signature compat (caught during 2.0.1 soak)
