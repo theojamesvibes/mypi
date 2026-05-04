@@ -15,6 +15,7 @@ Closes the remaining items from the 2.0.2 review plus the YAML-perms note from G
 - **Skip redundant `save_sid` round-trips.** `client_manager` caches the last-persisted SID per instance; `save_sid()` short-circuits when it matches, eliminating a SELECT per successful poll. Cuts roughly N×60 SELECTs/hour where N is the active-instance count.
 - **Cleaner scheduler shutdown.** Lifespan now `scheduler.pause()` → `await asyncio.sleep(2)` → `scheduler.shutdown(wait=False)` so in-flight scheduler jobs get a small grace window before client + engine teardown. Avoids the race where a poll mid-flight errored against a disposed engine on container restart.
 - **YAML-perms warning.** `load_site_configs` warns when `pihole_instances.yml` has any group/other read or write bits set. The file holds plaintext Pi-hole admin passwords; the warning prompts operators to `chmod 600` it.
+- **Loud-fail on YAML parse error (closes #24).** A `yaml.YAMLError` during `load_site_configs` now logs the line + column from `problem_mark` at ERROR and raises `RuntimeError`, aborting lifespan startup. Previously the parse failure was a single buried WARN and the container came up with stale DB state — silently — so a typo in `pihole_instances.yml` would leave the dashboard running on the previous config with no signal. An empty / genuinely-blank YAML still starts cleanly; only parse exceptions abort. OSError (file unreadable) keeps the soft-fail path so first-boot bind-mount races don't wedge the container.
 
 No DB migration, no config change required.
 

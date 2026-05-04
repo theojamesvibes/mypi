@@ -269,12 +269,36 @@ def load_site_configs(path: str | None = None) -> list[SiteConfig]:
     try:
         with open(p) as f:
             data = yaml.safe_load(f)
-    except (OSError, yaml.YAMLError) as exc:
+    except OSError as exc:
+        # File present but unreadable (permissions, mid-bind-mount race on
+        # first boot, etc.). Soft-fail — the next restart may resolve it
+        # and we'd rather come up than wedge the container in a crash loop
+        # waiting on a host-side issue.
         logger.warning(
-            "Could not load Pi-hole sites from %s: %s — starting with no sites.",
+            "Could not read %s: %s — starting with no sites.",
             config_path, exc,
         )
         return []
+    except yaml.YAMLError as exc:
+        # Parse failure is operator error, not infrastructure. Coming up
+        # with `[]` means downstream sync_sites_and_instances bails before
+        # touching the DB and the scheduler keeps polling the previous
+        # last-known-good config — silently — so the operator has no
+        # signal that their edit didn't take effect. Refuse to start so
+        # the failure is immediately visible.
+        mark = getattr(exc, "problem_mark", None)
+        if mark is not None:
+            location = f"line {mark.line + 1}, column {mark.column + 1}"
+        else:
+            location = "unknown location"
+        logger.error(
+            "Failed to parse %s at %s: %s — refusing to start so the "
+            "failure is visible. Fix the YAML and restart.",
+            config_path, location, exc,
+        )
+        raise RuntimeError(
+            f"Could not parse {config_path} ({location}): {exc}"
+        ) from exc
     if not data:
         return []
 
