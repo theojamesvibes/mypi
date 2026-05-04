@@ -1,4 +1,13 @@
 # Dev-only dependencies for the test suite. Installed in CI on top of
 # requirements.txt; never bundled into the runtime image.
 pytest==8.4.0
-pytest-asyncio==0.25.0
+pytest-asyncio==0.26.0
+
+# Integration suite — testcontainers spins a real Postgres per session
+# so tests run against the same DB engine as prod. psycopg2-binary is
+# only used by alembic / Base.metadata.create_all in the test bootstrap;
+# runtime still uses asyncpg.
+testcontainers==4.7.2
+# psycopg v3 has prebuilt wheels for Python 3.13/3.14 — psycopg2-binary
+# does not, and pulling in pg_config to build from source is brittle.
+psycopg[binary]==3.2.3
