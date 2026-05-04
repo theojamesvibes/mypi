@@ -18,6 +18,19 @@ logger = logging.getLogger(__name__)
 # One open client per instance (keyed by str(instance.id)).
 _clients: dict[str, PiholeClient] = {}
 
+# Last SID we actually persisted to the DB, keyed by str(instance.id).
+# `save_sid` skips the SELECT/UPDATE round-trip when the new SID matches
+# what's already cached here. After a process restart this cache is
+# empty, so the first save per instance does pay one round-trip — but
+# that confirms the in-memory cache and the DB row, after which the
+# poll path stops touching the DB on every successful auth.
+_last_persisted_sid: dict[str, str | None] = {}
+
+# Sentinel that's neither None nor any valid SID — used so the
+# "haven't seen this instance yet" case forces one DB round-trip after
+# a restart while a real `None` sid (no auth) short-circuits normally.
+_SENTINEL = object()
+
 
 async def get_client(instance: PiholeInstance) -> PiholeClient:
     """Return a persistent, open PiholeClient for *instance*.
@@ -41,12 +54,20 @@ async def get_client(instance: PiholeInstance) -> PiholeClient:
 
 
 async def save_sid(instance_id: object, sid: str | None) -> None:
-    """Persist the session SID so it survives container restarts."""
+    """Persist the session SID so it survives container restarts.
+
+    Short-circuits when *sid* matches the value already persisted, so the
+    common case (poll succeeded, SID hasn't rotated) costs nothing.
+    """
+    key = str(instance_id)
+    if _last_persisted_sid.get(key, _SENTINEL) == sid:
+        return
     async with AsyncSessionLocal() as db:
         inst = await db.get(PiholeInstance, instance_id)
         if inst and inst.session_sid != sid:
             inst.session_sid = sid
             await db.commit()
+        _last_persisted_sid[key] = sid
 
 
 async def close_client(instance_key: str, *, logout: bool = False) -> None:
@@ -62,6 +83,9 @@ async def close_client(instance_key: str, *, logout: bool = False) -> None:
     if client:
         await client.close(logout=logout)
     if logout:
+        # Force the persisted-SID cache to miss so the DB row is cleared
+        # even if the cached value already happens to be None.
+        _last_persisted_sid.pop(instance_key, None)
         try:
             await save_sid(uuid.UUID(instance_key), None)
         except Exception as exc:
