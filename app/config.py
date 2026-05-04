@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import stat
 from pathlib import Path
 
 import yaml
@@ -247,6 +248,24 @@ def load_site_configs(path: str | None = None) -> list[SiteConfig]:
     p = Path(config_path)
     if not p.exists():
         return []
+    # The YAML stores plaintext Pi-hole admin passwords. Warn if it has
+    # any group/other read or write bits — operators commonly leave it
+    # 644 (default umask) without realising the contents are secrets.
+    # Defense-in-depth only: the container itself runs as a single user,
+    # so this catches host-side mistakes during manual edits.
+    try:
+        file_mode = p.stat().st_mode
+        permissive_bits = file_mode & 0o077
+        if permissive_bits:
+            logger.warning(
+                "%s has permissive file mode %o — it contains plaintext "
+                "Pi-hole admin passwords. Tighten with `chmod 600 %s` so "
+                "only the owning user can read it.",
+                config_path, stat.S_IMODE(file_mode), config_path,
+            )
+    except OSError:
+        # Stat failure is non-fatal — falls through to the regular load.
+        pass
     try:
         with open(p) as f:
             data = yaml.safe_load(f)

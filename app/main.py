@@ -6,7 +6,7 @@ from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from slowapi import _rate_limit_exceeded_handler
@@ -247,6 +247,15 @@ async def lifespan(app: FastAPI):
         poll_settings_service.get_interval_seconds(),
     )
     yield
+    # Pause first so no new triggers fire, then give currently-executing
+    # jobs ~2s to finish before shutting the scheduler down. Without the
+    # grace, a poll mid-flight can race with the engine.dispose() below
+    # and error against a closed pool.
+    scheduler.pause()
+    try:
+        await _asyncio.sleep(2)
+    except _asyncio.CancelledError:
+        pass
     scheduler.shutdown(wait=False)
     await collector_shutdown()
     # Give in-flight background tasks a brief grace window to finish
@@ -307,6 +316,34 @@ _CSP_POLICY = (
     "base-uri 'self'; "
     "form-action 'self'"
 )
+
+
+# All legitimate inbound bodies are JSON forms (login, settings PUTs,
+# sync triggers) plus the multipart upload from /change-password. None
+# exceed a few KB; 1 MiB is generous headroom. Teleporter ZIPs are
+# master→replica (outbound), not inbound. A reverse proxy in front of
+# MyPi would normally cap this anyway, but defending in depth keeps the
+# limit consistent regardless of deploy topology.
+_MAX_BODY_BYTES = 1 * 1024 * 1024
+
+
+@app.middleware("http")
+async def _body_size_limit(request: Request, call_next):
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            length = int(content_length)
+        except ValueError:
+            return JSONResponse(
+                {"detail": "Invalid Content-Length header."},
+                status_code=400,
+            )
+        if length > _MAX_BODY_BYTES:
+            return JSONResponse(
+                {"detail": f"Request body exceeds {_MAX_BODY_BYTES} bytes."},
+                status_code=413,
+            )
+    return await call_next(request)
 
 
 @app.middleware("http")
