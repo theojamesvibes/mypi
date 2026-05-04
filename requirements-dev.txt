@@ -18,3 +18,10 @@ psycopg[binary]==3.2.13
 # real Pi-hole. Patches httpx.AsyncClient globally inside the
 # `respx_mock` fixture context.
 respx==0.22.0
+
+# Coverage measurement + gate. CI runs `pytest --cov=app --cov-fail-under=55`
+# so a PR that regresses coverage below the floor fails the build.
+# 55% reflects the floor after PRs 1-5 (current actual is ~57%); ratchet
+# up as PRs add tests.
+pytest-cov==6.0.0
+coverage==7.6.10
