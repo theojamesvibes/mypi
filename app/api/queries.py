@@ -43,26 +43,31 @@ async def _query_stream_sse(
         coalesced into one — the client only cares "did anything happen,"
         not "how many things."
       - `: keepalive` comment every `_SSE_HEARTBEAT_SECONDS` while idle.
+      - `event: error` then EOF when the global subscriber cap is hit;
+        the client's existing fallback path drops back to polling.
 
     The `async with subscribe(...)` context manager guarantees the
     subscription is unregistered when the generator exits — including on
     client disconnect, which Starlette signals via CancelledError.
     """
-    async with query_stream.subscribe(site_id) as queue:
-        yield b"event: open\ndata: \n\n"
-        while True:
-            try:
-                await asyncio.wait_for(queue.get(), timeout=_SSE_HEARTBEAT_SECONDS)
-                # Drain any backlog so a flurry of inserts collapses into
-                # a single client refetch.
-                while not queue.empty():
-                    try:
-                        queue.get_nowait()
-                    except asyncio.QueueEmpty:
-                        break
-                yield b"event: tick\ndata: \n\n"
-            except asyncio.TimeoutError:
-                yield b": keepalive\n\n"
+    try:
+        async with query_stream.subscribe(site_id) as queue:
+            yield b"event: open\ndata: \n\n"
+            while True:
+                try:
+                    await asyncio.wait_for(queue.get(), timeout=_SSE_HEARTBEAT_SECONDS)
+                    # Drain any backlog so a flurry of inserts collapses into
+                    # a single client refetch.
+                    while not queue.empty():
+                        try:
+                            queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
+                    yield b"event: tick\ndata: \n\n"
+                except asyncio.TimeoutError:
+                    yield b": keepalive\n\n"
+    except query_stream.SubscriberLimitReached:
+        yield b"event: error\ndata: subscriber limit reached\n\n"
 
 
 _SSE_HEADERS = {
