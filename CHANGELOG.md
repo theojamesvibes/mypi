@@ -4,6 +4,22 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.0.5] — 2026-05-04
+
+### Security & connection-management hardening — wave 3 of 3
+Closes the remaining items from the 2.0.2 review plus the YAML-perms note from Grok's pass.
+
+- **SSE subscriber cap.** `query_stream._MAX_SUBSCRIBERS = 50`. Once reached, `subscribe()` raises `SubscriberLimitReached` and the SSE route emits an `event: error` so clients fall back to polling instead of leaking file descriptors and asyncio task slots.
+- **Body-size limit middleware.** Requests with `Content-Length > 1 MiB` are rejected with HTTP 413. Inbound bodies in MyPi are all small JSON forms; teleporter ZIPs are master→replica (outbound). Defense-in-depth even when no reverse proxy caps body size.
+- **Right-sized DB pool.** `pool_size=10, max_overflow=5` (was 20+10). For an in-process app polling ~10 instances, peak in-flight sessions stay in single digits — 30 connections per worker was needlessly burning Postgres slots.
+- **Skip redundant `save_sid` round-trips.** `client_manager` caches the last-persisted SID per instance; `save_sid()` short-circuits when it matches, eliminating a SELECT per successful poll. Cuts roughly N×60 SELECTs/hour where N is the active-instance count.
+- **Cleaner scheduler shutdown.** Lifespan now `scheduler.pause()` → `await asyncio.sleep(2)` → `scheduler.shutdown(wait=False)` so in-flight scheduler jobs get a small grace window before client + engine teardown. Avoids the race where a poll mid-flight errored against a disposed engine on container restart.
+- **YAML-perms warning.** `load_site_configs` warns when `pihole_instances.yml` has any group/other read or write bits set. The file holds plaintext Pi-hole admin passwords; the warning prompts operators to `chmod 600` it.
+
+No DB migration, no config change required.
+
+---
+
 ## [2.0.4] — 2026-05-04
 
 ### Security hardening — wave 2 of 3

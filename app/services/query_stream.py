@@ -38,6 +38,18 @@ logger = logging.getLogger(__name__)
 # behaviour.
 _QUEUE_MAXSIZE = 4
 
+# Hard cap on simultaneous subscribers across the whole process. A single
+# browser session opens 1–3 SSE connections (dashboard + queries +
+# combined views in tabs); 50 is several normal users with several tabs
+# each. Past that, an authenticated client opening connections in a loop
+# would chew file descriptors and asyncio task slots — refuse new
+# connections cleanly so the live view falls back to polling.
+_MAX_SUBSCRIBERS = 50
+
+
+class SubscriberLimitReached(RuntimeError):
+    """Raised by `subscribe()` when `_MAX_SUBSCRIBERS` is already in use."""
+
 
 class _Subscriber:
     """One open SSE connection. `site_id=None` means cross-site (the
@@ -83,7 +95,16 @@ async def subscribe(
 ) -> AsyncIterator[asyncio.Queue[None]]:
     """Register an SSE consumer's queue. Caller owns the queue for the
     duration of the `async with`; cleanup runs when the context exits
-    (including on cancellation when the client disconnects)."""
+    (including on cancellation when the client disconnects).
+
+    Raises `SubscriberLimitReached` when the global cap is already in
+    use — the SSE route translates this into an `error` event so the
+    client falls back to polling without the connection looking dead.
+    """
+    if len(_subscribers) >= _MAX_SUBSCRIBERS:
+        raise SubscriberLimitReached(
+            f"SSE subscriber cap of {_MAX_SUBSCRIBERS} reached"
+        )
     sub = _Subscriber(site_id)
     _subscribers.add(sub)
     try:
