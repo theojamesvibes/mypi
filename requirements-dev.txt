@@ -19,9 +19,9 @@ psycopg[binary]==3.2.13
 # `respx_mock` fixture context.
 respx==0.22.0
 
-# Coverage measurement + gate. CI runs `pytest --cov=app --cov-fail-under=55`
+# Coverage measurement + gate. CI runs `pytest --cov=app --cov-fail-under=60`
 # so a PR that regresses coverage below the floor fails the build.
-# 55% reflects the floor after PRs 1-5 (current actual is ~57%); ratchet
-# up as PRs add tests.
+# 60% floor was set after the collector polling deep-dive; current actual
+# is ~62%. Ratchet up as future PRs add tests.
 pytest-cov==6.0.0
 coverage==7.6.10
