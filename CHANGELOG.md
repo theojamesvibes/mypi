@@ -4,6 +4,22 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.0.1] — 2026-05-04
+
+### Dependabot wave 2/3 — supersedes #11, #13, #26, #27, #28
+- **fastapi 0.115.6 → 0.136.1**
+- **uvicorn[standard] 0.32.1 → 0.46.0**
+- **bcrypt 4.3.0 → 5.0.0**
+- **python-multipart 0.0.26 → 0.0.27**
+- **Docker base image python:3.12-slim → python:3.14-slim**
+
+### bcrypt 5.0 compatibility — no end-user action required
+bcrypt 5.0 changed `hashpw` to raise `ValueError` for passwords longer than 72 bytes (4.x silently truncated). To preserve the prior behaviour and avoid forcing any user with a long password to reset, `hash_password` and `verify_password` in `app/auth.py` now truncate the input to 72 bytes before delegating to bcrypt. Existing stored `$2b$` hashes verify identically — the on-disk hash format is unchanged between 4.x and 5.0.
+
+API keys (HMAC-SHA256) and JWT signing keys are untouched by this change.
+
+---
+
 ## [2.0.0] — 2026-05-03
 
 First major release. Cuts the `multisite` development line (dev.0–dev.22) to a stable tag after a clean soak on the production cluster.
