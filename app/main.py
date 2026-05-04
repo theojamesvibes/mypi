@@ -145,19 +145,46 @@ async def _ensure_encryption_key() -> None:
 
 async def _bootstrap() -> None:
     """Sync instances and create initial admin user if needed."""
+    import secrets as _secrets
+
     async with AsyncSessionLocal() as db:
         await sync_sites_and_instances(db)
 
         result = await db.execute(select(User).limit(1))
         if result.scalar_one_or_none() is None:
+            initial_password = settings.initial_admin_password
+            generated = False
+            if not initial_password:
+                # No INITIAL_ADMIN_PASSWORD configured — generate one. We
+                # log it once at WARN so the operator can grab it from
+                # `docker compose logs`. password_change_required is set
+                # so the first successful login is forced through the
+                # change-password flow before any other endpoint works.
+                initial_password = _secrets.token_urlsafe(16)
+                generated = True
             admin = User(
                 username=settings.initial_admin_user,
-                hashed_password=hash_password(settings.initial_admin_password),
+                hashed_password=hash_password(initial_password),
                 password_change_required=True,
             )
             db.add(admin)
             await db.commit()
-            logger.info("Created initial admin user: %s (password change required on first login)", settings.initial_admin_user)
+            if generated:
+                banner = "=" * 70
+                logger.warning(
+                    "\n%s\n"
+                    "Created initial admin user '%s' with a generated password:\n"
+                    "    %s\n"
+                    "Log in once and change it immediately. This password is\n"
+                    "logged here only — it will not appear again.\n"
+                    "%s",
+                    banner, settings.initial_admin_user, initial_password, banner,
+                )
+            else:
+                logger.info(
+                    "Created initial admin user: %s (password change required on first login)",
+                    settings.initial_admin_user,
+                )
 
 
 async def _soft_load(name: str, coro) -> None:
