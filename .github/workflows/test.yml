@@ -29,4 +29,4 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Run pytest with coverage gate
-        run: pytest -v --cov=app --cov-report=term --cov-fail-under=55
+        run: pytest -v --cov=app --cov-report=term --cov-fail-under=60
