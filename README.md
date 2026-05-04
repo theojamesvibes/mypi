@@ -491,12 +491,12 @@ uvicorn app.main:app --reload --port 8080
 
 ## Testing
 
-MyPi ships with a **212-case pytest suite** plus a bash smoke for live deployments. The suite runs on every push and PR to `main` via [`.github/workflows/test.yml`](.github/workflows/test.yml) and gates a **55% coverage floor** (current actual: 57.42%) — a PR that drops coverage below the floor fails the build.
+MyPi ships with a **337-case pytest suite** plus a bash smoke for live deployments. The suite runs on every push and PR to `main` via [`.github/workflows/test.yml`](.github/workflows/test.yml) and gates a **75% coverage floor** (current actual: 76.41%) — a PR that drops coverage below the floor fails the build.
 
 ```bash
 # Local — pytest in a venv on demand
 pip install -r requirements-dev.txt
-./scripts/test.sh                          # all 212 tests, ~30 s
+./scripts/test.sh                          # all 337 tests, ~60 s
 ./scripts/test.sh tests/unit               # unit suite only
 
 # E2E smoke against a running container
