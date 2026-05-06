@@ -1,9 +1,14 @@
 name: ui-tests
 
-# Browser-driven Playwright suite. Runs against a live uvicorn process
+# Browser-driven Playwright suites. Runs against a live uvicorn process
 # backed by a real Postgres service container — same engine + driver as
 # prod. Kept in its own workflow so the fast pytest suite (.github/
 # workflows/test.yml) doesn't have to wait on Chromium downloads.
+#
+# Two parallel jobs:
+#   playwright            — seeded-DB tests (deterministic, fastest)
+#   playwright-collector  — emulator-driven E2E tests (real polling
+#                           through the Pi-hole v6 emulator subprocess)
 
 on:
   push:
@@ -76,6 +81,66 @@ jobs:
           name: ui-test-diagnostics
           path: |
             playwright-app.log
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  playwright-collector:
+    # Emulator-driven E2E suite. A small Pi-hole v6 emulator
+    # (tests/emulators/pihole/app.py) runs as a subprocess on
+    # 127.0.0.1:9876; the MyPi app subprocess polls it on a short
+    # cadence and the tests assert that real polled data lands on
+    # the dashboard.
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: mypi_collector_uitest
+          POSTGRES_USER: mypi
+          POSTGRES_PASSWORD: ui-test-pw
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U mypi"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://mypi:ui-test-pw@localhost:5433/mypi_collector_uitest
+      SECRET_KEY: collector-test-secret-key-not-for-production
+      MYPI_SKIP_TESTCONTAINER: "1"
+
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install runtime + dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Install Playwright Chromium + system deps
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run Playwright collector E2E suite
+        run: pytest tests/playwright_collector -m playwright -v --tracing=retain-on-failure
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-test-collector-diagnostics
+          path: |
+            playwright-collector-app.log
+            playwright-emulator.log
             test-results/
           if-no-files-found: ignore
           retention-days: 7
