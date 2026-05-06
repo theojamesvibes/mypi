@@ -155,14 +155,18 @@ async def stats_summary(x_ftl_sid: str | None = Header(default=None)):
 @app.get("/api/queries")
 async def queries(
     x_ftl_sid: str | None = Header(default=None),
-    length: int = Query(default=100, ge=1, le=1000),
+    # Real Pi-hole's /api/queries accepts `length` up to 100k; the
+    # MyPi backfill calls this with length=10000 per hourly window
+    # so anything below that 422s and aborts the entire backfill.
+    length: int = Query(default=100, ge=1, le=100000),
     from_: float | None = Query(default=None, alias="from"),
     until: float | None = Query(default=None),
 ):
     _check_sid(x_ftl_sid)
     # Generate a fixed set of synthetic queries timestamped relative to
-    # `now`. The collector's `from_ts` filter drives pagination, so the
-    # ids must monotonically increase as the seed advances.
+    # `now`. Rows are emitted newest-first (i=0 is wall-clock now,
+    # i=59 is now-360s). The from_ / until filters apply to the
+    # synthetic timeline, mirroring real Pi-hole behaviour.
     now = time.time()
     domains_blocked = ["ads.emu.test", "tracker.emu.test", "telemetry.emu.test"]
     domains_ok = ["api.emu.test", "cdn.emu.test", "www.emu.test", "mail.emu.test"]
@@ -176,8 +180,17 @@ async def queries(
     # Yield up to `length` rows: ~30 % blocked, deterministic mix.
     for i in range(min(length, 60)):
         ts = now - (i * 6)  # one query every 6 seconds going back ~6 min
+        # Newest-first iteration: once ts drops below from_, every
+        # remaining row is older and can be skipped.
         if from_ is not None and ts < from_:
             break
+        # Skip rows newer than `until`. We don't break here because the
+        # next iteration's ts is older — it may fall back inside the
+        # window. (For the collector's hourly backfill windows the
+        # synthetic 6-min span lands entirely in the most recent
+        # window anyway, but the filter is cheap to apply correctly.)
+        if until is not None and ts > until:
+            continue
         is_blocked = (i % 3) == 0
         domain = (
             domains_blocked[i % len(domains_blocked)] if is_blocked
