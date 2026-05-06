@@ -47,8 +47,18 @@ def test_sync_schedule_save_persists(
 
     page.locator("button[onclick='saveSchedule()']").click()
 
-    # The save handler updates the button label briefly. Reload the
-    # page and verify the values stuck — that's the real assertion.
+    # The save handler is async (PUT /api/sync/schedule). Reloading
+    # before it completes can cancel the in-flight request, leaving
+    # the schedule unsaved. The JS toggles the button class on
+    # response — `btn-success` on 200, `btn-danger` on error. Class
+    # match is unambiguous (vs text matching, where "Saved" and
+    # "Save failed" share a substring).
+    expect(
+        page.locator("button[onclick='saveSchedule()']")
+    ).to_have_class(re.compile(r"\bbtn-success\b"), timeout=10_000)
+
+    # Reload the page and verify the values stuck — that's the real
+    # assertion.
     page.reload()
     expect(page.locator("#sync-interval")).to_have_value("60", timeout=10_000)
     expect(page.locator("#sync-auto-gravity")).to_be_checked()
@@ -70,7 +80,13 @@ def test_session_timeout_save_persists(
     page.select_option("#session-timeout", "60")
     page.locator("button[onclick='saveSessionTimeout()']").click()
 
-    # The save handler shows a confirmation; reload to verify persistence.
+    # Wait for the save handler to confirm. PUT /api/auth/session-timeout
+    # is async and reloading before it commits can race the request to
+    # cancellation. The JS writes "Saved — takes effect on next login"
+    # into #session-timeout-result on success.
+    expect(page.locator("#session-timeout-result")).to_contain_text(
+        re.compile(r"saved", re.IGNORECASE), timeout=10_000,
+    )
     page.reload()
     expect(page.locator("#session-timeout")).to_have_value("60", timeout=10_000)
 
