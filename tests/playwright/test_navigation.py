@@ -48,6 +48,11 @@ def test_docs_page_renders(logged_in_page: Page, base_url: str):
 
 def test_health_endpoint_anonymous(page: Page, base_url: str):
     """/api/health is intentionally unauthenticated — used by the
-    Docker HEALTHCHECK and by the live_app fixture's readiness probe."""
+    Docker HEALTHCHECK and by the live_app fixture's readiness probe.
+
+    The endpoint serves version + poll intervals so the iOS app can
+    detect connectivity and compute staleness thresholds before an
+    API key is configured.
+    """
     page.goto(f"{base_url}/api/health")
-    expect(page.locator("body")).to_contain_text('"status"')
+    expect(page.locator("body")).to_contain_text('"version"')

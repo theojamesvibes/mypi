@@ -175,28 +175,39 @@ def live_app() -> Iterator[str]:
         log_fh.close()
 
 
-# ── Async DB session for seeding / cleanup ──────────────────────────────────
+# ── Sync DB session for seeding / cleanup ──────────────────────────────────
+#
+# Everything below runs synchronously via psycopg. The Playwright sync
+# API spins up its own event loop internally (`SyncBase.dispatcher_fiber`)
+# and pytest-asyncio spins up another for async fixtures — mixing the two
+# from inside one test reliably trips
+# "RuntimeError: Cannot run the event loop while another loop is running."
+# Sidestepping the conflict by going pure-sync for fixture work is far
+# simpler than trying to reconcile the two loops.
 
 
 @pytest.fixture(scope="session")
 def db_engine(live_app):
-    """Async SQLAlchemy engine pointed at the test database.
+    """Sync SQLAlchemy engine pointed at the test database.
 
-    Imported lazily so the parent tests/conftest.py has had a chance to
-    set DATABASE_URL before SQLAlchemy reads it.
+    Driver swap: app uses asyncpg in prod; tests use psycopg here so the
+    engine is plain-sync. Both target the same Postgres.
     """
-    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlalchemy import create_engine
 
-    return create_async_engine(os.environ["DATABASE_URL"], future=True)
+    sync_url = os.environ["DATABASE_URL"].replace(
+        "postgresql+asyncpg://", "postgresql+psycopg://",
+    )
+    return create_engine(sync_url, future=True)
 
 
 @pytest.fixture
-async def db_reset(db_engine):
+def db_reset(db_engine):
     """Truncate test data + reset admin user before each test.
 
-    Runs *before* the test body. We clear: stats_snapshots, query_logs,
-    pihole_instances, sites — and rewind the admin's bootstrap state so
-    every test starts from "fresh login required, password change forced."
+    Clears: stats_snapshots, query_logs, pihole_instances, site_settings,
+    sites — and rewinds the admin's bootstrap state so every test starts
+    from "fresh login required, password change forced."
 
     `app_settings` is preserved because it stores the auto-generated
     ENCRYPTION_KEY; nuking it would break instance encryption mid-run.
@@ -207,25 +218,24 @@ async def db_reset(db_engine):
 
     bootstrap_hash = hash_password(ADMIN_BOOTSTRAP_PASSWORD)
 
-    async with db_engine.begin() as conn:
+    with db_engine.begin() as conn:
         # Order matters: child rows before parents because of FKs.
-        await conn.execute(text("TRUNCATE query_logs CASCADE"))
-        await conn.execute(text("TRUNCATE stats_snapshots CASCADE"))
-        await conn.execute(text("TRUNCATE pihole_instances CASCADE"))
-        await conn.execute(text("TRUNCATE site_settings CASCADE"))
-        await conn.execute(text("TRUNCATE sites CASCADE"))
-        await conn.execute(
+        conn.execute(text("TRUNCATE query_logs CASCADE"))
+        conn.execute(text("TRUNCATE stats_snapshots CASCADE"))
+        conn.execute(text("TRUNCATE pihole_instances CASCADE"))
+        conn.execute(text("TRUNCATE site_settings CASCADE"))
+        conn.execute(text("TRUNCATE sites CASCADE"))
+        conn.execute(
             text(
                 "UPDATE users SET hashed_password = :h, "
                 "password_change_required = TRUE WHERE username = :u"
             ),
             {"h": bootstrap_hash, "u": ADMIN_USERNAME},
         )
-    yield
 
 
 @pytest.fixture
-async def seed_data(db_engine, db_reset):
+def seed_data(db_engine, db_reset):
     """Seed a realistic site + instance + 24h of stats + 200 queries.
 
     Returns a dict with the IDs the test can reference. Inserts run after
@@ -237,15 +247,15 @@ async def seed_data(db_engine, db_reset):
     instance_id = uuid.uuid4()
     now = datetime.now(timezone.utc)
 
-    async with db_engine.begin() as conn:
-        await conn.execute(
+    with db_engine.begin() as conn:
+        conn.execute(
             text(
                 "INSERT INTO sites (id, name, slug, is_main, is_active, sort_order) "
                 "VALUES (:id, :name, :slug, TRUE, TRUE, 0)"
             ),
             {"id": site_id, "name": "UI Test Site", "slug": "ui-test"},
         )
-        await conn.execute(
+        conn.execute(
             text(
                 "INSERT INTO pihole_instances "
                 "(id, site_id, name, url, api_password, color, is_active, "
@@ -260,8 +270,8 @@ async def seed_data(db_engine, db_reset):
             },
         )
 
-        # 24 hourly stats snapshots — strictly increasing totals so the
-        # dashboard "Total Queries" card has something interesting to render.
+        # 25 hourly stats snapshots — strictly increasing totals so the
+        # latest snapshot's `domains_on_blocklist` lands on the dashboard.
         snapshots = []
         for hours_ago in range(24, -1, -1):
             ts = now - timedelta(hours=hours_ago)
@@ -277,7 +287,7 @@ async def seed_data(db_engine, db_reset):
                 "queries_cached": total // 5,
                 "queries_forwarded": total - blocked - (total // 5),
             })
-        await conn.execute(
+        conn.execute(
             text(
                 "INSERT INTO stats_snapshots "
                 "(id, instance_id, collected_at, status, dns_queries_today, "
@@ -315,7 +325,7 @@ async def seed_data(db_engine, db_reset):
                 "reply_type": "NXDOMAIN" if blocked else "IP",
                 "reply_time_ms": 1.2 if blocked else 18.7,
             })
-        await conn.execute(
+        conn.execute(
             text(
                 "INSERT INTO query_logs "
                 "(id, instance_id, pihole_query_id, timestamp, client_ip, "
