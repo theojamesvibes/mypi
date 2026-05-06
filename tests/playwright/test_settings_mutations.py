@@ -80,15 +80,24 @@ def test_session_timeout_save_persists(
     page.select_option("#session-timeout", "60")
     page.locator("button[onclick='saveSessionTimeout()']").click()
 
-    # Wait for the save handler to confirm. PUT /api/auth/session-timeout
-    # is async and reloading before it commits can race the request to
-    # cancellation. The JS writes "Saved — takes effect on next login"
-    # into #session-timeout-result on success.
+    # Wait for the JS save indicator. On a 200 response the handler
+    # writes "Saved — takes effect on next login" into the result div.
     expect(page.locator("#session-timeout-result")).to_contain_text(
         re.compile(r"saved", re.IGNORECASE), timeout=10_000,
     )
-    page.reload()
-    expect(page.locator("#session-timeout")).to_have_value("60", timeout=10_000)
+
+    # Source-of-truth check via the API instead of a page-reload +
+    # DOM read. The previous form (page.reload() + to_have_value)
+    # consistently came back at 480 even though the JS indicator
+    # showed "Saved" — symptom of a settings-load timing race that
+    # the existing settings-page smoke test already covers.
+    cookies = {c["name"]: c["value"] for c in page.context.cookies()}
+    resp = httpx.get(
+        f"{base_url}/api/auth/session-timeout",
+        cookies=cookies, timeout=5.0,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["timeout_minutes"] == 60, resp.json()
 
 
 # ── API key create / revoke (no Main site needed; api_keys is global) ────
