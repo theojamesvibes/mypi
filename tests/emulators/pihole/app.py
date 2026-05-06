@@ -379,15 +379,29 @@ _sync_state: dict[str, Any] = {
 
 
 def _make_minimal_zip() -> bytes:
-    """Smallest valid ZIP. MyPi's `_validate_teleporter_zip` only checks
-    the magic header + central directory shape; an empty ZIP passes.
+    """Build a teleporter ZIP that passes MyPi's validation.
+
+    `_validate_teleporter_zip` enforces:
+      - byte length ≥ 1024 (anything smaller is treated as truncated)
+      - valid CRCs on every member
+      - at least one member with non-zero uncompressed size
+
+    We pack a few realistic-looking Pi-hole config files so the archive
+    clears the size threshold and looks plausible if anyone inspects it.
+    Stored uncompressed (ZIP_STORED) so the byte count is predictable.
     """
     import io
     import zipfile
 
+    # ~1.2 KB of pihole.toml-shaped content. Real teleporters are
+    # several KB; this is plenty to pass the threshold.
+    pihole_toml = (b"# Pi-hole v6 emulator export\n" + b"setting = \"value\"\n" * 60)
+    gravity_db = b"-- gravity schema placeholder\n" + b"-- " + (b"x" * 200) + b"\n"
+
     buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        # One trivial file so the central directory isn't completely empty.
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
+        zf.writestr("etc/pihole/pihole.toml", pihole_toml)
+        zf.writestr("etc/pihole/gravity.db", gravity_db)
         zf.writestr("etc/pihole/setupVars.conf", b"# emulator export\n")
     return buf.getvalue()
 
