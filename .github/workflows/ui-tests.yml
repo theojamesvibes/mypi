@@ -144,3 +144,63 @@ jobs:
             test-results/
           if-no-files-found: ignore
           retention-days: 7
+
+  playwright-sync:
+    # Master→replica sync E2E suite. Two emulator subprocesses
+    # (9876 master, 9877 replica) plus the MyPi app; tests trigger a
+    # sync via the UI and assert the teleporter ZIP landed on the
+    # replica.
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: mypi_sync_uitest
+          POSTGRES_USER: mypi
+          POSTGRES_PASSWORD: ui-test-pw
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd "pg_isready -U mypi"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://mypi:ui-test-pw@localhost:5434/mypi_sync_uitest
+      SECRET_KEY: sync-test-secret-key-not-for-production
+      MYPI_SKIP_TESTCONTAINER: "1"
+
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install runtime + dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Install Playwright Chromium + system deps
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run Playwright sync E2E suite
+        run: pytest tests/playwright_sync -m playwright -v --tracing=retain-on-failure
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-test-sync-diagnostics
+          path: |
+            playwright-sync-app.log
+            playwright-sync-master.log
+            playwright-sync-replica.log
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 7
