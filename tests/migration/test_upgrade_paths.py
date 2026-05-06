@@ -287,6 +287,103 @@ def test_upgrade_from_0013_preserves_site_and_instance():
             assert row.vip_role is None
 
 
+# ── Anchor: revision 0014 (pre-settings-move data migration) ───────────────
+
+
+def test_upgrade_from_0014_moves_app_settings_to_site_settings():
+    """0015 is a *data* migration: it copies four keys from
+    `app_settings` (flat, global) into `site_settings` (per-site,
+    under Main) and then deletes the originals. This is the migration
+    most likely to silently corrupt data — a row stuck in app_settings
+    won't break startup but will leave the operator's persisted
+    sync schedule / Pushover creds / poll interval invisible.
+
+    Verifies:
+      - Each of the four moved keys lands in site_settings under the
+        Main site row 0013 created (slug='default', is_main=TRUE).
+      - The corresponding rows are gone from app_settings.
+      - `encryption_key` (a row 0015 should *not* touch) survives in
+        app_settings — guards against the SQL `IN (…)` accidentally
+        being too wide.
+    """
+    with PostgresContainer("postgres:18-alpine", driver="psycopg") as pg:
+        sync_url = pg.get_connection_url()
+        _alembic(sync_url, "0014")
+
+        engine = _make_engine(pg)
+
+        # Seed app_settings with the four keys 0015 moves, plus one
+        # key it must leave alone.
+        moved_keys = {
+            "sync_schedule": '{"interval_minutes": 30, "auto_gravity": true}',
+            "sync_last_result": '{"status": "ok", "ts": 1700000000}',
+            "pushover_settings": '{"enabled": true, "token": "tok", "user_key": "usr"}',
+            "queries_poll_interval": '{"interval_seconds": 15}',
+        }
+        unrelated_key = ("encryption_key", "fake-fernet-key-base64")
+
+        with engine.begin() as conn:
+            for key, value in moved_keys.items():
+                conn.execute(
+                    text(
+                        "INSERT INTO app_settings (key, value) "
+                        "VALUES (:k, :v)"
+                    ),
+                    {"k": key, "v": value},
+                )
+            conn.execute(
+                text(
+                    "INSERT INTO app_settings (key, value) "
+                    "VALUES (:k, :v)"
+                ),
+                {"k": unrelated_key[0], "v": unrelated_key[1]},
+            )
+
+        _alembic(sync_url, "head")
+
+        with engine.connect() as conn:
+            # 1. site_settings now carries each moved key, under Main.
+            for key, expected_value in moved_keys.items():
+                row = conn.execute(
+                    text(
+                        "SELECT ss.value FROM site_settings ss "
+                        "JOIN sites s ON s.id = ss.site_id "
+                        "WHERE s.is_main = TRUE AND s.is_active = TRUE "
+                        "  AND ss.key = :k"
+                    ),
+                    {"k": key},
+                ).first()
+                assert row is not None, (
+                    f"site_settings missing key '{key}' after 0015"
+                )
+                assert row.value == expected_value, (
+                    f"site_settings value for '{key}' was rewritten: "
+                    f"got {row.value!r}, expected {expected_value!r}"
+                )
+
+            # 2. app_settings no longer has the moved keys.
+            for key in moved_keys:
+                row = conn.execute(
+                    text("SELECT 1 FROM app_settings WHERE key = :k"),
+                    {"k": key},
+                ).first()
+                assert row is None, (
+                    f"app_settings still has key '{key}' after 0015 "
+                    "— the DELETE step did not run"
+                )
+
+            # 3. unrelated_key (encryption_key) is *still* in app_settings.
+            row = conn.execute(
+                text("SELECT value FROM app_settings WHERE key = :k"),
+                {"k": unrelated_key[0]},
+            ).first()
+            assert row is not None, (
+                "encryption_key was wiped from app_settings — 0015's "
+                "key filter is too wide"
+            )
+            assert row.value == unrelated_key[1]
+
+
 # ── Sanity: clean install upgrade-to-head works ─────────────────────────────
 
 
