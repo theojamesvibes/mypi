@@ -9,7 +9,9 @@ the next page load.
 
 Tests use the cached `authed_page` fixture (no per-test login round-
 trip) and the seeded-DB suite's setup, so they run alongside the
-existing settings smoke test in the same CI job.
+existing settings smoke test in the same CI job. Tests that exercise
+per-site settings depend on the `with_main_site` fixture, which
+inserts a Default Main site after `db_reset_data` wipes the table.
 """
 from __future__ import annotations
 
@@ -23,7 +25,7 @@ from playwright.sync_api import Page, expect
 
 
 def test_sync_schedule_save_persists(
-    authed_page: Page, base_url: str, db_reset_data,
+    authed_page: Page, base_url: str, with_main_site,
 ):
     """Pick a non-default interval + flip auto_gravity, click Save,
     reload the page, assert the new values came back.
@@ -39,8 +41,7 @@ def test_sync_schedule_save_persists(
     # Wait for the schedule form to populate with current values.
     expect(page.locator("#sync-interval")).to_be_visible(timeout=10_000)
 
-    # Choose 60-minute interval. The select has options at fixed values;
-    # 60 is one that ships out of the box.
+    # Choose 60-minute interval. Valid select options: 0 / 15 / 30 / 60 / 360 / 1440.
     page.select_option("#sync-interval", "60")
     page.check("#sync-auto-gravity")
 
@@ -53,7 +54,7 @@ def test_sync_schedule_save_persists(
     expect(page.locator("#sync-auto-gravity")).to_be_checked()
 
 
-# ── Session timeout ────────────────────────────────────────────────────────
+# ── Session timeout (stored in app_settings, no Main site needed) ─────────
 
 
 def test_session_timeout_save_persists(
@@ -65,15 +66,16 @@ def test_session_timeout_save_persists(
     page.goto(f"{base_url}/settings")
     expect(page.locator("#session-timeout")).to_be_visible(timeout=10_000)
 
-    page.select_option("#session-timeout", "240")  # 4 hours
+    # Valid select options: 15 / 60 / 480 / 1440 / 10080 / 0. "60" = 1 hour.
+    page.select_option("#session-timeout", "60")
     page.locator("button[onclick='saveSessionTimeout()']").click()
 
     # The save handler shows a confirmation; reload to verify persistence.
     page.reload()
-    expect(page.locator("#session-timeout")).to_have_value("240", timeout=10_000)
+    expect(page.locator("#session-timeout")).to_have_value("60", timeout=10_000)
 
 
-# ── API key create / revoke ────────────────────────────────────────────────
+# ── API key create / revoke (no Main site needed; api_keys is global) ────
 
 
 def test_api_key_create_displays_raw_key_once(
@@ -90,12 +92,15 @@ def test_api_key_create_displays_raw_key_once(
     page.fill("#key-name", "Test-iPhone")
     page.locator("#create-key-form button[type=submit]").click()
 
-    # The alert appears with the raw key inside <code id="new-key-value">.
+    # Wait for the alert + raw-key element to actually render. The JS
+    # only flips them visible *after* the POST resolves, so reading
+    # text_content() before this expect() yields an empty string.
+    new_key_alert = page.locator("#new-key-alert")
+    expect(new_key_alert).to_be_visible(timeout=10_000)
     new_key_box = page.locator("#new-key-value")
-    expect(new_key_box).to_be_visible(timeout=10_000)
+    expect(new_key_box).not_to_be_empty(timeout=10_000)
 
-    raw_key = new_key_box.text_content() or ""
-    raw_key = raw_key.strip()
+    raw_key = (new_key_box.text_content() or "").strip()
     # MyPi keys are URL-safe base64 of HMAC-SHA256, so >= 40 chars.
     assert len(raw_key) >= 40, f"Raw key looks truncated: {raw_key!r}"
 
@@ -124,10 +129,18 @@ def test_api_key_revoke_removes_from_list(
     # Auto-confirm the revoke `confirm()` dialog.
     page.on("dialog", lambda d: d.accept())
 
-    # Create a key first so we have something to revoke.
+    # Create a key. Same wait pattern as the create test — the alert
+    # element is hidden until the JS handler swaps it visible.
     page.fill("#key-name", "Throwaway")
     page.locator("#create-key-form button[type=submit]").click()
-    raw_key = (page.locator("#new-key-value").text_content() or "").strip()
+
+    new_key_alert = page.locator("#new-key-alert")
+    expect(new_key_alert).to_be_visible(timeout=10_000)
+    new_key_box = page.locator("#new-key-value")
+    expect(new_key_box).not_to_be_empty(timeout=10_000)
+    raw_key = (new_key_box.text_content() or "").strip()
+    assert len(raw_key) >= 40, f"Raw key looks truncated: {raw_key!r}"
+
     expect(page.locator("#api-keys-tbody")).to_contain_text("Throwaway", timeout=10_000)
 
     # Sanity: the key works before revocation.
@@ -136,7 +149,7 @@ def test_api_key_revoke_removes_from_list(
         headers={"X-API-Key": raw_key},
         timeout=5.0,
     )
-    assert pre.status_code == 200
+    assert pre.status_code == 200, pre.text
 
     # Click Revoke on the row we just created.
     revoke_btn = page.locator(
@@ -159,11 +172,11 @@ def test_api_key_revoke_removes_from_list(
     assert post.status_code == 401
 
 
-# ── Poll interval (separate route from sync schedule) ─────────────────────
+# ── Poll interval (stored in site_settings, requires Main site) ───────────
 
 
 def test_poll_interval_save_persists(
-    authed_page: Page, base_url: str, db_reset_data,
+    authed_page: Page, base_url: str, with_main_site,
 ):
     """Query poll interval lives in site_settings under Main and is
     rescheduled in-process when saved. Verify the form save round-trips."""
@@ -171,6 +184,7 @@ def test_poll_interval_save_persists(
     page.goto(f"{base_url}/settings")
     expect(page.locator("#poll-interval")).to_be_visible(timeout=10_000)
 
+    # Valid select options: 10 / 30 / 60 / 120 / 300.
     page.select_option("#poll-interval", "30")
     page.locator("button[onclick='savePollInterval()']").click()
 

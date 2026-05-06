@@ -400,6 +400,34 @@ def base_url(live_app) -> str:
 
 
 @pytest.fixture
+def with_main_site(db_engine, db_reset_data):
+    """Insert a Default Main site after db_reset_data wipes the table.
+
+    Several settings routes (sync_schedule, poll_settings, pushover) write
+    to `site_settings` keyed on the active Main site — without one the
+    save handler raises and the UI shows "Failed to save", which makes
+    those tests look like UI bugs when they're really test-fixture bugs.
+
+    The test YAML is empty (`sites: []`) so the app's startup
+    `sync_sites_and_instances` doesn't create a Main either. This
+    fixture fills the gap for tests that need to exercise per-site
+    settings end-to-end.
+    """
+    from sqlalchemy import text
+
+    site_id = uuid.uuid4()
+    with db_engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO sites (id, name, slug, is_main, is_active, sort_order) "
+                "VALUES (:id, 'Default', 'default', TRUE, TRUE, 0)"
+            ),
+            {"id": site_id},
+        )
+    return str(site_id)
+
+
+@pytest.fixture
 def logged_in_page(page, base_url, db_reset):
     """A Playwright page that has completed login + forced password change.
 
