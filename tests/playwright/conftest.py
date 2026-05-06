@@ -217,6 +217,11 @@ def _truncate_data(db_engine) -> None:
         conn.execute(text("TRUNCATE pihole_instances CASCADE"))
         conn.execute(text("TRUNCATE site_settings CASCADE"))
         conn.execute(text("TRUNCATE sites CASCADE"))
+        # api_keys + revoked_tokens accumulate in tests that exercise
+        # the API-key UI / logout flow; clear them so duplicate-name
+        # creates don't fail across tests.
+        conn.execute(text("TRUNCATE api_keys CASCADE"))
+        conn.execute(text("TRUNCATE revoked_tokens CASCADE"))
 
 
 @pytest.fixture

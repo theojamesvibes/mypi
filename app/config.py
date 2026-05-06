@@ -90,6 +90,15 @@ class Settings(BaseSettings):
     # table is saturated; surfaces as a periodic WARN in the log.
     auth_backoff_seconds: int = 300
 
+    # Brute-force protection on the user-facing /login endpoint. SlowAPI's
+    # per-IP rate limit (10/minute) is fine on a LAN but trivial to sidestep
+    # behind a NAT or any reverse proxy that aggregates clients into one
+    # source IP. After `login_lockout_threshold` *consecutive* failures for
+    # a username, that account is locked for `login_lockout_minutes`. A
+    # successful login resets the counter. Set threshold to 0 to disable.
+    login_lockout_threshold: int = 5
+    login_lockout_minutes: int = 15
+
     @field_validator("database_url")
     @classmethod
     def validate_database_url(cls, v: str) -> str:

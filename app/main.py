@@ -28,7 +28,7 @@ from app.api import sites as sites_router
 from app.api import stats as stats_router
 from app.api import sync as sync_router
 from app.api import version as version_router
-from app.auth import _decode_token_claims, get_current_user, get_current_user_optional, hash_password, verify_password, verify_user_password
+from app.auth import _decode_token_claims, get_current_user, get_current_user_optional, hash_password, is_user_locked_out, register_login_failure, register_login_success, verify_password, verify_user_password
 from app.config import SESSION_COOKIE_NAME, settings
 from app.database import AsyncSessionLocal, get_db
 from app.limiter import limiter
@@ -412,13 +412,22 @@ async def login_form(request: Request, response: Response, db=Depends(get_db)):
     result = await db.execute(select(User).where(User.username == username, User.is_active.is_(True)))
     user = result.scalar_one_or_none()
 
+    # Lockout check runs before the password check so a locked account
+    # can't be probed during cooldown. Same generic error message as a
+    # wrong password — no enumeration leak.
+    if is_user_locked_out(user):
+        return templates.TemplateResponse(
+            request, "login.html", {"error": "Invalid username or password"}, status_code=401
+        )
     # verify_user_password runs bcrypt against a dummy hash when user is None
     # so response time doesn't leak whether the username is registered.
     if not verify_user_password(password, user):
+        await register_login_failure(user, db)
         return templates.TemplateResponse(
             request, "login.html", {"error": "Invalid username or password"}, status_code=401
         )
 
+    await register_login_success(user, db)
     expire_minutes = session_settings.effective_minutes(session_settings.get_timeout_minutes())
     token = create_access_token(user.username, expire_minutes=expire_minutes)
     dest = "/change-password" if user.password_change_required else "/"
