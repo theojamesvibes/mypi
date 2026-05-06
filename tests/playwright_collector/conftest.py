@@ -271,6 +271,18 @@ def authed_page(live_app, browser, _auth_storage_state):
         context.close()
 
 
+@pytest.fixture(autouse=True)
+def reset_emulator_state(pihole_emulator):
+    """Wipe the emulator's deny/allow lists before each test.
+
+    The emulator keeps its block/allow lists in process memory so it
+    can answer GET requests after a block — without this reset, state
+    leaks across tests and assertions like "deny list is empty" become
+    order-dependent. Calls /__test__/reset (a test-only endpoint).
+    """
+    httpx.post(f"{pihole_emulator}/__test__/reset", timeout=2.0)
+
+
 @pytest.fixture(scope="session")
 def wait_for_first_poll(live_app, db_engine) -> bool:
     """Block until the collector has written ≥ 1 StatsSnapshot row.

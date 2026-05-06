@@ -1,0 +1,19 @@
+# Two-emulator config for the master→replica sync E2E test. The master
+# (port 9876) is flagged as the sync source; the replica (port 9877)
+# receives the teleporter ZIP. Both emulators are launched as
+# subprocesses by the suite's conftest before the MyPi app boots.
+sites:
+  - name: "Sync"
+    slug: "sync"
+    main: true
+    instances:
+      - name: "Sync-Master"
+        url: "http://127.0.0.1:9876"
+        password: "emulator-password"
+        color: "#00a65a"
+        master: true
+      - name: "Sync-Replica"
+        url: "http://127.0.0.1:9877"
+        password: "emulator-password"
+        color: "#3c8dbc"
+        master: false

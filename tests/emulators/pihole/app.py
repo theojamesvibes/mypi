@@ -269,16 +269,160 @@ async def top_clients(
     }
 
 
+# ── Domain deny/allow lists (stateful) ──────────────────────────────────────
+#
+# These endpoints back the block/unblock UI flow. Real Pi-hole stores these
+# in its config DB; we keep an in-memory dict per kind so the test can
+# block a domain, see it appear in the GET listing, then unblock and see
+# it disappear. State is process-wide and resets when the emulator
+# restarts (between test sessions).
+_deny_list: dict[str, dict[str, Any]] = {}
+_allow_list: dict[str, dict[str, Any]] = {}
+
+
+def _list_for(kind: str) -> dict[str, dict[str, Any]]:
+    return _deny_list if kind == "deny" else _allow_list
+
+
+def _entries(store: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Render the list in the shape MyPi's pihole_client._present expects:
+    a list of objects with a `domain` field."""
+    return [{"domain": d, **meta} for d, meta in store.items()]
+
+
 @app.get("/api/domains/deny/exact")
 async def deny_list(x_ftl_sid: str | None = Header(default=None)):
     _check_sid(x_ftl_sid)
-    return {"domains": []}
+    return {"domains": _entries(_deny_list)}
 
 
 @app.get("/api/domains/allow/exact")
 async def allow_list(x_ftl_sid: str | None = Header(default=None)):
     _check_sid(x_ftl_sid)
-    return {"domains": []}
+    return {"domains": _entries(_allow_list)}
+
+
+async def _add_to_list(store: dict[str, dict[str, Any]], request: Request) -> dict[str, Any]:
+    body = await request.json()
+    domain = body.get("domain", "").strip().lower()
+    if not domain:
+        raise HTTPException(status_code=422, detail="domain is required")
+    # Real Pi-hole returns 409 on duplicate; MyPi's add_*_exact handles
+    # that as a no-op so this preserves the idempotent semantics.
+    if domain in store:
+        raise HTTPException(status_code=409, detail="domain already in list")
+    store[domain] = {
+        "comment": body.get("comment"),
+        "enabled": body.get("enabled", True),
+        "groups": body.get("groups", [0]),
+    }
+    return {"processed": {"success": [{"item": domain}], "errors": []}}
+
+
+@app.post("/api/domains/deny/exact")
+async def add_deny(request: Request, x_ftl_sid: str | None = Header(default=None)):
+    _check_sid(x_ftl_sid)
+    return await _add_to_list(_deny_list, request)
+
+
+@app.post("/api/domains/allow/exact")
+async def add_allow(request: Request, x_ftl_sid: str | None = Header(default=None)):
+    _check_sid(x_ftl_sid)
+    return await _add_to_list(_allow_list, request)
+
+
+@app.delete("/api/domains/deny/exact/{domain:path}")
+async def remove_deny(domain: str, x_ftl_sid: str | None = Header(default=None)):
+    _check_sid(x_ftl_sid)
+    _deny_list.pop(domain.lower(), None)
+    return JSONResponse(status_code=204, content=None)
+
+
+@app.delete("/api/domains/allow/exact/{domain:path}")
+async def remove_allow(domain: str, x_ftl_sid: str | None = Header(default=None)):
+    _check_sid(x_ftl_sid)
+    _allow_list.pop(domain.lower(), None)
+    return JSONResponse(status_code=204, content=None)
+
+
+# ── Reset hook (test convenience) ───────────────────────────────────────────
+
+
+@app.post("/__test__/reset")
+async def reset_emulator():
+    """Wipe in-memory state. Called by the conftest between tests so
+    the deny/allow lists and sync counters don't leak across cases."""
+    _deny_list.clear()
+    _allow_list.clear()
+    _sync_state["gravity_runs"] = 0
+    _sync_state["teleporter_imports"] = 0
+    _sync_state["last_imported_size"] = 0
+    return {"reset": True}
+
+
+# ── Sync support (stateful) ─────────────────────────────────────────────────
+#
+# Master path: GET /api/teleporter returns a minimal-but-valid ZIP, and
+# POST /api/action/gravity records that gravity ran.
+# Replica path: POST /api/teleporter records that an import landed and
+# stores the body for the test to assert on.
+#
+# Real Pi-hole's teleporter ZIP is a structured archive; MyPi only
+# validates the ZIP header + central directory before forwarding it,
+# so we ship an empty-but-valid ZIP and let the replica accept it.
+
+_sync_state: dict[str, Any] = {
+    "gravity_runs": 0,
+    "teleporter_imports": 0,
+    "last_imported_size": 0,
+}
+
+
+def _make_minimal_zip() -> bytes:
+    """Smallest valid ZIP. MyPi's `_validate_teleporter_zip` only checks
+    the magic header + central directory shape; an empty ZIP passes.
+    """
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        # One trivial file so the central directory isn't completely empty.
+        zf.writestr("etc/pihole/setupVars.conf", b"# emulator export\n")
+    return buf.getvalue()
+
+
+@app.get("/api/teleporter")
+async def export_teleporter(x_ftl_sid: str | None = Header(default=None)):
+    _check_sid(x_ftl_sid)
+    from fastapi.responses import Response
+    return Response(
+        content=_make_minimal_zip(),
+        media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=teleporter.zip"},
+    )
+
+
+@app.post("/api/teleporter")
+async def import_teleporter(request: Request, x_ftl_sid: str | None = Header(default=None)):
+    _check_sid(x_ftl_sid)
+    body = await request.body()
+    _sync_state["teleporter_imports"] += 1
+    _sync_state["last_imported_size"] = len(body)
+    return {"processed": {"success": True, "errors": []}}
+
+
+@app.post("/api/action/gravity")
+async def run_gravity(x_ftl_sid: str | None = Header(default=None)):
+    _check_sid(x_ftl_sid)
+    _sync_state["gravity_runs"] += 1
+    return {"processed": {"success": True}}
+
+
+@app.get("/__test__/sync_state")
+async def get_sync_state():
+    """Read-only test introspection — what calls has the emulator received?"""
+    return dict(_sync_state)
 
 
 @app.get("/api/health")
