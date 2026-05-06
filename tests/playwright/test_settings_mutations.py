@@ -74,8 +74,15 @@ def test_session_timeout_save_persists(
     next page load reflects the choice."""
     page = authed_page
     page.goto(f"{base_url}/settings")
-    expect(page.locator("#session-timeout")).to_be_visible(timeout=10_000)
 
+    # Wait for loadSessionTimeout()'s async GET to settle before
+    # touching the select. Without this, select_option races the
+    # loader: my "60" wins briefly, then loadSessionTimeout's
+    # response writes the default "480" back, and the click sends
+    # the wrong value. Default loaded value is 480 (8 hours).
+    expect(page.locator("#session-timeout")).to_have_value(
+        "480", timeout=10_000,
+    )
     # Valid select options: 15 / 60 / 480 / 1440 / 10080 / 0. "60" = 1 hour.
     page.select_option("#session-timeout", "60")
     page.locator("button[onclick='saveSessionTimeout()']").click()
@@ -207,8 +214,14 @@ def test_poll_interval_save_persists(
     rescheduled in-process when saved. Verify the form save round-trips."""
     page = authed_page
     page.goto(f"{base_url}/settings")
-    expect(page.locator("#poll-interval")).to_be_visible(timeout=10_000)
 
+    # Wait for loadPollInterval()'s async GET to populate the select
+    # before changing it — otherwise the loader's response races
+    # ahead of select_option and overwrites our choice. Default
+    # loaded value is 60 (poll_settings._DEFAULT_INTERVAL).
+    expect(page.locator("#poll-interval")).to_have_value(
+        "60", timeout=10_000,
+    )
     # Valid select options: 10 / 30 / 60 / 120 / 300.
     page.select_option("#poll-interval", "30")
     page.locator("button[onclick='savePollInterval()']").click()
