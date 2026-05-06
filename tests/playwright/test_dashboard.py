@@ -10,6 +10,10 @@ Numbers in the assertions match what the API actually computes — totals
 come from QueryLog aggregates over the time window (200 rows, every 4th
 blocked = 50), not from the StatsSnapshot rows. The blocklist size on
 the fourth card *does* come from the latest snapshot (125,000 in seed).
+
+Tests use `authed_page` (cached storage_state) rather than
+`logged_in_page` (login round-trip per test) so the suite stays well
+under SlowAPI's 10/min /login rate limit.
 """
 from __future__ import annotations
 
@@ -17,9 +21,9 @@ from playwright.sync_api import Page, expect
 
 
 def test_dashboard_shows_seeded_totals(
-    logged_in_page: Page, base_url: str, seed_data,
+    authed_page: Page, base_url: str, seed_data,
 ):
-    page = logged_in_page
+    page = authed_page
     page.goto(f"{base_url}/")
 
     # The dashboard JS waits on three API calls in parallel; until they
@@ -29,7 +33,7 @@ def test_dashboard_shows_seeded_totals(
     total = page.locator("#total-queries")
     expect(total).not_to_have_text("—", timeout=10_000)
 
-    # 200 seeded query logs in the last hour, every 4th flagged BLOCKED
+    # 200 seeded query logs in the last hour, every 4th flagged GRAVITY
     # (50 blocked / 200 total = 25%). Numbers come back through
     # toLocaleString() so 1,000+ values get a comma — under 1,000 like
     # 200 don't.
@@ -41,9 +45,9 @@ def test_dashboard_shows_seeded_totals(
 
 
 def test_dashboard_lists_seeded_instance(
-    logged_in_page: Page, base_url: str, seed_data,
+    authed_page: Page, base_url: str, seed_data,
 ):
-    page = logged_in_page
+    page = authed_page
     page.goto(f"{base_url}/")
     # The instances table is populated from the same /stats/summary call.
     expect(page.locator("#instances-tbody")).to_contain_text(
@@ -52,9 +56,9 @@ def test_dashboard_lists_seeded_instance(
 
 
 def test_dashboard_top_blocked_populated(
-    logged_in_page: Page, base_url: str, seed_data,
+    authed_page: Page, base_url: str, seed_data,
 ):
-    page = logged_in_page
+    page = authed_page
     page.goto(f"{base_url}/")
     # The blocked-domain table fills from /stats/top. Seed cycles 6
     # domains; every 4th query is blocked, so several distinct domains
@@ -64,9 +68,9 @@ def test_dashboard_top_blocked_populated(
 
 
 def test_queries_page_lists_seeded_rows(
-    logged_in_page: Page, base_url: str, seed_data,
+    authed_page: Page, base_url: str, seed_data,
 ):
-    page = logged_in_page
+    page = authed_page
     page.goto(f"{base_url}/queries")
     # The query log table populates from /api/queries. We don't assert
     # on the exact table id (it can vary by template), just that one of
