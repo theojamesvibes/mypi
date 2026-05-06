@@ -4,6 +4,25 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.0.6] — 2026-05-06
+
+### Brute-force lockout + iOS-prep `/api/auth/me` scope flag
+
+Closes the brute-force item from Grok's v2.0.5 review (the only remaining medium-priority security gap from that pass) and adds the small iOS-side affordance the SwiftUI client will need at first launch.
+
+- **Per-user login lockout.** After `LOGIN_LOCKOUT_THRESHOLD` consecutive failed logins for a given username (default 5), the account is locked for `LOGIN_LOCKOUT_MINUTES` (default 15). The lockout response is byte-identical to a wrong-password response, so an attacker can't tell whether they've successfully locked an account vs. just guessed wrong. A successful login resets the counter and clears any pending lockout. SlowAPI's per-IP rate limit is fine on a LAN but trivial to sidestep behind NAT or any reverse proxy that aggregates clients into one source IP — this lockout closes that gap. Set the threshold to 0 to disable.
+- **`/api/auth/me` now returns `is_read_only`.** The flag is `True` iff the request was authenticated with a read-only API key (and `False` for password / cookie / JWT auth). Lets iOS / automation clients render mutation actions appropriately at first launch instead of discovering their scope via 403 responses on every Block / Sync click.
+- **DB migration 0017** adds `failed_login_count INT NOT NULL DEFAULT 0` and `failed_login_lockout_until TIMESTAMPTZ NULL` to the `users` table. Backfills on existing installs with sensible defaults; downgrade drops both columns.
+- **Test coverage.**
+  - `tests/integration/test_login_lockout.py` — six tests covering: counter increments on failure, threshold-trip stamps lockout, locked account rejects correct password, lockout response doesn't leak state, success mid-streak resets the counter, expired lockout window auto-clears, unknown-username attempts don't pollute other users' counters.
+  - `tests/integration/test_api_key.py` — extended to assert `/api/auth/me` returns `is_read_only=True` for read-only keys, `False` for full keys, `False` for password auth.
+  - New Playwright suite `tests/playwright/test_settings_mutations.py` covering sync schedule save+reload, session timeout save+reload, API key create (with raw-key authentication round-trip), API key revoke (table updates + revoked key stops authenticating), poll interval save+reload.
+  - Truncate `api_keys` + `revoked_tokens` in the seeded-DB suite's `db_reset_data` fixture so duplicate-name creates don't fail across the new API-key tests.
+
+No config change required for existing installs (defaults applied automatically).
+
+---
+
 ## [2.0.5] — 2026-05-04
 
 ### Security & connection-management hardening — wave 3 of 3

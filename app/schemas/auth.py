@@ -42,5 +42,11 @@ class UserResponse(BaseModel):
     email: str | None = None
     is_active: bool
     created_at: datetime
+    # True iff the current request was authenticated with a read-only
+    # API key. Allows iOS / automation clients to render mutation
+    # actions (Block domain, Sync now, etc.) appropriately without
+    # having to discover their scope by trial-and-error 403.
+    # Always False for password / cookie / JWT auth.
+    is_read_only: bool = False
 
     model_config = {"from_attributes": True}

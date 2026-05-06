@@ -75,6 +75,32 @@ async def test_readonly_key_can_still_read(client, readonly_api_key):
     assert resp.status_code == 200
 
 
+async def test_me_reports_is_read_only_for_readonly_key(client, readonly_api_key):
+    """iOS-prep: /api/auth/me must surface the auth scope so a read-only
+    client knows up front it can't mutate. Without this the iOS app has
+    to discover its scope via 403 responses on every Block / Sync click."""
+    resp = await client.get(
+        "/api/auth/me", headers={"X-API-Key": readonly_api_key}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["is_read_only"] is True
+
+
+async def test_me_reports_not_read_only_for_full_key(client, api_key):
+    resp = await client.get("/api/auth/me", headers={"X-API-Key": api_key})
+    assert resp.status_code == 200
+    assert resp.json()["is_read_only"] is False
+
+
+async def test_me_reports_not_read_only_for_password_login(authed_client):
+    """Password / cookie auth must always come back as is_read_only=False —
+    the flag is set exclusively when an API key is used."""
+    resp = await authed_client.get("/api/auth/me")
+    assert resp.status_code == 200
+    assert resp.json()["is_read_only"] is False
+
+
 # ── Wave-1: last_used_at coalescing ──────────────────────────────────────────
 
 

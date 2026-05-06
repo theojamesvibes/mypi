@@ -68,6 +68,53 @@ def verify_user_password(plain: str, user: User | None) -> bool:
     return bool(matched and user is not None)
 
 
+def is_user_locked_out(user: User | None) -> bool:
+    """True iff *user* has an active lockout deadline still in the future.
+
+    Centralised here so both the JSON and the form login paths share the
+    same predicate — easy to keep them in lockstep when the policy
+    changes. A None user always returns False; the caller handles the
+    "no such user" case via the dummy-hash timing-equalisation path.
+    """
+    from datetime import datetime, timezone
+
+    if user is None or user.failed_login_lockout_until is None:
+        return False
+    return user.failed_login_lockout_until > datetime.now(timezone.utc)
+
+
+async def register_login_failure(user: User | None, db) -> None:
+    """Increment the failed-login counter, applying a lockout when the
+    threshold is crossed.
+
+    Called *only* when the user existed and the password was wrong —
+    a missing-username attempt does not advance any counter. The caller
+    is responsible for committing the session afterwards (or relying on
+    FastAPI's per-request commit if the path doesn't take a db arg).
+
+    No-op when settings.login_lockout_threshold <= 0 (disabled).
+    """
+    from datetime import datetime, timedelta, timezone
+
+    if user is None or settings.login_lockout_threshold <= 0:
+        return
+    user.failed_login_count = (user.failed_login_count or 0) + 1
+    if user.failed_login_count >= settings.login_lockout_threshold:
+        user.failed_login_lockout_until = (
+            datetime.now(timezone.utc)
+            + timedelta(minutes=settings.login_lockout_minutes)
+        )
+    await db.commit()
+
+
+async def register_login_success(user: User, db) -> None:
+    """Reset the failed-login counter and clear any pending lockout."""
+    if user.failed_login_count or user.failed_login_lockout_until is not None:
+        user.failed_login_count = 0
+        user.failed_login_lockout_until = None
+        await db.commit()
+
+
 def _jwt_key() -> str:
     """JWT signing key — settings.jwt_secret_key if set, else secret_key."""
     return settings.jwt_secret_key or settings.secret_key
@@ -256,6 +303,18 @@ async def get_current_user_optional(
         )
     except HTTPException:
         return None
+
+
+def is_current_request_readonly() -> bool:
+    """True iff the current request was authenticated via a read-only
+    API key. Returns False for password / JWT auth and for full-scope
+    API keys.
+
+    Public companion to the module-private ``_readonly_flag`` ContextVar.
+    Exposed so handlers (e.g. ``/api/auth/me``) can surface the flag to
+    iOS / automation clients without duplicating the ContextVar lookup.
+    """
+    return _readonly_flag.get()
 
 
 def require_mutation(_: User = Depends(get_current_user)) -> User:
