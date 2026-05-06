@@ -201,22 +201,14 @@ def db_engine(live_app):
     return create_engine(sync_url, future=True)
 
 
-@pytest.fixture
-def db_reset(db_engine):
-    """Truncate test data + reset admin user before each test.
+def _truncate_data(db_engine) -> None:
+    """Clear stats/queries/instances/sites — but leave users + app_settings.
 
-    Clears: stats_snapshots, query_logs, pihole_instances, site_settings,
-    sites — and rewinds the admin's bootstrap state so every test starts
-    from "fresh login required, password change forced."
-
-    `app_settings` is preserved because it stores the auto-generated
-    ENCRYPTION_KEY; nuking it would break instance encryption mid-run.
+    Used as the inner step shared between `db_reset` (which also rewinds
+    the admin user) and `db_reset_data` (which leaves users alone so
+    a cached session cookie keeps working).
     """
     from sqlalchemy import text
-
-    from app.auth import hash_password
-
-    bootstrap_hash = hash_password(ADMIN_BOOTSTRAP_PASSWORD)
 
     with db_engine.begin() as conn:
         # Order matters: child rows before parents because of FKs.
@@ -225,6 +217,26 @@ def db_reset(db_engine):
         conn.execute(text("TRUNCATE pihole_instances CASCADE"))
         conn.execute(text("TRUNCATE site_settings CASCADE"))
         conn.execute(text("TRUNCATE sites CASCADE"))
+
+
+@pytest.fixture
+def db_reset(db_engine):
+    """Truncate test data + rewind admin to bootstrap state.
+
+    Used by tests that exercise the login / forced-password-change flow,
+    where every test must start from "fresh login required, password
+    change forced." `app_settings` is preserved because it stores the
+    auto-generated ENCRYPTION_KEY; nuking it would break instance
+    encryption mid-run.
+    """
+    from sqlalchemy import text
+
+    from app.auth import hash_password
+
+    bootstrap_hash = hash_password(ADMIN_BOOTSTRAP_PASSWORD)
+
+    _truncate_data(db_engine)
+    with db_engine.begin() as conn:
         conn.execute(
             text(
                 "UPDATE users SET hashed_password = :h, "
@@ -235,11 +247,40 @@ def db_reset(db_engine):
 
 
 @pytest.fixture
-def seed_data(db_engine, db_reset):
+def db_reset_data(db_engine):
+    """Truncate test data only — leave users untouched.
+
+    Used by `authed_page` so the session-scoped storage_state cookie
+    keeps validating. The fixture also forces the admin into
+    "fully-logged-in" state (password rotated, change-required cleared)
+    so a previous auth-flow test that left the bootstrap state behind
+    doesn't trip the `/change-password` redirect mid-session.
+    """
+    from sqlalchemy import text
+
+    from app.auth import hash_password
+
+    new_pw_hash = hash_password(ADMIN_NEW_PASSWORD)
+
+    _truncate_data(db_engine)
+    with db_engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE users SET hashed_password = :h, "
+                "password_change_required = FALSE WHERE username = :u"
+            ),
+            {"h": new_pw_hash, "u": ADMIN_USERNAME},
+        )
+
+
+@pytest.fixture
+def seed_data(db_engine, db_reset_data):
     """Seed a realistic site + instance + 24h of stats + 200 queries.
 
-    Returns a dict with the IDs the test can reference. Inserts run after
-    `db_reset` so the previous test's seed has already been wiped.
+    Returns a dict with the IDs the test can reference. Depends on
+    `db_reset_data` (not `db_reset`) so it composes cleanly with
+    `authed_page` — that fixture's session-scoped storage_state cookie
+    requires the admin to stay in "fully-logged-in" state.
     """
     from sqlalchemy import text
 
@@ -357,9 +398,11 @@ def base_url(live_app) -> str:
 def logged_in_page(page, base_url, db_reset):
     """A Playwright page that has completed login + forced password change.
 
-    Each test starts from the bootstrap state (forced change required), so
-    we run through both screens here and hand the test a fully authenticated
-    session pointed at the dashboard.
+    Used by tests that need to exercise the full auth flow on each call
+    (e.g. test_full_login_then_logout). Tests that just need an
+    authenticated session to reach internal pages should use the
+    cheaper `authed_page` fixture, which reuses cookies across tests
+    and keeps total /login hits well under SlowAPI's 10/min limit.
     """
     page.goto(f"{base_url}/login")
     page.fill("#username", ADMIN_USERNAME)
@@ -373,3 +416,69 @@ def logged_in_page(page, base_url, db_reset):
     page.click("button[type=submit]")
     page.wait_for_url(f"{base_url}/")
     return page
+
+
+@pytest.fixture(scope="session")
+def _auth_storage_state(live_app, browser, db_engine):
+    """Log in once at session scope; capture the cookie state.
+
+    The /login route is rate-limited to 10 requests/minute by SlowAPI.
+    With ~12 tests using `logged_in_page`, the per-test login pattern
+    consistently hit 429 toward the end of the suite. Caching the
+    authenticated cookie state once and replaying it via Playwright's
+    `storage_state` keeps the suite under that limit (5 logins from
+    auth-flow tests + 1 here = 6 total).
+    """
+    from sqlalchemy import text
+
+    from app.auth import hash_password
+
+    # Force admin into bootstrap state so the login + change-password
+    # flow we walk below is deterministic regardless of whatever shape
+    # the DB happens to be in when the session starts.
+    bootstrap_hash = hash_password(ADMIN_BOOTSTRAP_PASSWORD)
+    with db_engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE users SET hashed_password = :h, "
+                "password_change_required = TRUE WHERE username = :u"
+            ),
+            {"h": bootstrap_hash, "u": ADMIN_USERNAME},
+        )
+
+    context = browser.new_context()
+    page = context.new_page()
+    try:
+        page.goto(f"{live_app}/login")
+        page.fill("#username", ADMIN_USERNAME)
+        page.fill("#password", ADMIN_BOOTSTRAP_PASSWORD)
+        page.click("button[type=submit]")
+        page.wait_for_url("**/change-password")
+
+        page.fill("#current_password", ADMIN_BOOTSTRAP_PASSWORD)
+        page.fill("#new_password", ADMIN_NEW_PASSWORD)
+        page.fill("#confirm_password", ADMIN_NEW_PASSWORD)
+        page.click("button[type=submit]")
+        page.wait_for_url(f"{live_app}/")
+
+        return context.storage_state()
+    finally:
+        context.close()
+
+
+@pytest.fixture
+def authed_page(live_app, browser, _auth_storage_state, db_reset_data):
+    """Authenticated page using the session-scoped storage state.
+
+    Per-test cost is a fresh browser context (~50 ms) plus replaying
+    the cached cookies — no /login round-trip, so we don't burn the
+    rate-limit bucket. `db_reset_data` runs before this so the
+    dashboard starts each test on a clean slate.
+    """
+    context = browser.new_context(storage_state=_auth_storage_state)
+    page = context.new_page()
+    try:
+        page.goto(f"{live_app}/")
+        yield page
+    finally:
+        context.close()
