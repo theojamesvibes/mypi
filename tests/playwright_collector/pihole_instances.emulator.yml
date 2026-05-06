@@ -1,0 +1,14 @@
+# YAML used by the collector-e2e Playwright suite. Points MyPi at a
+# single Pi-hole emulator running on 127.0.0.1:9876, which is launched
+# by the suite's conftest.py before the app subprocess starts. The
+# password here must match EMULATOR_PIHOLE_PASSWORD in conftest.
+sites:
+  - name: "Emulator"
+    slug: "emu"
+    main: true
+    instances:
+      - name: "Emu-Pi-1"
+        url: "http://127.0.0.1:9876"
+        password: "emulator-password"
+        color: "#00a65a"
+        master: true
