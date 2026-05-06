@@ -39,9 +39,25 @@ from typing import Iterator
 import httpx
 import pytest
 
-# All tests in this directory are tagged so the default `pytest` run
-# (configured to skip `-m playwright` in pytest.ini) leaves them alone.
-pytestmark = pytest.mark.playwright
+
+def pytest_collection_modifyitems(config, items):
+    """Auto-tag every test in this directory with the `playwright` marker.
+
+    `pytestmark = pytest.mark.playwright` at module level *does not*
+    propagate from a conftest.py to tests in the same directory — only
+    the collection hook does. Without this, the default `pytest` run
+    (configured with `-m "not playwright"` in pytest.ini) collects the
+    UI tests and trips on `alembic upgrade head` because there's no
+    Postgres in the fast suite's environment.
+    """
+    rootpath = Path(__file__).parent.resolve()
+    for item in items:
+        try:
+            item_path = Path(str(item.path)).resolve()
+        except Exception:
+            continue
+        if rootpath in item_path.parents or item_path == rootpath:
+            item.add_marker(pytest.mark.playwright)
 
 
 # ── Constants ────────────────────────────────────────────────────────────────
