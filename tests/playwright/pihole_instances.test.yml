@@ -1,0 +1,5 @@
+# Empty config used by the Playwright UI test suite. The app starts with
+# zero configured Pi-holes; tests that need data seed the DB directly via
+# the `seed_data` fixture in conftest.py. Keeping the YAML empty avoids
+# the collector trying to poll unreachable hosts during the test run.
+sites: []
