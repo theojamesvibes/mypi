@@ -37,7 +37,7 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-TEST_YAML = Path(__file__).parent / "pihole_instances.yml"
+TEST_YAML = Path(__file__).parent / "pihole_instances.emulator.yml"
 
 EMULATOR_HOST = "127.0.0.1"
 EMULATOR_PORT = 9876
