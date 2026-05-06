@@ -1,6 +1,7 @@
 # MyPi
 [![build](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/docker-publish.yml?style=flat-square)](https://github.com/theojamesvibes/mypi/actions)
 [![tests](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/test.yml?style=flat-square&label=tests)](https://github.com/theojamesvibes/mypi/actions/workflows/test.yml)
+[![ui-tests](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/ui-tests.yml?style=flat-square&label=ui-tests)](https://github.com/theojamesvibes/mypi/actions/workflows/ui-tests.yml)
 [![version](https://img.shields.io/badge/version-2.0.5-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
 [![platform](https://img.shields.io/badge/platform-linux%2Famd64%20|%20linux%2Farm64-teal?style=flat-square)](https://github.com/theojamesvibes/mypi/pkgs/container/mypi)
 
@@ -441,10 +442,11 @@ mypi/
 │   │   └── sync_service.py   # Pi-hole config sync (master → replicas)
 │   ├── static/               # CSS + JS
 │   └── templates/            # Jinja2 HTML templates
-├── tests/                    # pytest suite (unit + integration + e2e smoke)
+├── tests/                    # pytest suite (unit + integration + e2e + UI)
 │   ├── unit/                 # pure-function tests, no DB / no httpx
 │   ├── services/             # service-layer tests with respx mocks
 │   ├── integration/          # FastAPI + Postgres testcontainer
+│   ├── playwright/           # browser-driven UI tests (Chromium)
 │   └── e2e/smoke.sh          # bash smoke against a deployed instance
 ├── requirements.txt          # runtime deps
 ├── requirements-dev.txt      # test-suite deps (testcontainers, respx, pytest-cov)
@@ -510,6 +512,7 @@ MYPI_USER=admin MYPI_PASSWORD=… \
 - `tests/unit/` — pure-function tests for `auth`, `config`, `query_stream`, sync ZIP validator. No DB, no network.
 - `tests/services/` — service-layer tests for `pihole_client` (respx-mocked HTTP) and the `collector` state machines (circuit breaker, VIP transfer detection, stall detection).
 - `tests/integration/` — FastAPI ASGI transport + Postgres testcontainer. Covers login/logout/JTI revocation, API-key flow incl. legacy SHA-256 auto-upgrade, change-password, middleware, sites/sync/notifications APIs, sync_service orchestration, Pushover encrypt/decrypt, version_check.
+- `tests/playwright/` — Chromium-driven UI tests against a live uvicorn process. Covers login + forced password change, dashboard data binding (with seeded site/instance/stats/queries), navigation between dashboard/queries/settings/docs, logout. Runs in its own [`.github/workflows/ui-tests.yml`](.github/workflows/ui-tests.yml) workflow with a Postgres 18 service container; traces + uvicorn log are uploaded as artifacts on failure. Excluded from the default `pytest` run via the `playwright` marker — invoke with `pytest tests/playwright -m playwright`.
 - `tests/e2e/smoke.sh` — bash smoke against a live deployment.
 
 **Regression guards** are explicit for every security/connection-management hardening that's shipped: bcrypt 72-byte truncation behaviour, login timing-equalisation, JWT algorithm allowlist (rejects forged `alg=none`), API-key `last_used_at` write-coalescing, SSE subscriber cap, body-size 413, YAML loud-fail with line/column, VIP transfer 5-poll confirmation, group-stall every-node-online requirement, Pi-hole client 401-retry, FTL-restart chunked-read swallow, Pushover credentials never leak via the API.

@@ -26,3 +26,10 @@ respx==0.22.0
 # and a few edge branches that aren't worth hand-rolling tests for.
 pytest-cov==6.0.0
 coverage==7.6.10
+
+# UI / browser tests — pytest-playwright drives a real Chromium against
+# the running FastAPI app. The browser binary itself is installed via
+# `playwright install --with-deps chromium` (handled by the ui-tests
+# workflow, not pip). Excluded from the default `pytest` run via the
+# `playwright` marker; CI invokes them separately under tests/playwright.
+pytest-playwright==0.7.2
