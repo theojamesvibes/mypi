@@ -13,6 +13,9 @@ from app.auth import (
     generate_api_key,
     get_current_user,
     hash_password,
+    is_user_locked_out,
+    register_login_failure,
+    register_login_success,
     require_mutation,
     verify_password,
     verify_user_password,
@@ -41,11 +44,18 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 async def login(request: Request, body: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.username == body.username, User.is_active.is_(True)))
     user = result.scalar_one_or_none()
+    # Enforce lockout *before* the password check so a locked account
+    # can't be probed for password correctness during the cooldown.
+    # Same 401 shape as a wrong password — no enumeration leak.
+    if is_user_locked_out(user):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     # verify_user_password runs bcrypt against a dummy hash when user is None
     # so response time doesn't leak whether the username is registered.
     if not verify_user_password(body.password, user):
+        await register_login_failure(user, db)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
+    await register_login_success(user, db)
     expire_minutes = session_settings.effective_minutes(session_settings.get_timeout_minutes())
     token = create_access_token(user.username, expire_minutes=expire_minutes)
     response.set_cookie(
@@ -96,7 +106,16 @@ async def logout(
 
 @router.get("/me", response_model=UserResponse)
 async def me(current_user: User = Depends(get_current_user)):
-    return current_user
+    from app.auth import is_current_request_readonly
+
+    return UserResponse(
+        id=current_user.id,
+        username=current_user.username,
+        email=current_user.email,
+        is_active=current_user.is_active,
+        created_at=current_user.created_at,
+        is_read_only=is_current_request_readonly(),
+    )
 
 
 @router.post("/api-key", response_model=ApiKeyCreated)
