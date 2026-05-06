@@ -65,8 +65,14 @@ jobs:
 
       # Chromium only — Firefox/WebKit add ~5 min to the workflow without
       # catching anything our app is likely to break.
-      - name: Install Playwright Chromium + system deps
-        run: python -m playwright install --with-deps chromium
+      #
+      # No --with-deps because the GH-hosted ubuntu runner already has
+      # Chromium's system dependencies pre-installed; --with-deps runs
+      # apt-get under the hood which has been intermittently hanging
+      # for 10+ min on specific runner instances. Without it the install
+      # is just a 150 MB browser binary download (~5–15 s).
+      - name: Install Playwright Chromium
+        run: python -m playwright install chromium
 
       - name: Run Playwright UI suite
         run: pytest tests/playwright -m playwright -v --tracing=retain-on-failure
