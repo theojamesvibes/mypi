@@ -361,6 +361,27 @@ async def test_post_teleporter_propagates_real_protocol_errors(
         await client.post_teleporter(b"zip")
 
 
+async def test_post_teleporter_logs_response_body_on_4xx(
+    respx_mock, client, caplog,
+):
+    """A 4xx from Pi-hole must surface the JSON error body in the log so
+    operators can diagnose the rejection without SSH'ing to the box."""
+    import logging
+    client._no_auth = True
+    respx_mock.post(f"{PIHOLE}/api/teleporter").respond(
+        400,
+        json={"error": {"key": "bad_request", "message": "gravity database is locked"}},
+    )
+    with caplog.at_level(logging.ERROR, logger="app.services.pihole_client"):
+        with pytest.raises(httpx.HTTPStatusError):
+            await client.post_teleporter(b"PK\x03\x04zip")
+    assert any(
+        "gravity database is locked" in rec.getMessage()
+        and "HTTP 400" in rec.getMessage()
+        for rec in caplog.records
+    )
+
+
 async def test_run_gravity_swallows_incomplete_chunked_read(
     respx_mock, client,
 ):
