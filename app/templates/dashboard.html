@@ -109,8 +109,9 @@
     <div class="col-xl-4">
       <div class="card h-100">
         <div class="card-header"><i class="bi bi-pie-chart me-1"></i>Query Types</div>
-        <div class="card-body d-flex align-items-center justify-content-center p-2">
-          <canvas id="typeChart" style="max-height:220px;"></canvas>
+        <div class="card-body d-flex flex-column justify-content-center p-3">
+          <div id="typeBar" class="d-flex w-100 rounded overflow-hidden mb-3 shadow-sm" style="height: 28px; background: var(--bs-tertiary-bg);"></div>
+          <ul id="typeList" class="list-unstyled mb-0"></ul>
         </div>
       </div>
     </div>
