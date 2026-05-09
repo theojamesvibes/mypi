@@ -4,6 +4,20 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.0.8] — 2026-05-09
+
+### Replace tiny Query Types doughnut with stacked bar + count list
+
+The Query Types panel on the dashboard rendered a doughnut capped at `max-height:220px`, which Chart.js rendered as a 220×220 square inside a ~360px-tall card — leaving roughly 75% of the panel as empty halo. Hardcoded canvas height + Chart.js's default square aspect for doughnuts meant the chart couldn't grow to use the available space.
+
+Replaced the doughnut with a 100%-stacked horizontal bar plus a per-category count + percent list (Forwarded / Cached / Blocked / Other). Pure HTML + CSS — no Chart.js for this panel, which scales fluidly across desktop and mobile widths and reads cleanly at small sizes. Magnitudes are still visible at a glance from the bar, while exact counts are surfaced in the list beneath. Hover tooltips on each bar segment show count + percent. Empty-state (zero queries today) renders an empty bar and a "0 / 0%" list rather than a broken chart.
+
+`renderTypeChart` is a no-op when neither `#typeBar` nor `#typeList` exists, mirroring the previous canvas-existence guard. Removed the unused `typeChart` global and the per-render `Chart.destroy()` cycle.
+
+No DB migration, no config change, no API change.
+
+---
+
 ## [2.0.7] — 2026-05-09
 
 ### Surface Pi-hole's response body on teleporter-import 400s
