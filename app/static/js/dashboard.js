@@ -3,6 +3,7 @@
 'use strict';
 
 let queriesChart = null;
+let typeChart = null;
 let _drillFilter = {};
 let _drillPage = 1;
 let _drillHours = 24;
@@ -287,48 +288,53 @@ function renderQueriesChart(buckets, bucketMinutes = 10, spanHours = 24) {
 }
 
 function renderTypeChart(totals) {
-  const bar = document.getElementById('typeBar');
-  const list = document.getElementById('typeList');
-  if (!bar || !list) return;
+  const ctx = document.getElementById('typeChart');
+  if (!ctx) return;
 
   const forwarded = totals.queries_forwarded || 0;
   const cached = totals.queries_cached || 0;
   const blocked = totals.queries_blocked || 0;
   const other = Math.max(0, (totals.dns_queries_today || 0) - forwarded - cached - blocked);
-  const total = forwarded + cached + blocked + other;
 
-  const cats = [
-    { label: 'Forwarded', value: forwarded, color: '#3c8dbc' },
-    { label: 'Cached',    value: cached,    color: '#00c0ef' },
-    { label: 'Blocked',   value: blocked,   color: '#dd4b39' },
-    { label: 'Other',     value: other,     color: '#9ea4ad' },
-  ];
-
-  const fmt = (n) => n.toLocaleString();
-  const pctOf = (v) => total > 0 ? (v / total) * 100 : 0;
-
-  bar.innerHTML = total === 0
-    ? ''
-    : cats.filter(c => c.value > 0).map(c => {
-        const pct = pctOf(c.value);
-        return `<div title="${c.label}: ${fmt(c.value)} (${pct.toFixed(1)}%)" style="width:${pct}%;background:${c.color};"></div>`;
-      }).join('');
-
-  list.innerHTML = cats.map(c => {
-    const pct = pctOf(c.value);
-    return `
-      <li class="d-flex align-items-center justify-content-between py-1 small">
-        <span class="d-flex align-items-center">
-          <span class="d-inline-block rounded-circle me-2" style="width:10px;height:10px;background:${c.color};"></span>
-          ${c.label}
-        </span>
-        <span>
-          <strong class="me-2">${fmt(c.value)}</strong>
-          <span class="text-muted" style="min-width:3.5em;display:inline-block;text-align:right;">${pct.toFixed(1)}%</span>
-        </span>
-      </li>
-    `;
-  }).join('');
+  if (typeChart) typeChart.destroy();
+  typeChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: ['Forwarded', 'Cached', 'Blocked', 'Other'],
+      datasets: [{
+        data: [forwarded, cached, blocked, other],
+        backgroundColor: ['#3c8dbc', '#00c0ef', '#dd4b39', '#9ea4ad'],
+        borderColor: getChartColors().border,
+        borderWidth: 2,
+      }],
+    },
+    options: {
+      responsive: true,
+      // Fill the parent container (which is sized by flex + min-height)
+      // instead of using the canvas's intrinsic 300x150 aspect ratio.
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: { font: { size: 11 }, padding: 12, color: getChartColors().tick },
+        },
+        tooltip: {
+          backgroundColor: getChartColors().tipBg,
+          titleColor: getChartColors().tipText,
+          bodyColor: getChartColors().tipText,
+          callbacks: {
+            label: (item) => {
+              const v = item.parsed || 0;
+              const total = item.dataset.data.reduce((a, b) => a + b, 0);
+              const pct = total > 0 ? (v / total) * 100 : 0;
+              return ` ${item.label}: ${v.toLocaleString()} (${pct.toFixed(1)}%)`;
+            },
+          },
+        },
+      },
+      cutout: '60%',
+    },
+  });
 }
 
 function renderInstancesTable(instances) {

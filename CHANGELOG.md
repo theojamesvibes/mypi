@@ -4,6 +4,18 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.0.9] — 2026-05-09
+
+### Restore Query Types doughnut, this time sized to fill the panel
+
+The 2.0.8 stacked-bar replacement read poorly per user feedback — restored the doughnut. Root cause of the original 2.0.8 problem (tiny chart) was the canvas's hardcoded `max-height:220px` plus Chart.js's default `maintainAspectRatio: true`, which clamped the doughnut to a 220px square inside a ~360px-tall card.
+
+Fix: wrap the canvas in a flex-grow container with `position: relative` and `min-height: 280px`, set `maintainAspectRatio: false` on the Chart.js options so the doughnut fills the container in both dimensions. Result is a much larger, slightly oval-when-narrow doughnut that scales fluidly across desktop and mobile widths. Also added a percentage to the tooltip (e.g. "Forwarded: 45,231 (52.4%)") since the bigger chart begs for richer hover detail. Cutout reduced from 65% → 60% for a slightly chunkier ring at the new size.
+
+No DB migration, no config change.
+
+---
+
 ## [2.0.8] — 2026-05-09
 
 ### Replace tiny Query Types doughnut with stacked bar + count list
