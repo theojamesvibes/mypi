@@ -4,6 +4,18 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.0.7] — 2026-05-09
+
+### Surface Pi-hole's response body on teleporter-import 400s
+
+When `POST /api/teleporter` to a replica returns 4xx, `resp.raise_for_status()` only logs the URL and status code — Pi-hole's JSON error body (which names the actual reason: locked gravity DB, schema mismatch, missing field, bad zip, etc.) was discarded. Diagnosing recurring 400s on a single replica required SSH'ing to the box and tailing `FTL.log`.
+
+`post_teleporter` now logs Pi-hole's response body at ERROR before raising on any 4xx/5xx (after the 401 re-auth retry, so transient auth misses don't spam the log). Body is truncated to 1000 chars, with `<empty body>` when Pi-hole returns nothing. Failure is still raised — this is logging only, no behavior change to the sync flow.
+
+No DB migration, no config change.
+
+---
+
 ## [2.0.6] — 2026-05-06
 
 ### Brute-force lockout + iOS-prep `/api/auth/me` scope flag

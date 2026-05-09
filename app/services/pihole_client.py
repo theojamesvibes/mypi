@@ -317,6 +317,16 @@ class PiholeClient:
                 ok = await self._authenticate()
                 if ok:
                     resp = await self._client.post(url, headers=self._headers(), files=files, data=data)
+            if resp.status_code >= 400:
+                # Pi-hole returns a JSON error body explaining what it rejected
+                # (locked gravity DB, schema mismatch, missing field, bad zip,
+                # etc.).  Surfacing it here turns an opaque "400 Bad Request"
+                # into a diagnosable failure without needing to SSH to the box.
+                body = (resp.text or "").strip()
+                logger.error(
+                    "Teleporter import to %s rejected: HTTP %d — Pi-hole said: %s",
+                    self.base_url, resp.status_code, body[:1000] or "<empty body>",
+                )
             resp.raise_for_status()
         except httpx.RemoteProtocolError as exc:
             # Pi-hole FTL restarts itself after importing configuration, which
