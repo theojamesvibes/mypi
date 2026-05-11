@@ -7,7 +7,7 @@ pytest-asyncio==0.26.0
 # so tests run against the same DB engine as prod. psycopg2-binary is
 # only used by alembic / Base.metadata.create_all in the test bootstrap;
 # runtime still uses asyncpg.
-testcontainers==4.7.2
+testcontainers==4.14.2
 # psycopg v3 has prebuilt wheels for Python 3.13/3.14 — psycopg2-binary
 # does not, and pulling in pg_config to build from source is brittle.
 # 3.2.10 was the first to ship cp314 wheels; 3.2.13 is the current
