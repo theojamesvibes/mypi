@@ -17,7 +17,7 @@ psycopg[binary]==3.2.13
 # Mocks httpx outbound calls so the Pi-hole client tests don't need a
 # real Pi-hole. Patches httpx.AsyncClient globally inside the
 # `respx_mock` fixture context.
-respx==0.22.0
+respx==0.23.1
 
 # Coverage measurement + gate. CI runs `pytest --cov=app --cov-fail-under=75`
 # so a PR that regresses coverage below the floor fails the build.
