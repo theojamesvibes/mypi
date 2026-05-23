@@ -6,7 +6,7 @@
 [![platform](https://img.shields.io/badge/platform-linux%2Famd64%20|%20linux%2Farm64-teal?style=flat-square)](https://github.com/theojamesvibes/mypi/pkgs/container/mypi)
 
 > **⚠️ Vibe Code Disclosure**
-> This project was generated entirely through AI-assisted development (Claude Code / Anthropic). The code has been reviewed and iterated on collaboratively, but it has not been audited for production use. Deploy on trusted local networks only, review the code before relying on it, and proceed with the usual amount of healthy scepticism you'd apply to any AI-generated codebase.
+> This project was generated almost entirely through AI-assisted development (Claude Code / Anthropic). The code has been reviewed and iterated on collaboratively, but it has not been audited for production use. Deploy on trusted local networks only, review the code before relying on it, and proceed with the usual amount of healthy scepticism you'd apply to any AI-generated codebase.
 >
 > **Independent reviews.** Two LLM-based audits have been applied as part of the `hardening-review` branch — by **Google Gemini** (adversarial security review) and **Grok** (full architecture + security review). Both are documented in [Independent reviews](#independent-reviews) below, along with what was verified as already-correct and what was changed in response. These reviews are not a substitute for a professional audit.
 
