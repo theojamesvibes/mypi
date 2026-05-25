@@ -2,7 +2,7 @@
 [![build](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/docker-publish.yml?style=flat-square)](https://github.com/theojamesvibes/mypi/actions)
 [![tests](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/test.yml?style=flat-square&label=tests)](https://github.com/theojamesvibes/mypi/actions/workflows/test.yml)
 [![ui-tests](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/ui-tests.yml?style=flat-square&label=ui-tests)](https://github.com/theojamesvibes/mypi/actions/workflows/ui-tests.yml)
-[![version](https://img.shields.io/badge/version-2.0.9-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
+[![version](https://img.shields.io/badge/version-2.0.10-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
 [![platform](https://img.shields.io/badge/platform-linux%2Famd64%20|%20linux%2Farm64-teal?style=flat-square)](https://github.com/theojamesvibes/mypi/pkgs/container/mypi)
 
 > **⚠️ Vibe Code Disclosure**
