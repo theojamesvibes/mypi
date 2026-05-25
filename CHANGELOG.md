@@ -4,6 +4,55 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.0.10] — 2026-05-25
+
+### Dependency wave — runtime, dev, and CI all brought to current
+
+Cleared the backlog of 15 open Dependabot PRs (#41–#52, #54–#56) and pushed
+every dependency to the latest stable release — in several cases past the
+version Dependabot had proposed, since newer patches/minors shipped after its
+last run on 2026-05-11.
+
+**Runtime (`requirements.txt`):**
+- fastapi 0.136.1 → 0.136.3
+- uvicorn 0.46.0 → 0.48.0
+- sqlalchemy 2.0.49 → 2.0.50
+- pydantic 2.13.3 → 2.13.4
+- pydantic-settings 2.14.0 → 2.14.1
+- python-multipart 0.0.27 → 0.0.29 (Dependabot #51 only reached 0.0.28)
+- cryptography 47.0.0 → 48.0.0
+
+**Dev (`requirements-dev.txt`):**
+- pytest 8.4.0 → 9.0.3 (major)
+- pytest-asyncio 0.26.0 → 1.3.0 (major; pytest.ini already declares
+  `asyncio_mode = auto` plus both loop-scope settings the 1.x line requires,
+  so no config change was needed)
+- testcontainers 4.7.2 → 4.14.2
+- psycopg 3.2.13 → 3.3.4
+- respx 0.22.0 → 0.23.1
+- pytest-cov 6.0.0 → 7.1.0
+- coverage 7.6.10 → 7.14.0
+- pytest-playwright 0.7.2 → 0.8.0
+
+**CI (GitHub Actions):**
+- docker/login-action v4.1.0 → v4.2.0
+- docker/metadata-action v6.0.0 → v6.1.0
+- docker/setup-buildx-action v4.0.0 → v4.1.0
+- actions/setup-python v5 → v6
+- actions/upload-artifact v4 → v7
+
+Validated locally before release: the full non-playwright suite (352 tests)
+passes against the upgraded stack in a `python:3.14-slim` container with a real
+`postgres:18-alpine` testcontainer. The playwright UI suites are validated by
+the `ui-tests` workflow in CI. No app behaviour change, no DB migration, no
+config change.
+
+Also closes the stale tracking issue #53 ("Dependabot wave 2: deferred —
+1.11.0 not yet cut"); that wave was already absorbed into the 2.0.x line, and
+this release supersedes the remaining open PRs it referenced.
+
+---
+
 ## [2.0.9] — 2026-05-09
 
 ### Restore Query Types doughnut, this time sized to fill the panel

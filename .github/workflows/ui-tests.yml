@@ -53,7 +53,7 @@ jobs:
       - uses: actions/checkout@v6.0.2
 
       - name: Set up Python 3.14
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.14'
 
@@ -82,7 +82,7 @@ jobs:
       # re-run locally.
       - name: Upload diagnostics on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ui-test-diagnostics
           path: |
@@ -123,7 +123,7 @@ jobs:
       - uses: actions/checkout@v6.0.2
 
       - name: Set up Python 3.14
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.14'
 
@@ -141,7 +141,7 @@ jobs:
 
       - name: Upload diagnostics on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ui-test-collector-diagnostics
           path: |
@@ -182,7 +182,7 @@ jobs:
       - uses: actions/checkout@v6.0.2
 
       - name: Set up Python 3.14
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.14'
 
@@ -200,7 +200,7 @@ jobs:
 
       - name: Upload diagnostics on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ui-test-sync-diagnostics
           path: |
