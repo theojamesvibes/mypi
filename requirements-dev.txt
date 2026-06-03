@@ -1,7 +1,7 @@
 # Dev-only dependencies for the test suite. Installed in CI on top of
 # requirements.txt; never bundled into the runtime image.
 pytest==9.0.3
-pytest-asyncio==1.3.0
+pytest-asyncio==1.4.0
 
 # Integration suite — testcontainers spins a real Postgres per session
 # so tests run against the same DB engine as prod. psycopg2-binary is
