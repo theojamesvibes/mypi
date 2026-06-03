@@ -4,6 +4,27 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.0.11] — 2026-06-03
+
+### Dependency bumps + license-holder update
+
+Routine Dependabot sweep merged after 2.0.10 (#57–#60), plus a license update.
+
+**Runtime (`requirements.txt`):**
+- python-multipart 0.0.29 → 0.0.30
+
+**Dev (`requirements-dev.txt`):**
+- coverage 7.14.0 → 7.14.1
+- pytest-asyncio 1.3.0 → 1.4.0
+
+**CI (GitHub Actions):**
+- docker/build-push-action 7.1.0 → 7.2.0
+
+**Other:**
+- `LICENSE` copyright holder → **TIA Partners, LLC** (was "Theo James"), aligning the repo with the legal entity that owns MyPi.
+
+---
+
 ## [2.0.10] — 2026-05-25
 
 ### Dependency wave — runtime, dev, and CI all brought to current
