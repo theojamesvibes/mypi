@@ -206,7 +206,13 @@ docker compose up -d
 
 Docker pulls the pre-built image automatically. The dashboard is available at **http://localhost:8080** (or whichever `APP_PORT` you set in `.env`).
 
-Log in with username `admin` (or `INITIAL_ADMIN_USER` if overridden) and password `changeme`. You will be required to set a new password immediately before accessing the dashboard.
+Log in with username `admin` (or `INITIAL_ADMIN_USER` if overridden). On first startup MyPi generates a **random** password for the admin account and prints it **once** to the container logs — retrieve it with:
+
+```bash
+docker compose logs app | grep -A2 "generated password"
+```
+
+You will be required to set a new password immediately before accessing the dashboard. To pin a known password instead of using the generated one, set `INITIAL_ADMIN_PASSWORD` in `.env` **before** the first startup (a password change is still forced on first login).
 
 ---
 
@@ -229,7 +235,8 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 |---|---|---|
 | `POSTGRES_PASSWORD` | *(required)* | PostgreSQL password |
 | `SECRET_KEY` | *(required)* | JWT signing secret — generate with `secrets.token_hex(32)` |
-| `INITIAL_ADMIN_USER` | `admin` | Username for the first admin account — password is always `changeme` and must be changed on first login |
+| `INITIAL_ADMIN_USER` | `admin` | Username for the first admin account (created only on first startup, when no users exist yet) |
+| `INITIAL_ADMIN_PASSWORD` | *(random, logged once)* | Password for the first admin account. Leave unset to have MyPi generate a random password and log it once at startup; set it to pin a known password. Either way, a password change is forced on first login. |
 | `APP_PORT` | `8080` | Port to expose the dashboard on |
 | `STATS_POLL_INTERVAL` | `60` | Seconds between stats polls |
 | `QUERIES_POLL_INTERVAL` | `10` | Seconds between query log polls |
