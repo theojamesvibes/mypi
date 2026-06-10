@@ -26,6 +26,9 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-mypi}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-mypi}
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
       INITIAL_ADMIN_USER: ${INITIAL_ADMIN_USER:-admin}
+      # Leave unset/empty to have MyPi generate a random admin password on
+      # first boot and log it once; set INITIAL_ADMIN_PASSWORD in .env to pin one.
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
       PIHOLE_CONFIG_PATH: /app/pihole_instances.yml
       STATS_POLL_INTERVAL: ${STATS_POLL_INTERVAL:-60}
       QUERIES_POLL_INTERVAL: ${QUERIES_POLL_INTERVAL:-10}
