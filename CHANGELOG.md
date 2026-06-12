@@ -4,6 +4,24 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.0.12] — 2026-06-12
+
+### Dependency bumps + admin-login doc fix
+
+Routine Dependabot sweep merged after 2.0.11 (#61–#63), plus a docs correction.
+
+**Runtime (`requirements.txt`):**
+- uvicorn 0.48.0 → 0.49.0
+- python-multipart 0.0.30 → 0.0.32
+
+**CI (GitHub Actions):**
+- actions/checkout 6.0.2 → 6.0.3
+
+**Docs:**
+- Corrected the initial-admin-login instructions: the first-run admin password has been randomly generated since 2.0.4, not the literal `changeme`.
+
+---
+
 ## [2.0.11] — 2026-06-03
 
 ### Dependency bumps + license-holder update
