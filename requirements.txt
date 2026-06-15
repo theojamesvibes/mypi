@@ -13,4 +13,4 @@ python-multipart==0.0.32
 jinja2==3.1.6
 apscheduler==3.11.2
 cryptography==48.0.0
-slowapi==0.1.9
+slowapi==0.1.10
