@@ -317,7 +317,28 @@ class PiholeClient:
                 ok = await self._authenticate()
                 if ok:
                     resp = await self._client.post(url, headers=self._headers(), files=files, data=data)
-            if resp.status_code >= 400:
+            if resp.status_code == 403:
+                # Pi-hole v6 forbids POST /api/teleporter when the session was
+                # opened with an *application* password unless the replica has
+                # webserver.api.app_sudo=true.  Auth succeeds (we hold a valid
+                # SID) but the import is rejected — an opaque 403 that costs an
+                # SSH session to diagnose.  Surface the exact remedy.  (This is
+                # the same gotcha tracked upstream in nebula-sync #253.)
+                body = (resp.text or "").strip()
+                logger.error(
+                    "Teleporter import to %s forbidden (HTTP 403). The session is "
+                    "valid but the import is not permitted. If this replica is "
+                    "authenticated with an application password, set "
+                    "webserver.api.app_sudo=true on it (Settings → All settings → "
+                    "webserver.api.app_sudo, or `pihole-FTL --config "
+                    "webserver.api.app_sudo true`). Pi-hole said: %s",
+                    self.base_url, body[:1000] or "<empty body>",
+                )
+                raise RuntimeError(
+                    "Teleporter import forbidden (HTTP 403). If this replica uses an "
+                    "application password, set webserver.api.app_sudo=true on it."
+                )
+            elif resp.status_code >= 400:
                 # Pi-hole returns a JSON error body explaining what it rejected
                 # (locked gravity DB, schema mismatch, missing field, bad zip,
                 # etc.).  Surfacing it here turns an opaque "400 Bad Request"

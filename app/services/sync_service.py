@@ -39,6 +39,24 @@ _TRANSIENT_SYNC_ERRORS = (ssl.SSLError, httpx.ConnectError, httpx.RemoteProtocol
 logger = logging.getLogger(__name__)
 
 
+def _ftl_series(version: str | None) -> str | None:
+    """Reduce an FTL version string to its `major.minor` series for comparison.
+
+    Pi-hole's teleporter archive is versioned with FTL: importing a master
+    export into a replica on a different minor series can be rejected or
+    silently mis-mapped. We compare on `major.minor` (not patch) so a replica
+    one patch behind during a rolling upgrade doesn't trip a warning, while a
+    genuine 6.0 → 6.1 schema gap does. Returns None when the version is unknown
+    (never polled) so the caller can skip the check rather than warn on noise.
+    """
+    if not version:
+        return None
+    parts = version.lstrip("v").split(".")
+    if len(parts) < 2 or not (parts[0].isdigit() and parts[1].isdigit()):
+        return None
+    return f"{parts[0]}.{parts[1]}"
+
+
 @dataclass
 class InstanceSyncResult:
     name: str
@@ -404,6 +422,26 @@ async def run_sync(
                 site_name, master.name, [r.name for r in replicas],
                 import_config, import_gravity, import_dhcp_leases, run_gravity,
             )
+
+            # Pre-flight: warn on FTL minor-series drift between master and
+            # replicas. The teleporter archive is versioned with FTL, so a
+            # cross-series import can be rejected or mis-mapped. We warn rather
+            # than block: a one-patch lag during a rolling upgrade is harmless,
+            # and refusing to sync could leave replicas staler than a
+            # best-effort import would. Uses the version_ftl already persisted by
+            # the collector (refreshed at startup and after every sync), so this
+            # costs no extra Pi-hole round-trips. (Upstream nebula-sync #223
+            # blocks outright; we surface the risk and proceed.)
+            master_series = _ftl_series(master.version_ftl)
+            for r in replicas:
+                replica_series = _ftl_series(r.version_ftl)
+                if master_series and replica_series and master_series != replica_series:
+                    logger.warning(
+                        "FTL version drift: master %s is on FTL %s but replica %s "
+                        "is on FTL %s. Teleporter import may be rejected or partial "
+                        "across minor versions — align Pi-hole versions if the sync fails.",
+                        master.name, master.version_ftl, r.name, r.version_ftl,
+                    )
 
             # Step 1: Run gravity on master to get fresh blocklists before export.
             try:

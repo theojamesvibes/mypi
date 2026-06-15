@@ -2,7 +2,7 @@
 [![build](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/docker-publish.yml?style=flat-square)](https://github.com/theojamesvibes/mypi/actions)
 [![tests](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/test.yml?style=flat-square&label=tests)](https://github.com/theojamesvibes/mypi/actions/workflows/test.yml)
 [![ui-tests](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/ui-tests.yml?style=flat-square&label=ui-tests)](https://github.com/theojamesvibes/mypi/actions/workflows/ui-tests.yml)
-[![version](https://img.shields.io/badge/version-2.0.10-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
+[![version](https://img.shields.io/badge/version-2.1.0-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
 [![platform](https://img.shields.io/badge/platform-linux%2Famd64%20|%20linux%2Farm64-teal?style=flat-square)](https://github.com/theojamesvibes/mypi/pkgs/container/mypi)
 
 > **⚠️ Vibe Code Disclosure**
@@ -333,6 +333,12 @@ MyPi can push the full Pi-hole configuration from a master instance to all repli
 - Enable auto-sync on gravity change to react immediately when the master's blocklist is updated
 
 The sync schedule and last sync result are stored in the database and survive container restarts. The dashboard displays the last sync time; it turns red if more than 24 hours have elapsed since the last successful sync.
+
+Before broadcasting, MyPi validates the master's exported ZIP (CRC, non-empty members, size floor) so a corrupt export can't fan out to every replica, and it warns in the logs if a replica's Pi-hole FTL **minor version** differs from the master's (the teleporter archive is FTL-versioned, so cross-series imports can be rejected).
+
+**Troubleshooting — teleporter import returns `HTTP 403`:** Pi-hole v6 forbids `POST /api/teleporter` when the session was opened with an **application password** unless the replica has `webserver.api.app_sudo` enabled. Auth still succeeds, so the symptom is a 403 only on import. Fix it on the affected replica via *Settings → All settings → `webserver.api.app_sudo`* (or `pihole-FTL --config webserver.api.app_sudo true`), or authenticate MyPi with that Pi-hole's main web password instead.
+
+> **Protocol reference.** MyPi's sync is derived from [lovelaze/nebula-sync](https://github.com/lovelaze/nebula-sync), which pioneered driving the Pi-hole v6 teleporter API for primary→replica replication. We periodically re-check its releases and issue tracker for protocol changes; the ZIP validation, SID reuse, version-drift warning, and the `app_sudo` 403 guidance above came out of those reviews.
 
 ---
 

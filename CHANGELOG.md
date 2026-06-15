@@ -4,6 +4,29 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.1.0] — 2026-06-15
+
+### Sync hardening (nebula-sync re-review) + dependency sweep
+
+Re-checked [lovelaze/nebula-sync](https://github.com/lovelaze/nebula-sync) — the project our Pi-hole v6 teleporter sync is derived from — against its latest releases and open issues, and pulled in two protocol improvements.
+
+**Sync:**
+- **`app_sudo` 403 guidance** — when a replica returns `HTTP 403` on `POST /api/teleporter`, MyPi now logs the exact remedy (enable `webserver.api.app_sudo`, or use the main web password) and surfaces a clear error in the sync-result UI instead of an opaque httpx status. Pi-hole v6 forbids teleporter import for sessions opened with an *application* password unless `app_sudo` is set. (Mirrors nebula-sync #253.)
+- **FTL version-drift warning** — before broadcasting, MyPi compares each replica's FTL `major.minor` series against the master's (using the already-collected version data, no extra round-trips) and warns in the logs when they differ, since the teleporter archive is FTL-versioned and cross-series imports can be rejected. Non-fatal: a one-patch lag during a rolling upgrade does not block the sync. (nebula-sync #223 blocks outright; we warn and proceed.)
+
+**Runtime (`requirements.txt`):**
+- fastapi 0.136.3 → 0.137.0 (#66)
+- cryptography 48.0.0 → 49.0.0 (#65)
+- slowapi 0.1.9 → 0.1.10 (#67)
+
+**Dev (`requirements-dev.txt`):**
+- pytest 9.0.3 → 9.1.0 (#64)
+
+**Docs:**
+- README Pi-hole Sync section documents the `app_sudo` 403 fix, the ZIP-validation/version-drift safeguards, and credits nebula-sync as the protocol reference.
+
+---
+
 ## [2.0.12] — 2026-06-12
 
 ### Dependency bumps + admin-login doc fix

@@ -7,7 +7,7 @@ import zipfile
 
 import pytest
 
-from app.services.sync_service import _validate_teleporter_zip
+from app.services.sync_service import _ftl_series, _validate_teleporter_zip
 
 
 def _make_zip(*entries: tuple[str, bytes]) -> bytes:
@@ -80,3 +80,38 @@ def test_rejects_corrupt_zip_member():
     zip_bytes[idx + 10] ^= 0xFF
     with pytest.raises(RuntimeError, match="CRC|not a valid ZIP|corrupt"):
         _validate_teleporter_zip(bytes(zip_bytes))
+
+
+# ── _ftl_series — FTL version-drift guard helper ──────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "version,expected",
+    [
+        ("6.0.5", "6.0"),
+        ("v6.1.2", "6.1"),   # leading 'v' tolerated
+        ("6.0", "6.0"),      # major.minor with no patch
+        ("6.2.0-rc1", "6.2"),
+        (None, None),        # never polled
+        ("", None),
+        ("6", None),         # too coarse to compare
+        ("dev", None),
+        ("6.x", None),       # non-numeric minor
+    ],
+)
+def test_ftl_series_reduces_to_major_minor(version, expected):
+    assert _ftl_series(version) == expected
+
+
+def test_ftl_series_flags_minor_drift_but_not_patch():
+    # A genuine minor-series gap (6.0 → 6.1) must compare unequal...
+    assert _ftl_series("6.0.5") != _ftl_series("6.1.0")
+    # ...while a one-patch lag during a rolling upgrade must not.
+    assert _ftl_series("6.0.5") == _ftl_series("6.0.6")
+
+
+def test_ftl_series_unknown_version_skips_comparison():
+    # When either side is unknown the caller must not warn; modelled here as
+    # "None series compares falsy so the guard's `and` short-circuits".
+    assert _ftl_series(None) is None
+    assert not (_ftl_series(None) and _ftl_series("6.0.1"))
