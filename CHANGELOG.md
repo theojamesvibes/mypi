@@ -4,6 +4,32 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.1.1] — 2026-06-27
+
+### Security-focused dependency sweep (#68–#73) + Pi-hole/CVE re-review
+
+Routine Dependabot sweep, landed alongside a fresh review of (a) CVEs against every pinned dependency and (b) Pi-hole v6 releases newer than our last-verified baseline. One real advisory fix and one defensive pin.
+
+**Security:**
+- **pydantic-settings 2.14.1 → 2.14.2 (#72)** — fixes GHSA-4xgf-cpjx-pc3j: `NestedSecretsSettingsSource` with `secrets_nested_subdir=True` followed symlinks out of `secrets_dir` (out-of-tree read + size-cap bypass). Low exposure for MyPi (we don't use nested secrets) but it's the patch, so it's in.
+- **Pinned an explicit `starlette>=1.3.1` floor** — starlette is only a transitive dep of fastapi (`>=0.46.0`, no ceiling), so a resolve could previously land on a version exposed to CVE-2026-54283 (urlencoded form-size limits silently ignored → DoS) or the earlier multipart/Range DoS issues. A fresh install already resolves clean; the pin makes that guaranteed.
+
+**Runtime (`requirements.txt`):**
+- fastapi 0.137.0 → 0.138.0 (#71)
+- sqlalchemy 2.0.50 → 2.0.51 (#69)
+- pydantic-settings 2.14.1 → 2.14.2 (#72, see above)
+
+**Dev (`requirements-dev.txt`):**
+- pytest 9.1.0 → 9.1.1 (#73)
+- coverage 7.14.1 → 7.14.2 (#70)
+
+**CI (GitHub Actions):**
+- actions/checkout 6.0.3 → 7.0.0 (#68)
+
+**Pi-hole compatibility (no code change):** re-reviewed against the current stack — **Core v6.4.2 / Web v6.5.1 / FTL v6.6.2**. The v6 HTTP API auth/session flow and response schemas MyPi depends on are unchanged. FTL v6.6.1 fixed a High-severity unauthenticated session-hijack race (CVE-2026-44693) and a `dns.interface` newline-injection RCE (CVE-2026-39849); both are server-side, but reinforce recommending FTL ≥ 6.6.2 on target instances — which our existing version-drift guard already nudges operators toward.
+
+---
+
 ## [2.1.0] — 2026-06-15
 
 ### Sync hardening (nebula-sync re-review) + dependency sweep
