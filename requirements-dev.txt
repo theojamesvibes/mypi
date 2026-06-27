@@ -1,6 +1,6 @@
 # Dev-only dependencies for the test suite. Installed in CI on top of
 # requirements.txt; never bundled into the runtime image.
-pytest==9.1.0
+pytest==9.1.1
 pytest-asyncio==1.4.0
 
 # Integration suite — testcontainers spins a real Postgres per session
@@ -25,7 +25,7 @@ respx==0.23.1
 # is ~76%. The remaining 4% to 80% lives mostly in lifespan startup hooks
 # and a few edge branches that aren't worth hand-rolling tests for.
 pytest-cov==7.1.0
-coverage==7.14.1
+coverage==7.14.3
 
 # UI / browser tests — pytest-playwright drives a real Chromium against
 # the running FastAPI app. The browser binary itself is installed via
