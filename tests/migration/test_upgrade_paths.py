@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import uuid
 from pathlib import Path
 
@@ -63,8 +64,10 @@ def _alembic(db_url: str, target: str) -> None:
     # transitively. Any non-empty value works.
     env.setdefault("SECRET_KEY", "migration-test-secret-not-for-production")
     env["MYPI_SKIP_TESTCONTAINER"] = "1"
+    # sys.executable -m alembic: the bare "alembic" binary is only on PATH
+    # when the venv is activated; module invocation works from any runner.
     subprocess.run(
-        ["alembic", "upgrade", target],
+        [sys.executable, "-m", "alembic", "upgrade", target],
         cwd=REPO_ROOT, env=env, check=True,
     )
 

@@ -28,7 +28,7 @@ from app.api import sites as sites_router
 from app.api import stats as stats_router
 from app.api import sync as sync_router
 from app.api import version as version_router
-from app.auth import _decode_token_claims, get_current_user, get_current_user_optional, hash_password, is_user_locked_out, register_login_failure, register_login_success, verify_password, verify_user_password
+from app.auth import _decode_token_claims, get_current_user, get_current_user_optional, hash_password, is_current_request_readonly, is_user_locked_out, register_login_failure, register_login_success, verify_password, verify_user_password
 from app.config import SESSION_COOKIE_NAME, settings
 from app.database import AsyncSessionLocal, get_db
 from app.limiter import limiter
@@ -562,9 +562,15 @@ async def change_password_page(request: Request, current_user=Depends(get_curren
 
 
 @app.post("/change-password", include_in_schema=False)
+@limiter.limit("5/minute")
 async def change_password_form(request: Request, db=Depends(get_db), current_user=Depends(get_current_user_optional)):
     if current_user is None:
         return RedirectResponse(url="/login", status_code=303)
+    # Same guards as the JSON twin (POST /api/auth/change-password): a
+    # read-only API key must not be able to mutate the account password,
+    # and current_password guesses are throttled.
+    if is_current_request_readonly():
+        raise HTTPException(status_code=403, detail="This API key is read-only and cannot perform mutations.")
 
     form = await request.form()
     current_pw = form.get("current_password", "")

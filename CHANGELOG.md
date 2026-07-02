@@ -4,6 +4,33 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [Unreleased]
+
+---
+
+## [2.1.2] — 2026-07-02
+
+### Correctness + security patch from a full-repo audit
+
+A four-track audit (services, API/auth, test suite, infra/docs) surfaced two high-severity issues and several smaller ones; this release fixes the confirmed-and-verified batch. Larger items (lint/type tooling, multi-arch image, test-debt paydown) are queued for 2.2.0.
+
+**Fixed:**
+- **Removing a site from `pihole_instances.yml` no longer crashes startup.** The orphan-site deactivation path lazy-loaded `Site.instances` inside the async session, raising `sqlalchemy.exc.MissingGreenlet` before the commit — since config sync runs in the FastAPI lifespan, the container failed to boot until the site was restored to the YAML. The orphan query now eager-loads instances (`selectinload`). Reproduced with a live Postgres test before the fix; that repro ships as a regression test (`test_removed_site_deactivates_site_and_instances`).
+- **Web `POST /change-password` form now carries the same guards as its JSON twin** (`/api/auth/change-password`): a `5/minute` rate limit and a read-only API-key rejection (403). Previously a read-only key could change the account password through the form route, and `current_password` guesses were unthrottled.
+- **A single failed iteration no longer silently kills a site's scheduled sync.** `_scheduled_loop` had no exception guard and was spawned without done-callback logging, so e.g. losing the "sync already in progress" race to a user-triggered sync killed the loop task with zero log output until restart. Iterations are now wrapped in `try/except` with `logger.exception`, and the loop retries at the next interval. Cancellation (schedule reconfigure) still propagates.
+- **Config-sync completion log** counted active sites wrong (`len(yaml_sites) - len(db_orphans)` over disjoint sets); now reports the true count.
+
+**Docs / examples:**
+- `.env.example` set `QUERIES_POLL_INTERVAL=300` while the documented and shipped default is `10` — copying the example silently slowed query polling 30×. Now `10`.
+- README: version badge un-stuck (2.1.0 → current); the documented `POST/DELETE /api/domains/block` endpoints never existed — replaced with the real routes (`/api/domains/{status,deny,allow}`); stale test-count/coverage figures refreshed (suite is ~390 cases at ~83% coverage, not 337 at 76.41%).
+- CHANGELOG now keeps an `[Unreleased]` section (Keep a Changelog convention).
+
+**Tests:**
+- Migration-suite portability: `tests/migration` invoked the bare `alembic` binary and failed on any runner without the venv on PATH; now `sys.executable -m alembic`.
+- New regression test for whole-site removal (the startup-crash path had zero coverage — existing orphan tests only covered removed instances).
+
+---
+
 ## [2.1.1] — 2026-06-27
 
 ### Security-focused dependency sweep (#68–#73) + Pi-hole/CVE re-review

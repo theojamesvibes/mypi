@@ -204,6 +204,25 @@ async def test_change_password_form_wrong_current_returns_422(
     assert resp.status_code == 422
 
 
+async def test_change_password_form_rejects_readonly_api_key(
+    client, readonly_api_key, test_user,
+):
+    """Regression: the form route used to accept any authenticated
+    principal — a read-only API key could change the account password,
+    bypassing the read-only guarantee its JSON twin enforces."""
+    _, old_pw = test_user
+    resp = await client.post(
+        "/change-password",
+        headers={"X-API-Key": readonly_api_key},
+        data={
+            "current_password": old_pw,
+            "new_password": "newpass-12345",
+            "confirm_password": "newpass-12345",
+        },
+    )
+    assert resp.status_code == 403
+
+
 async def test_change_password_form_success_redirects_home(
     authed_client, test_user,
 ):

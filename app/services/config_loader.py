@@ -7,6 +7,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from datetime import datetime, timezone
 
@@ -167,7 +168,14 @@ async def sync_sites_and_instances(db: AsyncSession) -> None:
     # ---- 3b. Orphan sites.
     #          Sites in DB not in YAML → deactivate. Their instances cascade-
     #          deactivate because the whole site is gone.
-    result = await db.execute(select(Site).where(Site.is_active.is_(True)))
+    # selectinload: Site.instances is touched below on sites that were NOT
+    # loaded earlier in this sync (orphans, by definition), and a lazy load
+    # inside an AsyncSession raises MissingGreenlet.
+    result = await db.execute(
+        select(Site)
+        .where(Site.is_active.is_(True))
+        .options(selectinload(Site.instances))
+    )
     orphan_sites: list[Site] = []
     for site in result.scalars().all():
         if site.slug not in site_slugs:
@@ -244,7 +252,9 @@ async def sync_sites_and_instances(db: AsyncSession) -> None:
                 replicas or "(none)",
             )
 
-    active_site_count = len(site_configs) - len(orphan_sites)
+    # Every YAML site is active after this sync; orphans are DB-only rows
+    # and never overlap with site_configs.
+    active_site_count = len(site_configs)
     total_instances = sum(len(sc.instances) for sc in site_configs)
     logger.info(
         "Config sync complete. %d site(s) active, %d instance(s).",

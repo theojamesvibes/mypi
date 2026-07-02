@@ -136,6 +136,43 @@ async def test_removed_instance_marked_inactive(db_session, monkeypatch):
     assert by_name["p2"].is_active is False  # orphaned
 
 
+async def test_removed_site_deactivates_site_and_instances(db_session, monkeypatch):
+    """A whole site removed from the YAML is deactivated along with its
+    instances. Regression: this path lazy-loaded Site.instances inside the
+    async session and crashed startup with MissingGreenlet (fixed by
+    selectinload in the orphan-site query)."""
+    from app.services import config_loader
+    from app.models.pihole import PiholeInstance
+    from app.models.site import Site
+
+    two_sites = [
+        _site_cfg("Main", "main", main=True, instances=[
+            _inst_cfg("p1", "http://10.0.0.1", master=True),
+        ]),
+        _site_cfg("Cabin", "cabin", instances=[
+            _inst_cfg("p2", "http://10.1.0.1", master=True),
+        ]),
+    ]
+    monkeypatch.setattr(config_loader, "load_site_configs", lambda: two_sites)
+    await config_loader.sync_sites_and_instances(db_session)
+
+    # Now the YAML lost the whole Cabin site.
+    one_site = [two_sites[0]]
+    monkeypatch.setattr(config_loader, "load_site_configs", lambda: one_site)
+    await config_loader.sync_sites_and_instances(db_session)
+
+    from app.database import AsyncSessionLocal
+    async with AsyncSessionLocal() as fresh:
+        sites = (await fresh.execute(select(Site))).scalars().all()
+        instances = (await fresh.execute(select(PiholeInstance))).scalars().all()
+    site_by_slug = {s.slug: s for s in sites}
+    inst_by_name = {i.name: i for i in instances}
+    assert site_by_slug["main"].is_active is True
+    assert site_by_slug["cabin"].is_active is False
+    assert inst_by_name["p1"].is_active is True
+    assert inst_by_name["p2"].is_active is False  # cascaded with its site
+
+
 # ── Reactivation ─────────────────────────────────────────────────────────────
 
 

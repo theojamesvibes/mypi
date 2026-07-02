@@ -303,13 +303,26 @@ async def _load_site_schedule(site_id: uuid.UUID, site_name: str) -> None:
 async def _scheduled_loop(site_id: uuid.UUID, site_name: str, minutes: int) -> None:
     while True:
         await asyncio.sleep(minutes * 60)
-        lock = _get_lock(site_id)
-        if lock.locked():
-            continue
-        logger.info("Scheduled sync triggered for site '%s' (every %d min)", site_name, minutes)
-        cfg = _get_schedule_config(site_id)
-        opts = {k: cfg[k] for k in ("import_config", "import_gravity", "import_dhcp_leases", "run_gravity")}
-        await run_sync(site_id=site_id, **opts)
+        # The loop must survive any single-iteration failure: it is spawned
+        # with a bare create_task (no done-callback logging), so an escaped
+        # exception kills scheduled syncs for this site silently until
+        # restart. Known trigger: the lock.locked() pre-check passes, a
+        # user-triggered sync grabs the lock during our DB awaits, and
+        # run_sync raises "sync already in progress". CancelledError is
+        # deliberately not caught — set_schedule cancels us on reconfigure.
+        try:
+            lock = _get_lock(site_id)
+            if lock.locked():
+                continue
+            logger.info("Scheduled sync triggered for site '%s' (every %d min)", site_name, minutes)
+            cfg = _get_schedule_config(site_id)
+            opts = {k: cfg[k] for k in ("import_config", "import_gravity", "import_dhcp_leases", "run_gravity")}
+            await run_sync(site_id=site_id, **opts)
+        except Exception:
+            logger.exception(
+                "Scheduled sync iteration failed for site '%s'; will retry in %d min.",
+                site_name, minutes,
+            )
 
 
 async def set_schedule(

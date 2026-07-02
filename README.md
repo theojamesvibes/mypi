@@ -2,7 +2,7 @@
 [![build](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/docker-publish.yml?style=flat-square)](https://github.com/theojamesvibes/mypi/actions)
 [![tests](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/test.yml?style=flat-square&label=tests)](https://github.com/theojamesvibes/mypi/actions/workflows/test.yml)
 [![ui-tests](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/ui-tests.yml?style=flat-square&label=ui-tests)](https://github.com/theojamesvibes/mypi/actions/workflows/ui-tests.yml)
-[![version](https://img.shields.io/badge/version-2.1.0-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
+[![version](https://img.shields.io/badge/version-2.1.2-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
 [![platform](https://img.shields.io/badge/platform-linux%2Famd64%20|%20linux%2Farm64-teal?style=flat-square)](https://github.com/theojamesvibes/mypi/pkgs/container/mypi)
 
 > **⚠️ Vibe Code Disclosure**
@@ -375,8 +375,11 @@ GET     /api/queries                     # Paginated, filterable, sortable query
                                          #  blocked, hours, sort_by, sort_dir
 
 # Domain blocking
-POST    /api/domains/block               # { "domain": "example.com" } — add to master exact deny list + sync
-DELETE  /api/domains/block/{domain}      # Remove domain from master exact deny list + sync
+GET     /api/domains/status/{domain}     # Deny/allow-list status of a domain on the master
+POST    /api/domains/deny                # { "domain": "example.com" } — add to master exact deny list + sync
+DELETE  /api/domains/deny/{domain}       # Remove domain from master exact deny list + sync
+POST    /api/domains/allow               # { "domain": "example.com" } — add to master exact allow list + sync
+DELETE  /api/domains/allow/{domain}      # Remove domain from master exact allow list + sync
 
 # Instances
 GET     /api/instances                   # Active instance list with latest stats, status, and software versions
@@ -506,12 +509,12 @@ uvicorn app.main:app --reload --port 8080
 
 ## Testing
 
-MyPi ships with a **337-case pytest suite** plus a bash smoke for live deployments. The suite runs on every push and PR to `main` via [`.github/workflows/test.yml`](.github/workflows/test.yml) and gates a **75% coverage floor** (current actual: 76.41%) — a PR that drops coverage below the floor fails the build.
+MyPi ships with a pytest suite of ~390 cases (unit + integration + migration + UI) plus a bash smoke for live deployments. The suite runs on every push and PR to `main` via [`.github/workflows/test.yml`](.github/workflows/test.yml) and gates a **75% coverage floor** (current actual: ~83%) — a PR that drops coverage below the floor fails the build.
 
 ```bash
 # Local — pytest in a venv on demand
 pip install -r requirements-dev.txt
-./scripts/test.sh                          # all 337 tests, ~60 s
+./scripts/test.sh                          # full default suite, ~60 s
 ./scripts/test.sh tests/unit               # unit suite only
 
 # E2E smoke against a running container
