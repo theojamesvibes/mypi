@@ -174,6 +174,61 @@ async def test_get_401_then_failed_reauth_raises(respx_mock, client):
         await client._get("/api/stats/summary")
 
 
+async def test_concurrent_401s_reauth_once_and_share_the_fresh_sid(
+    respx_mock, client,
+):
+    """Stats and queries polls share one client. When both requests carry
+    the same expired SID and both come back 401, the race loser must NOT
+    clear the fresh SID the winner just obtained (that used to force a
+    second login, burning another slot in Pi-hole's bounded session
+    table). Exactly one /api/auth POST may go out."""
+    client._sid = "stale-sid"
+
+    auth_route = respx_mock.post(f"{PIHOLE}/api/auth").respond(
+        200, json={"session": {"sid": "fresh-sid"}}
+    )
+
+    # Both endpoints 401 on the stale SID, succeed on the fresh one.
+    def by_sid(request, ok_body):
+        if request.headers.get("X-FTL-SID") == "fresh-sid":
+            return httpx.Response(200, json=ok_body)
+        return httpx.Response(401)
+
+    respx_mock.get(f"{PIHOLE}/api/stats/summary").mock(
+        side_effect=lambda req: by_sid(req, {"queries": {}, "gravity": {}, "clients": {}})
+    )
+    respx_mock.get(f"{PIHOLE}/api/queries").mock(
+        side_effect=lambda req: by_sid(req, {"queries": []})
+    )
+
+    summary, queries = await asyncio.gather(
+        client._get("/api/stats/summary"),
+        client._get("/api/queries"),
+    )
+
+    assert summary == {"queries": {}, "gravity": {}, "clients": {}}
+    assert queries == {"queries": []}
+    assert client.sid == "fresh-sid"
+    # The whole point: one login, not one per raced request.
+    assert auth_route.call_count == 1
+
+
+async def test_reauthenticate_does_not_clobber_a_newer_sid(client, respx_mock):
+    """Direct unit check of the compare-and-swap: a loser whose failed
+    request used the old SID finds a fresh one already stored and must
+    keep it without another /api/auth round-trip."""
+    auth_route = respx_mock.post(f"{PIHOLE}/api/auth").respond(
+        200, json={"session": {"sid": "should-not-be-fetched"}}
+    )
+    client._sid = "fresh-sid"  # winner already re-authed
+
+    ok = await client._reauthenticate("stale-sid")
+
+    assert ok is True
+    assert client.sid == "fresh-sid"
+    assert auth_route.call_count == 0
+
+
 async def test_get_5xx_raises_http_status_error(respx_mock, client):
     client._no_auth = True
     respx_mock.get(f"{PIHOLE}/api/stats/summary").respond(500)

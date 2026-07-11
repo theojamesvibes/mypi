@@ -71,6 +71,7 @@ def _stub_pushover(monkeypatch):
 
 MASTER_URL = "http://master.test"
 REPLICA_URL = "http://replica.test"
+REPLICA2_URL = "http://replica2.test"
 
 
 @pytest.fixture
@@ -109,6 +110,40 @@ async def cluster(db_session, site):
     await db_session.refresh(master)
     await db_session.refresh(replica)
     return master, replica
+
+
+@pytest.fixture
+async def cluster_two_replicas(db_session, site):
+    """One master + two replicas — for partial-failure scenarios where
+    one replica must succeed while the other errors."""
+    from cryptography.fernet import Fernet
+
+    import app.models.pihole as pihole_models
+    from app.config import settings
+    from app.models.pihole import PiholeInstance
+
+    if not settings.encryption_key:
+        settings.encryption_key = Fernet.generate_key().decode()
+        pihole_models._fernet = None
+
+    master = PiholeInstance(
+        site_id=site.id, name="master", url=MASTER_URL,
+        api_password="pw", is_master=True, is_active=True,
+    )
+    replica = PiholeInstance(
+        site_id=site.id, name="replica", url=REPLICA_URL,
+        api_password="pw", is_master=False, is_active=True,
+    )
+    replica2 = PiholeInstance(
+        site_id=site.id, name="replica2", url=REPLICA2_URL,
+        api_password="pw", is_master=False, is_active=True,
+    )
+    db_session.add_all([master, replica, replica2])
+    await db_session.commit()
+    await db_session.refresh(master)
+    await db_session.refresh(replica)
+    await db_session.refresh(replica2)
+    return master, replica, replica2
 
 
 @pytest.fixture(autouse=True)
@@ -193,10 +228,91 @@ async def test_run_sync_records_replica_failure(cluster, respx_mock):
     assert state.results[0].error  # non-empty
 
 
+async def test_run_sync_partial_failure_one_replica_errors(
+    cluster_two_replicas, respx_mock, monkeypatch,
+):
+    """Master exports fine; replica succeeds, replica2's teleporter
+    import raises ConnectError on both the first attempt and the
+    transient-retry. Contract (per run_sync): overall status is
+    `error` whenever *any* per-replica result is an error, but the
+    top-level `state.error` stays None — the failure detail lives in
+    the per-instance results. The good replica must still be synced
+    and reported `success`, completed_at must be set, and pushover's
+    notify_sync_failure must fire with the failed replica in the body
+    (the results-derived branch, since state.error is None)."""
+    import asyncio
+
+    import httpx
+
+    from app.services import pushover
+    from app.services.sync_service import run_sync
+
+    master, replica, replica2 = cluster_two_replicas
+
+    notified: list[tuple[str, dict]] = []
+
+    async def _record_failure(body, **kwargs):
+        notified.append((body, kwargs))
+
+    # Override the autouse no-op stub with a recorder for this test.
+    monkeypatch.setattr(pushover, "notify_sync_failure", _record_failure)
+
+    # Master endpoints.
+    respx_mock.post(f"{MASTER_URL}/api/auth").respond(
+        200, json={"session": {"sid": "master-sid"}}
+    )
+    respx_mock.post(f"{MASTER_URL}/api/action/gravity").respond(200)
+    respx_mock.get(f"{MASTER_URL}/api/teleporter").respond(
+        200, content=_valid_teleporter_zip()
+    )
+
+    # Healthy replica.
+    respx_mock.post(f"{REPLICA_URL}/api/auth").respond(
+        200, json={"session": {"sid": "replica-sid"}}
+    )
+    good_teleporter = respx_mock.post(f"{REPLICA_URL}/api/teleporter").respond(200)
+
+    # Broken replica: ConnectError is in _TRANSIENT_SYNC_ERRORS, so
+    # run_sync evicts the client and retries once — both attempts fail.
+    respx_mock.post(f"{REPLICA2_URL}/api/auth").respond(
+        200, json={"session": {"sid": "replica2-sid"}}
+    )
+    respx_mock.post(f"{REPLICA2_URL}/api/teleporter").mock(
+        side_effect=httpx.ConnectError("connection refused")
+    )
+
+    # import_gravity=False skips the 5s pre-gravity sleep per replica —
+    # the partial-failure contract under test is identical either way.
+    state = await run_sync(site_id=master.site_id, import_gravity=False)
+
+    assert state.status == "error"
+    assert state.error is None  # detail is per-instance, not top-level
+    assert state.master == "master"
+    assert state.completed_at is not None
+
+    by_name = {r.name: r for r in state.results}
+    assert set(by_name) == {"replica", "replica2"}
+    assert by_name["replica"].status == "success"
+    assert by_name["replica"].error is None
+    assert by_name["replica2"].status == "error"
+    assert by_name["replica2"].error and "connection refused" in by_name["replica2"].error
+    # The good replica's import actually happened — partial failure
+    # must not abort the broadcast to healthy replicas.
+    assert good_teleporter.called
+
+    # notify_sync_failure is fired via _spawn — yield to the loop.
+    await asyncio.sleep(0.05)
+    assert len(notified) == 1
+    body, kwargs = notified[0]
+    assert "replica2" in body and "connection refused" in body
+    assert kwargs.get("site_id") == master.site_id
+
+
 async def test_run_sync_aborts_when_master_export_fails(cluster, respx_mock):
     """Master's teleporter endpoint is broken — sync_service retries
     once, then surfaces a `RuntimeError` and parks the state at
-    `error`."""
+    `error`. No replica write may be attempted: a failed export must
+    never fan anything out."""
     from app.services.sync_service import run_sync
 
     master, _ = cluster
@@ -208,9 +324,20 @@ async def test_run_sync_aborts_when_master_export_fails(cluster, respx_mock):
     # Both attempts return 500 — no usable export.
     respx_mock.get(f"{MASTER_URL}/api/teleporter").respond(500)
 
+    # Register replica routes so any (incorrect) replica write would be
+    # captured rather than erroring as an unmocked host.
+    respx_mock.post(f"{REPLICA_URL}/api/auth").respond(
+        200, json={"session": {"sid": "replica-sid"}}
+    )
+    replica_teleporter = respx_mock.post(f"{REPLICA_URL}/api/teleporter").respond(200)
+
     state = await run_sync(site_id=master.site_id)
     assert state.status == "error"
     assert state.error is not None and "teleporter" in state.error.lower()
+    assert state.completed_at is not None
+    # The export never succeeded, so nothing was pushed to replicas.
+    assert state.results == []
+    assert not replica_teleporter.called
 
 
 # ── notify_blocklist_count → auto-sync ───────────────────────────────────────

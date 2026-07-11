@@ -35,26 +35,47 @@ def test_sync_schedule_save_persists(
     will surface here as a missing value on reload.
     """
     page = authed_page
-    page.goto(f"{base_url}/settings")
 
-    # Wait for the schedule form to populate with current values.
+    # FLAKE FIX (CI 2026-06-27 / 2026-07-02): loadSyncSchedule() runs
+    # async on page load and writes the *loaded* values back into the
+    # form (`interval.value = ...; autoG.checked = ...`). The old
+    # `to_be_visible` wait was satisfied by the server-rendered markup
+    # immediately — before the loader's GET resolved — so under CI load
+    # the response could land *after* select_option/check below and
+    # silently revert the form to interval=0 / auto_gravity=false; the
+    # save then persisted the defaults and the post-reload assertions
+    # failed. The sibling tests here guard this race by waiting for the
+    # loaded default value, but sync-interval's loaded default ("0")
+    # equals the markup default, so a value-wait can't tell "loaded"
+    # from "not yet loaded". Instead, block on the loader's GET
+    # response itself. (Matches both /api/sync/schedule and the
+    # per-site /api/sites/<slug>/sync/schedule form.)
+    with page.expect_response(
+        lambda r: "/sync/schedule" in r.url and r.request.method == "GET",
+        timeout=10_000,
+    ):
+        page.goto(f"{base_url}/settings")
+
     expect(page.locator("#sync-interval")).to_be_visible(timeout=10_000)
 
     # Choose 60-minute interval. Valid select options: 0 / 15 / 30 / 60 / 360 / 1440.
     page.select_option("#sync-interval", "60")
     page.check("#sync-auto-gravity")
 
-    page.locator("button[onclick='saveSchedule()']").click()
-
     # The save handler is async (PUT /api/sync/schedule). Reloading
     # before it completes can cancel the in-flight request, leaving
-    # the schedule unsaved. The JS toggles the button class on
-    # response — `btn-success` on 200, `btn-danger` on error. Class
-    # match is unambiguous (vs text matching, where "Saved" and
-    # "Save failed" share a substring).
-    expect(
-        page.locator("button[onclick='saveSchedule()']")
-    ).to_have_class(re.compile(r"\bbtn-success\b"), timeout=10_000)
+    # the schedule unsaved. Wait for the PUT response itself rather
+    # than the `btn-success` class flip the old test used: the JS
+    # reverts the class after 2 s (setTimeout), so a starved CI runner
+    # could miss the window and time out even though the save landed.
+    # set_schedule awaits _persist_schedule before the route returns,
+    # so once the PUT is OK the DB write is durable and reload is safe.
+    with page.expect_response(
+        lambda r: "/sync/schedule" in r.url and r.request.method == "PUT",
+        timeout=10_000,
+    ) as put_info:
+        page.locator("button[onclick='saveSchedule()']").click()
+    assert put_info.value.ok, f"schedule save failed: {put_info.value.status}"
 
     # Reload the page and verify the values stuck — that's the real
     # assertion.

@@ -199,9 +199,28 @@ class PiholeClient:
             return False
 
     def _headers(self) -> dict[str, str]:
-        if self._sid:
-            return {"X-FTL-SID": self._sid}
+        return self._headers_for(self._sid)
+
+    def _headers_for(self, sid: str | None) -> dict[str, str]:
+        if sid:
+            return {"X-FTL-SID": sid}
         return {}
+
+    async def _reauthenticate(self, sid_used: str | None) -> bool:
+        """Refresh the session after a 401 without clobbering a peer's SID.
+
+        Stats and queries polls share this client; when both hit the same
+        session expiry, the loser of the re-auth race used to reset
+        `self._sid = None` *after* the winner had already stored a fresh
+        SID — forcing a second login that burns another slot in Pi-hole's
+        bounded session table (and, repeated across polls, walks it into
+        the 429 auth cooldown). Only invalidate if the stored SID is still
+        the one the failed request actually sent; `_authenticate` then
+        returns immediately under its lock when a fresh SID is present.
+        """
+        if self._sid == sid_used:
+            self._sid = None
+        return await self._authenticate()
 
     async def _ensure_authed(self) -> None:
         if self._sid is None and not self._no_auth:
@@ -218,11 +237,11 @@ class PiholeClient:
                 raise ConnectionError(f"Authentication failed for {self.base_url}")
 
         url = f"{self.base_url}{path}"
-        resp = await self._client.get(url, headers=self._headers(), params=params)
+        sid_used = self._sid
+        resp = await self._client.get(url, headers=self._headers_for(sid_used), params=params)
 
         if resp.status_code == 401 and retry:
-            self._sid = None
-            ok = await self._authenticate()
+            ok = await self._reauthenticate(sid_used)
             if ok:
                 return await self._get(path, params=params, retry=False)
             raise ConnectionError(f"Re-authentication failed for {self.base_url}")
@@ -235,10 +254,10 @@ class PiholeClient:
             raise RuntimeError("PiholeClient must be used as an async context manager")
         await self._ensure_authed()
         url = f"{self.base_url}{path}"
-        resp = await self._client.post(url, headers=self._headers(), json=json_data)
+        sid_used = self._sid
+        resp = await self._client.post(url, headers=self._headers_for(sid_used), json=json_data)
         if resp.status_code == 401 and retry:
-            self._sid = None
-            ok = await self._authenticate()
+            ok = await self._reauthenticate(sid_used)
             if ok:
                 return await self._post(path, json_data=json_data, retry=False)
             raise ConnectionError(f"Re-authentication failed for {self.base_url}")
@@ -250,10 +269,10 @@ class PiholeClient:
             raise RuntimeError("PiholeClient must be used as an async context manager")
         await self._ensure_authed()
         url = f"{self.base_url}{path}"
-        resp = await self._client.delete(url, headers=self._headers())
+        sid_used = self._sid
+        resp = await self._client.delete(url, headers=self._headers_for(sid_used))
         if resp.status_code == 401 and retry:
-            self._sid = None
-            ok = await self._authenticate()
+            ok = await self._reauthenticate(sid_used)
             if ok:
                 return await self._delete(path, retry=False)
             raise ConnectionError(f"Re-authentication failed for {self.base_url}")
@@ -265,10 +284,10 @@ class PiholeClient:
             raise RuntimeError("PiholeClient must be used as an async context manager")
         await self._ensure_authed()
         url = f"{self.base_url}{path}"
-        resp = await self._client.get(url, headers=self._headers())
+        sid_used = self._sid
+        resp = await self._client.get(url, headers=self._headers_for(sid_used))
         if resp.status_code == 401 and retry:
-            self._sid = None
-            ok = await self._authenticate()
+            ok = await self._reauthenticate(sid_used)
             if ok:
                 return await self._get_bytes(path, retry=False)
             raise ConnectionError(f"Re-authentication failed for {self.base_url}")
@@ -311,10 +330,10 @@ class PiholeClient:
         data = {"import": import_payload}
 
         try:
-            resp = await self._client.post(url, headers=self._headers(), files=files, data=data)
+            sid_used = self._sid
+            resp = await self._client.post(url, headers=self._headers_for(sid_used), files=files, data=data)
             if resp.status_code == 401:
-                self._sid = None
-                ok = await self._authenticate()
+                ok = await self._reauthenticate(sid_used)
                 if ok:
                     resp = await self._client.post(url, headers=self._headers(), files=files, data=data)
             if resp.status_code == 403:
@@ -377,12 +396,11 @@ class PiholeClient:
         from app.config import settings
         async with httpx.AsyncClient(timeout=300, verify=settings.verify_pihole_ssl) as tmp:
             try:
-                resp = await tmp.post(url, headers=self._headers())
+                sid_used = self._sid
+                resp = await tmp.post(url, headers=self._headers_for(sid_used))
                 if resp.status_code == 401:
                     # SID may have expired; re-auth on the persistent client and retry.
-                    self._sid = None
-                    ok = await self._authenticate()
-                    if not ok:
+                    if not await self._reauthenticate(sid_used):
                         raise ConnectionError(f"Re-authentication failed for {self.base_url}")
                     resp = await tmp.post(url, headers=self._headers())
                 if resp.status_code >= 400:
@@ -526,10 +544,10 @@ class PiholeClient:
         await self._ensure_authed()
         from urllib.parse import quote
         url = f"{self.base_url}/api/domains/deny/exact/{quote(domain, safe='')}"
-        resp = await self._client.delete(url, headers=self._headers())
+        sid_used = self._sid
+        resp = await self._client.delete(url, headers=self._headers_for(sid_used))
         if resp.status_code == 401:
-            self._sid = None
-            if not await self._authenticate():
+            if not await self._reauthenticate(sid_used):
                 raise ConnectionError(f"Re-authentication failed for {self.base_url}")
             resp = await self._client.delete(url, headers=self._headers())
         if resp.status_code not in (200, 204, 404):
@@ -542,10 +560,10 @@ class PiholeClient:
         await self._ensure_authed()
         from urllib.parse import quote
         url = f"{self.base_url}/api/domains/allow/exact/{quote(domain, safe='')}"
-        resp = await self._client.delete(url, headers=self._headers())
+        sid_used = self._sid
+        resp = await self._client.delete(url, headers=self._headers_for(sid_used))
         if resp.status_code == 401:
-            self._sid = None
-            if not await self._authenticate():
+            if not await self._reauthenticate(sid_used):
                 raise ConnectionError(f"Re-authentication failed for {self.base_url}")
             resp = await self._client.delete(url, headers=self._headers())
         if resp.status_code not in (200, 204, 404):

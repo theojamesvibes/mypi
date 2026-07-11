@@ -339,6 +339,122 @@ async def test_poll_queries_for_advances_watermark(instance, respx_mock):
     assert collector._last_seen_ts[str(instance.id)] == 1700000050.0
 
 
+def _q(qid: str, ts: float, domain: str = "x.example") -> dict:
+    return {
+        "id": qid, "time": ts, "type": "A", "domain": domain,
+        "client": {"ip": "10.0.0.1", "name": "h"},
+        "status": "OK", "reply": {"type": "IP", "time": 1.0},
+    }
+
+
+async def test_poll_queries_for_paginates_backwards_on_full_pages(
+    instance, respx_mock, monkeypatch,
+):
+    """Pi-hole returns newest-first and truncates at `length` — a burst
+    bigger than one page used to silently drop the oldest rows and then
+    skip them forever when the watermark advanced. The poll must step
+    `until` back through full pages until a short page drains the window.
+    """
+    from app.database import AsyncSessionLocal
+    from app.models.pihole import QueryLog
+    from app.services import collector
+    from app.services.collector import _poll_queries_for
+
+    monkeypatch.setattr(collector, "_QUERY_POLL_PAGE_SIZE", 3)
+
+    respx_mock.post(f"{PIHOLE}/api/auth").respond(
+        200, json={"session": {"sid": "sid"}}
+    )
+    # 7 rows total, newest-first. Pages 1-3 are full (each `until` step
+    # re-fetches the inclusive boundary row, which dedupes); page 4 is
+    # empty — the window is drained.
+    pages = [
+        {"queries": [_q("q1", 1700000060), _q("q2", 1700000054), _q("q3", 1700000048)]},
+        {"queries": [_q("q3", 1700000048), _q("q4", 1700000042), _q("q5", 1700000036)]},
+        {"queries": [_q("q5", 1700000036), _q("q6", 1700000030), _q("q7", 1700000024)]},
+        {"queries": []},
+    ]
+    route = respx_mock.get(f"{PIHOLE}/api/queries")
+    route.side_effect = [
+        httpx.Response(200, json=p) for p in pages
+    ]
+
+    await _poll_queries_for(instance)
+
+    async with AsyncSessionLocal() as fresh:
+        logs = (await fresh.execute(select(QueryLog))).scalars().all()
+    assert len(logs) == 7  # boundary rows deduped, nothing dropped
+    assert {log.pihole_query_id for log in logs} == {f"q{i}" for i in range(1, 8)}
+
+    # Watermark lands on the global newest, not a later page's max.
+    assert collector._last_seen_ts[str(instance.id)] == 1700000060.0
+
+    # The follow-up fetches stepped `until` back to each full page's oldest.
+    assert route.call_count == 4
+    assert "until" not in route.calls[0].request.url.params
+    assert route.calls[1].request.url.params["until"] == "1700000048.0"
+    assert route.calls[2].request.url.params["until"] == "1700000036.0"
+    assert route.calls[3].request.url.params["until"] == "1700000024.0"
+
+
+async def test_poll_queries_for_stops_when_a_full_page_makes_no_progress(
+    instance, respx_mock, monkeypatch,
+):
+    """A page-size clump of rows sharing one timestamp must not loop
+    forever re-fetching the same window."""
+    from app.services import collector
+    from app.services.collector import _poll_queries_for
+
+    monkeypatch.setattr(collector, "_QUERY_POLL_PAGE_SIZE", 2)
+
+    respx_mock.post(f"{PIHOLE}/api/auth").respond(
+        200, json={"session": {"sid": "sid"}}
+    )
+    same_ts_page = {"queries": [_q("qa", 1700000010), _q("qb", 1700000010)]}
+    route = respx_mock.get(f"{PIHOLE}/api/queries").respond(200, json=same_ts_page)
+
+    await _poll_queries_for(instance)
+
+    # First fetch (full page) + one until-step fetch that made no progress.
+    assert route.call_count == 2
+    assert collector._last_seen_ts[str(instance.id)] == 1700000010.0
+
+
+async def test_poll_queries_for_page_cap_bounds_work_per_tick(
+    instance, respx_mock, monkeypatch, caplog,
+):
+    """A pathologically hot log stops at the page cap with a warning
+    instead of wedging the scheduler tick."""
+    import logging
+
+    from app.services import collector
+    from app.services.collector import _poll_queries_for
+
+    monkeypatch.setattr(collector, "_QUERY_POLL_PAGE_SIZE", 2)
+    monkeypatch.setattr(collector, "_QUERY_POLL_MAX_PAGES", 3)
+
+    respx_mock.post(f"{PIHOLE}/api/auth").respond(
+        200, json={"session": {"sid": "sid"}}
+    )
+    # Every page is full and strictly older — the window never drains.
+    ts = 1700000100.0
+    pages = []
+    for i in range(4):
+        pages.append({"queries": [
+            _q(f"p{i}a", ts - 10 * i), _q(f"p{i}b", ts - 10 * i - 5),
+        ]})
+    route = respx_mock.get(f"{PIHOLE}/api/queries")
+    route.side_effect = [httpx.Response(200, json=p) for p in pages]
+
+    with caplog.at_level(logging.WARNING, logger="app.services.collector"):
+        await _poll_queries_for(instance)
+
+    assert route.call_count == 3  # capped
+    assert any("page cap" in rec.getMessage() for rec in caplog.records)
+    # Watermark still advances so the next tick doesn't refetch everything.
+    assert collector._last_seen_ts[str(instance.id)] == ts
+
+
 # ── poll_stats_for_site / poll_queries_for_site ──────────────────────────────
 
 

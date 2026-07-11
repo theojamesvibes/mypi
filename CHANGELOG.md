@@ -8,6 +8,32 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.3.0] — 2026-07-11
+
+### Collector + client correctness fixes and the audit's test-debt paydown
+
+Closes out the 2026-07-02 audit backlog: two real data-loss/reliability bugs fixed, the remaining flagged test gaps covered, and one CI flake root-caused. The two pure-structure items (splitting `collector.py`, dropping CSP `'unsafe-inline'`) are deliberately deferred with concrete plans — tracked as #83 and #84.
+
+**Fixed:**
+- **Query polls no longer silently drop rows on bursts over 500/interval.** Pi-hole's `/api/queries` returns newest-first and truncates at `length` — so a burst bigger than one page lost its *oldest* rows, and the watermark advance then skipped them forever. `_poll_queries_for` now paginates backwards through full pages by stepping `until` down to each page's oldest timestamp until the window drains, bounded at 10 pages/tick (5,000 rows) with a loud warning when the cap is hit (a backfill can recover the gap; nothing is dropped silently anymore). Guards against a page-size clump of identical timestamps looping forever. The poll's inlined copy of the storage/dedup logic is gone — it now shares `_store_queries` with the backfill path.
+- **Concurrent 401s no longer clobber each other's re-auth.** Stats and queries polls share one `PiholeClient`; when both hit the same session expiry, the race loser reset `self._sid = None` *after* the winner had stored a fresh SID — forcing a second login that burned another slot in Pi-hole's bounded session table and, repeated, walked flap-prone instances into the 429 auth cooldown (a polling blackout). All eight 401-retry sites now go through a compare-and-swap `_reauthenticate(sid_used)` that only invalidates the SID the failed request actually sent; the loser reuses the winner's session. Regression-tested with two racing requests: exactly one `/api/auth` POST.
+
+**Tests (audit test-debt, +33 cases → ~430 total, coverage 84% → ~86%):**
+- **Lifespan encryption-key path** (`_ensure_encryption_key`) — explicit-key validation (including the startup-abort on a bad Fernet key), DB restore, and first-boot generate-and-persist. Previously zero coverage on the path that guards every stored Pi-hole password.
+- **SSE live-query stream route** — real streaming tests via a direct-ASGI harness (httpx's test transport buffers infinite responses, so the route was untestable the obvious way — the harness drives `app(scope, receive, send)` and still exercises routing/middleware/auth): open+tick frames, per-site isolation, keepalive comments, subscriber-cap error frame, and disconnect cleanup.
+- **`run_sync` partial failure** — one replica down doesn't abort the healthy broadcast: overall state `error` with per-instance success/error results, and the Pushover sync-failure alert fires with the failing replica named. Also: a failed master export never fans out to replicas.
+- **Query-filter tests de-vacuoused** — the old assertions passed even with filters ignored (shape/`>=1` checks). Now: exact seeded counts per filter, complement checks (`blocked=false` → the other 33), sort tests that require multiple distinct values, and a second seeded site proving per-site endpoints exclude foreign rows.
+- **Version-check re-entrancy + unparseable-version guards** (rounding out the 2.1.3 work; `version_check.py` and `pihole_version_check.compute_update_available` both at 100%).
+
+**CI:**
+- **Root-caused the twice-flaked `test_sync_schedule_save_persists` ui-test** (2026-06-27, 2026-07-02): the settings page's async schedule loader could resolve *after* the test had filled the form, reverting it to defaults before save — the save then "succeeded" with the wrong payload. The test now waits for the schedule GET to resolve before touching the form, and asserts on the PUT response instead of a 2-second CSS-class window.
+
+**Deferred (tracked):**
+- #83 — split `collector.py` (1,054 lines, 6 jobs) into a package. Structure-only, ~90 test references to module state; wrong to bundle with behavior changes.
+- #84 — drop CSP `'unsafe-inline'` for `script-src`: ~360 inline script lines + ~44 inline handlers (including JS-generated markup) need extraction to static files with event delegation; needs the full Playwright matrix for confidence.
+
+---
+
 ## [2.2.0] — 2026-07-11
 
 ### Multi-arch image, lint/type tooling, CI ergonomics — the 2026-07-02 audit's tooling batch

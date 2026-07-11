@@ -678,6 +678,16 @@ async def fetch_all_instance_versions() -> None:
     await asyncio.gather(*[_fetch_version_for(inst) for inst in instances])
 
 
+# Live query polls fetch pages of this size, newest-first (Pi-hole's
+# /api/queries truncates at `length` from the newest end). When a page comes
+# back full, older rows remain in the window — they're fetched by stepping
+# `until` back to the oldest timestamp of each full page. Bounded per tick:
+# beyond MAX_PAGES × PAGE_SIZE rows the tick logs a warning and stops, so a
+# hot log can't wedge the scheduler; a backfill can recover the gap.
+_QUERY_POLL_PAGE_SIZE = 500
+_QUERY_POLL_MAX_PAGES = 10
+
+
 async def _poll_queries_for(instance: PiholeInstance) -> None:
     instance_key = str(instance.id)
     from_ts = _last_seen_ts.get(instance_key)
@@ -686,54 +696,51 @@ async def _poll_queries_for(instance: PiholeInstance) -> None:
         if not _breaker_allows(instance_key, instance.name):
             return
         client = await get_client(instance)
-        queries = await client.get_queries(from_ts=from_ts, length=500)
 
-        await save_sid(instance.id, client.sid)
-        logger.info("Got %d queries from %s", len(queries), instance.name)
-        _breaker_success(instance_key, instance.name)
+        total_stored = 0
+        watermark: float | None = None
+        until_ts: float | None = None
+        for page_num in range(_QUERY_POLL_MAX_PAGES):
+            queries = await client.get_queries(
+                from_ts=from_ts, until_ts=until_ts, length=_QUERY_POLL_PAGE_SIZE,
+            )
+            if page_num == 0:
+                await save_sid(instance.id, client.sid)
+                logger.info("Got %d queries from %s", len(queries), instance.name)
+                _breaker_success(instance_key, instance.name)
+            if not queries:
+                break
 
-        if not queries:
-            return
+            total_stored += await _store_queries(instance, queries)
+            page_max = max(q.timestamp.timestamp() for q in queries)
+            page_min = min(q.timestamp.timestamp() for q in queries)
+            if watermark is None or page_max > watermark:
+                watermark = page_max
 
-        async with AsyncSessionLocal() as db:
-            pihole_ids = [q.pihole_id for q in queries if q.pihole_id]
-            existing_ids: set[str] = set()
-            if pihole_ids:
-                result = await db.execute(
-                    select(QueryLog.pihole_query_id).where(
-                        QueryLog.instance_id == instance.id,
-                        QueryLog.pihole_query_id.in_(pihole_ids),
-                    )
-                )
-                existing_ids = {row[0] for row in result.fetchall()}
+            if len(queries) < _QUERY_POLL_PAGE_SIZE:
+                break  # short page — the window is drained
+            # Full page: rows older than page_min may remain. `until` is
+            # inclusive, so the boundary row comes back on the next page and
+            # is dropped by _store_queries' pihole_id dedup.
+            if until_ts is not None and page_min >= until_ts:
+                # No progress — a page-size burst shares one timestamp.
+                break
+            until_ts = page_min
+        else:
+            logger.warning(
+                "Query poll for %s stopped at the %d-page cap with the window "
+                "still full — rows between from=%s and until=%s were not "
+                "fetched this tick (burst > %d rows). A backfill can recover "
+                "the gap.",
+                instance.name, _QUERY_POLL_MAX_PAGES, from_ts, until_ts,
+                _QUERY_POLL_MAX_PAGES * _QUERY_POLL_PAGE_SIZE,
+            )
 
-            new_logs = [
-                QueryLog(
-                    instance_id=instance.id,
-                    pihole_query_id=q.pihole_id,
-                    timestamp=q.timestamp,
-                    client_ip=q.client_ip,
-                    client_name=q.client_name,
-                    query_type=q.query_type,
-                    domain=q.domain,
-                    status=q.status,
-                    reply_type=q.reply_type,
-                    reply_time_ms=q.reply_time_ms,
-                )
-                for q in queries
-                if not (q.pihole_id and q.pihole_id in existing_ids)
-            ]
-            if new_logs:
-                db.add_all(new_logs)
-                await db.commit()
-                logger.info("Stored %d new queries for %s", len(new_logs), instance.name)
-                # Wake any /api/queries/stream subscribers so the Live view
-                # refetches only when there's actually something new.
-                query_stream.publish(instance.id, instance.site_id, len(new_logs))
-
+        if total_stored:
+            logger.info("Stored %d new queries for %s", total_stored, instance.name)
         # Advance the watermark to the most recent timestamp we've seen.
-        max_ts = max(q.timestamp.timestamp() for q in queries)
-        _last_seen_ts[instance_key] = max_ts
+        if watermark is not None:
+            _last_seen_ts[instance_key] = watermark
 
     except Exception as exc:
         logger.warning("Failed to poll queries for %s: %s: %s", instance.name, type(exc).__name__, exc)
