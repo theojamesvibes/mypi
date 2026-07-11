@@ -7,45 +7,13 @@
   <link rel="icon" type="image/svg+xml" href="/static/img/logo.svg">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css">
   <link rel="stylesheet" href="/static/css/swagger-dark.css">
-  <script>
-    // Apply theme before paint to avoid flash of wrong theme (mirrors base.html)
-    (function () {
-      var pref = localStorage.getItem('mypi-theme') || 'system';
-      var resolved = pref === 'system'
-        ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-        : pref;
-      document.documentElement.setAttribute('data-bs-theme', resolved);
-    })();
-  </script>
+  <!-- Theme pre-paint (mirrors base.html); no #mypi-ctx island here, so
+       boot.js falls back to single-site defaults, which /docs never uses. -->
+  <script src="/static/js/boot.js"></script>
 </head>
 <body>
   <div id="swagger-ui"></div>
   <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
-  <script>
-    window.ui = SwaggerUIBundle({
-      url: '/openapi.json',
-      dom_id: '#swagger-ui',
-      deepLinking: true,
-      presets: [SwaggerUIBundle.presets.apis, SwaggerUIBundle.SwaggerUIStandalonePreset],
-      layout: 'BaseLayout',
-    });
-
-    // Keep theme in sync with settings changes made in other tabs
-    window.addEventListener('storage', function (e) {
-      if (e.key !== 'mypi-theme') return;
-      var pref = e.newValue || 'system';
-      var resolved = pref === 'system'
-        ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-        : pref;
-      document.documentElement.setAttribute('data-bs-theme', resolved);
-    });
-
-    // Follow system theme changes while pref is 'system'
-    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function (e) {
-      if ((localStorage.getItem('mypi-theme') || 'system') === 'system') {
-        document.documentElement.setAttribute('data-bs-theme', e.matches ? 'dark' : 'light');
-      }
-    });
-  </script>
+  <script src="/static/js/pages/docs.js"></script>
 </body>
 </html>

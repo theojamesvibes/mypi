@@ -74,7 +74,7 @@ def test_sync_schedule_save_persists(
         lambda r: "/sync/schedule" in r.url and r.request.method == "PUT",
         timeout=10_000,
     ) as put_info:
-        page.locator("button[onclick='saveSchedule()']").click()
+        page.locator("#sync-schedule-save-btn").click()
     assert put_info.value.ok, f"schedule save failed: {put_info.value.status}"
 
     # Reload the page and verify the values stuck — that's the real
@@ -105,7 +105,7 @@ def test_session_timeout_save_persists(
     )
     # Valid select options: 15 / 60 / 480 / 1440 / 10080 / 0. "60" = 1 hour.
     page.select_option("#session-timeout", "60")
-    page.locator("button[onclick='saveSessionTimeout()']").click()
+    page.locator("#session-timeout-save-btn").click()
 
     # Wait for the JS save indicator. On a 200 response the handler
     # writes "Saved — takes effect on next login" into the result div.
@@ -244,7 +244,7 @@ def test_poll_interval_save_persists(
     )
     # Valid select options: 10 / 30 / 60 / 120 / 300.
     page.select_option("#poll-interval", "30")
-    page.locator("button[onclick='savePollInterval()']").click()
+    page.locator("#poll-interval-save-btn").click()
 
     # Wait briefly for the save handler to update the result line.
     expect(page.locator("#poll-interval-result")).to_contain_text(

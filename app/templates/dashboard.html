@@ -8,7 +8,7 @@
   <div class="d-flex align-items-center justify-content-between mb-3">
     <h5 class="fw-semibold mb-0"><i class="bi bi-speedometer2 me-2 text-success"></i>Dashboard<span class="page-title-site"></span></h5>
     <div class="d-flex gap-2 align-items-center">
-      <select id="time-range" class="form-select form-select-sm" style="width:auto;" onchange="loadDashboard()">
+      <select id="time-range" class="form-select form-select-sm" style="width:auto;">
         <option value="15m">Last 15 minutes</option>
         <option value="1h">Last 1 hour</option>
         <option value="today">Today</option>
@@ -17,7 +17,7 @@
         <option value="168">Last 7 days</option>
         <option value="720">Last 30 days</option>
       </select>
-      <button class="btn btn-sm btn-outline-secondary" onclick="loadDashboard()">
+      <button id="dash-refresh-btn" class="btn btn-sm btn-outline-secondary">
         <i class="bi bi-arrow-clockwise"></i>
       </button>
     </div>
@@ -225,10 +225,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script>
-  loadDashboard();
-  loadSyncIndicator();
-  setInterval(loadDashboard, 60000);
-  setInterval(loadSyncIndicator, 60000);
-</script>
+<script src="/static/js/pages/dashboard.js"></script>
 {% endblock %}

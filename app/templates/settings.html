@@ -15,13 +15,13 @@
         <div class="card-body">
           <p class="text-muted small mb-3">Choose how MyPi looks. <em>System</em> follows your OS setting automatically.</p>
           <div class="d-flex gap-2">
-            <button type="button" class="btn btn-sm btn-outline-secondary theme-btn" id="theme-btn-light" onclick="setTheme('light')">
+            <button type="button" class="btn btn-sm btn-outline-secondary theme-btn" id="theme-btn-light">
               <i class="bi bi-sun me-1"></i>Light
             </button>
-            <button type="button" class="btn btn-sm btn-outline-secondary theme-btn" id="theme-btn-dark" onclick="setTheme('dark')">
+            <button type="button" class="btn btn-sm btn-outline-secondary theme-btn" id="theme-btn-dark">
               <i class="bi bi-moon-stars me-1"></i>Dark
             </button>
-            <button type="button" class="btn btn-sm btn-outline-secondary theme-btn" id="theme-btn-system" onclick="setTheme('system')">
+            <button type="button" class="btn btn-sm btn-outline-secondary theme-btn" id="theme-btn-system">
               <i class="bi bi-circle-half me-1"></i>System
             </button>
           </div>
@@ -96,7 +96,7 @@
             <thead class="table-light"><tr><th>Name</th><th>URL</th><th>Last seen</th><th></th></tr></thead>
             <tbody id="stale-instances-tbody"></tbody>
           </table>
-          <button class="btn btn-sm btn-outline-danger" onclick="deleteAllStale()">
+          <button id="stale-remove-all-btn" class="btn btn-sm btn-outline-danger">
             <i class="bi bi-trash me-1"></i>Remove all orphaned instances
           </button>
         </div>
@@ -155,7 +155,7 @@
                   <span class="text-muted d-block" style="font-size:0.7rem;">Syncs immediately when Pi-hole gravity is updated on the master</span>
                 </label>
               </div>
-              <button class="btn btn-sm btn-outline-secondary mt-2" onclick="saveSchedule()">
+              <button id="sync-schedule-save-btn" class="btn btn-sm btn-outline-secondary mt-2">
                 <i class="bi bi-save me-1"></i>Save schedule
               </button>
             </div>
@@ -168,7 +168,7 @@
 
           </div>
           <div class="mt-3">
-            <button class="btn btn-sm btn-primary" id="sync-btn" onclick="triggerSync()">
+            <button class="btn btn-sm btn-primary" id="sync-btn">
               <i class="bi bi-arrow-repeat me-1"></i>Sync Now
             </button>
           </div>
@@ -198,7 +198,7 @@
               </select>
             </div>
             <div class="col-auto">
-              <button class="btn btn-sm btn-outline-secondary" onclick="savePollInterval()">
+              <button id="poll-interval-save-btn" class="btn btn-sm btn-outline-secondary">
                 <i class="bi bi-save me-1"></i>Save
               </button>
             </div>
@@ -223,7 +223,7 @@
             </label>
           </div>
           <div class="mt-2">
-            <button class="btn btn-sm btn-outline-secondary" onclick="saveDisplaySettings()">
+            <button id="display-save-btn" class="btn btn-sm btn-outline-secondary">
               <i class="bi bi-save me-1"></i>Save
             </button>
             <span id="display-save-status" class="ms-2 small text-muted"></span>
@@ -253,7 +253,7 @@
               </select>
             </div>
             <div class="col-auto">
-              <button class="btn btn-sm btn-outline-secondary" onclick="saveSessionTimeout()">
+              <button id="session-timeout-save-btn" class="btn btn-sm btn-outline-secondary">
                 <i class="bi bi-save me-1"></i>Save
               </button>
             </div>
@@ -284,7 +284,7 @@
           <!-- MyPi row -->
           <div class="d-flex align-items-center gap-3 mb-2">
             <div class="form-check border rounded px-3 py-2 flex-shrink-0" class="check-highlight" style="min-width:11rem;">
-              <input class="form-check-input" type="checkbox" id="vc-enabled" onchange="updateCheckNowState()">
+              <input class="form-check-input" type="checkbox" id="vc-enabled">
               <label class="form-check-label fw-semibold small" for="vc-enabled">MyPi updates</label>
             </div>
             <div id="vc-status" class="small text-muted"></div>
@@ -293,7 +293,7 @@
           <!-- Pi-hole row -->
           <div class="d-flex align-items-center gap-3 mb-3">
             <div class="form-check border rounded px-3 py-2 flex-shrink-0" class="check-highlight" style="min-width:11rem;">
-              <input class="form-check-input" type="checkbox" id="vc-pihole-enabled" onchange="updateCheckNowState()">
+              <input class="form-check-input" type="checkbox" id="vc-pihole-enabled">
               <label class="form-check-label fw-semibold small" for="vc-pihole-enabled">Pi-hole updates</label>
             </div>
             <div id="vc-pihole-status" class="small text-muted"></div>
@@ -301,10 +301,10 @@
 
           <!-- Actions -->
           <div class="d-flex gap-2">
-            <button id="vc-check-btn" class="btn btn-sm btn-outline-secondary" onclick="checkVersionNow()">
+            <button id="vc-check-btn" class="btn btn-sm btn-outline-secondary">
               <i class="bi bi-arrow-clockwise me-1"></i>Check now
             </button>
-            <button id="vc-save-btn" class="btn btn-sm btn-outline-primary" onclick="saveVersionCheckSettings()">
+            <button id="vc-save-btn" class="btn btn-sm btn-outline-primary">
               <i class="bi bi-save me-1"></i>Save
             </button>
           </div>
@@ -340,10 +340,10 @@
                 <div class="text-muted mt-1" style="font-size:0.72rem;">Saved: <code id="po-user-key-display">—</code></div>
               </div>
               <div class="d-flex gap-2 mt-2">
-                <button class="btn btn-sm btn-outline-secondary" onclick="validatePushover()">
+                <button id="po-validate-btn" class="btn btn-sm btn-outline-secondary">
                   <i class="bi bi-check-circle me-1"></i>Validate
                 </button>
-                <button class="btn btn-sm btn-outline-primary" onclick="testPushover()">
+                <button id="po-test-btn" class="btn btn-sm btn-outline-primary">
                   <i class="bi bi-send me-1"></i>Test
                 </button>
               </div>
@@ -436,7 +436,7 @@
           </div>
 
           <div class="mt-3">
-            <button class="btn btn-sm btn-primary" onclick="savePushoverSettings()">
+            <button id="po-save-btn" class="btn btn-sm btn-primary">
               <i class="bi bi-save me-1"></i>Save notification settings
             </button>
           </div>
@@ -463,7 +463,7 @@
                 <label class="form-label form-label-sm mb-1">Confirm new password</label>
                 <input type="password" id="cp-confirm" class="form-control form-control-sm" autocomplete="new-password">
               </div>
-              <button class="btn btn-sm btn-outline-primary" onclick="changePassword()">
+              <button id="cp-btn" class="btn btn-sm btn-outline-primary">
                 <i class="bi bi-lock me-1"></i>Change password
               </button>
               <div id="cp-result" class="small mt-2"></div>
@@ -480,7 +480,7 @@
         <div class="card-body">
           <p class="text-muted small">API keys let the iOS app authenticate without a password.
              The key is shown only once — copy it immediately.</p>
-          <form id="create-key-form" onsubmit="createApiKey(event)">
+          <form id="create-key-form">
             <div class="input-group input-group-sm mb-2">
               <input type="text" id="key-name" class="form-control" placeholder="Key name (e.g. iPhone)">
               <button class="btn btn-success" type="submit">
@@ -525,118 +525,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script>
-  loadApiKeys();
-  loadSettingsInstances();
-  loadStaleSites();
-  loadStaleInstances();
-  loadSyncStatus();
-  loadSyncSchedule();
-  loadPushoverSettings();
-  loadSessionTimeout();
-  loadVersionCheckSettings();
-  loadPollInterval();
-  loadDisplaySettings();
-  initThemeButtons();
-
-  async function loadDisplaySettings() {
-    try {
-      const resp = await fetch('/api/display-settings', { credentials: 'include' });
-      if (!resp.ok) return;
-      const data = await resp.json();
-      const cb = document.getElementById('hide-pihole-self');
-      if (cb) cb.checked = !!data.hide_pihole_self_in_top_clients;
-    } catch {}
-  }
-
-  async function saveDisplaySettings() {
-    const status = document.getElementById('display-save-status');
-    const cb = document.getElementById('hide-pihole-self');
-    if (status) { status.textContent = ''; status.className = 'ms-2 small text-muted'; }
-    try {
-      const resp = await fetch('/api/display-settings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          hide_pihole_self_in_top_clients: !!(cb && cb.checked),
-        }),
-      });
-      if (resp.status === 401) { window.location.href = '/login'; return; }
-      if (!resp.ok) throw new Error('save failed');
-      if (status) { status.textContent = 'Saved'; status.className = 'ms-2 small text-success'; }
-    } catch {
-      if (status) { status.textContent = 'Save failed'; status.className = 'ms-2 small text-danger'; }
-    }
-  }
-
-  async function loadPollInterval() {
-    try {
-      const resp = await fetch('/api/poll-settings/');
-      if (!resp.ok) return;
-      const data = await resp.json();
-      const sel = document.getElementById('poll-interval');
-      // Select the closest option; fall back to first if exact match not found.
-      const opt = [...sel.options].find(o => parseInt(o.value) === data.interval_seconds);
-      if (opt) sel.value = opt.value;
-    } catch {}
-  }
-
-  async function savePollInterval() {
-    const result = document.getElementById('poll-interval-result');
-    const interval = parseInt(document.getElementById('poll-interval').value);
-    result.textContent = '';
-    result.className = 'small mt-2';
-    try {
-      const resp = await fetch('/api/poll-settings/', {
-        method: 'PUT',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({interval_seconds: interval}),
-      });
-      const data = await resp.json();
-      if (resp.ok) {
-        result.textContent = `Saved — polling every ${data.interval_seconds}s (takes effect immediately).`;
-        result.classList.add('text-success');
-      } else {
-        result.textContent = data.detail || 'Save failed.';
-        result.classList.add('text-danger');
-      }
-    } catch {
-      result.textContent = 'Request failed.';
-      result.classList.add('text-danger');
-    }
-  }
-
-  async function changePassword() {
-    const current = document.getElementById('cp-current').value;
-    const newPw   = document.getElementById('cp-new').value;
-    const confirm = document.getElementById('cp-confirm').value;
-    const result  = document.getElementById('cp-result');
-
-    result.textContent = '';
-    result.className = 'small mt-2';
-
-    try {
-      const resp = await fetch('/api/auth/change-password', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({current_password: current, new_password: newPw, confirm_password: confirm}),
-      });
-      const data = await resp.json();
-      if (resp.ok) {
-        result.textContent = data.detail;
-        result.classList.add('text-success');
-        document.getElementById('cp-current').value = '';
-        document.getElementById('cp-new').value = '';
-        document.getElementById('cp-confirm').value = '';
-      } else {
-        result.textContent = data.detail || 'Password change failed.';
-        result.classList.add('text-danger');
-      }
-    } catch {
-      result.textContent = 'Request failed.';
-      result.classList.add('text-danger');
-    }
-  }
-</script>
+<script src="/static/js/pages/settings.js"></script>
 {% endblock %}

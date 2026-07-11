@@ -8,6 +8,30 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.4.0] — 2026-07-11
+
+### CSP hardening: no more `'unsafe-inline'` scripts (#84)
+
+Closes the second of the two structure items deferred from the 2026-07-02 audit. The Content-Security-Policy's `script-src` is now `'self' https://cdn.jsdelivr.net` — an injected `<script>` tag or `onclick=` attribute no longer executes anywhere in the app, closing off the classic stored/reflected-XSS execution channel.
+
+**Security:**
+- **Dropped `'unsafe-inline'` from `script-src`.** Every inline script and inline handler is gone:
+  - ~360 lines of inline `<script>` across 7 templates extracted to static files: `boot.js` (theme pre-paint + multi-site helpers, parser-blocking in `<head>`), `base.js` (sidebar, site picker, sync/version badges), and per-page `pages/{dashboard,combined,queries,settings,docs}.js`.
+  - Server data (the current site slug) now reaches the JS via a `<script type="application/json">` island — data the CSP never executes — instead of a Jinja-templated inline script.
+  - All 27 inline handler attributes (`onclick=`/`onchange=`/`onsubmit=`/`onkeydown=`) replaced with `addEventListener` wiring in the page scripts; buttons that had no ids got them (`#sync-schedule-save-btn`, `#po-save-btn`, `#session-timeout-save-btn`, …).
+  - The 17 `onclick=` strings inside `dashboard.js`-generated markup (query/drill pagination, domain-modal actions, API-key revoke, orphan instance/site removal) now dispatch through delegated document-level listeners keyed on `data-*` attributes — same pattern the drill-row and domain-shield buttons already used.
+- `style-src` deliberately keeps `'unsafe-inline'` for now: Bootstrap utility patterns and the templates' style attributes need their own pass. Self-hosting the jsdelivr assets (dropping the CDN from the policy entirely) is the remaining stretch goal.
+
+**Fixed:**
+- **Partial-sync badge no longer crashes.** `renderSyncBadge` referenced an undefined `data` variable in the some-replicas-failed branch (`data.master` → `status.master`), so a partial sync threw a `ReferenceError` and left the top-bar badge stale instead of showing "⚠ Synced n/m".
+
+**Tests:**
+- New CSP regression assertion: `script-src` must be exactly `'self' https://cdn.jsdelivr.net` — a reintroduced `'unsafe-inline'` fails the integration suite, not a manual review.
+- Three Playwright locators updated from `[onclick=...]` selectors to the new button ids.
+- Verified with all three Playwright suites (21 + 7 + 1 passing) plus an automated every-page console sweep (login, forced password change, dashboard, query log, settings, combined, docs, and the generated-markup click paths): zero CSP violations, zero page errors.
+
+---
+
 ## [2.3.0] — 2026-07-11
 
 ### Collector + client correctness fixes and the audit's test-debt paydown

@@ -310,9 +310,13 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # ty
 _CSP_POLICY = (
     # Restrict default fetches to same-origin. Loosen per-directive below.
     "default-src 'self'; "
-    # Inline <script> is used for theme pre-paint in base.html and docs.html.
-    # Bootstrap, Chart.js, and Swagger UI come from jsdelivr.
-    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    # Scripts only from same-origin files (boot.js/base.js/dashboard.js and
+    # per-page /static/js/pages/*.js) and jsdelivr (Bootstrap, Chart.js,
+    # Swagger UI). No 'unsafe-inline': server data reaches the JS via
+    # <script type="application/json"> islands, which script-src never
+    # executes, and JS-generated buttons dispatch through delegated
+    # listeners keyed on data-* attributes instead of inline onclick=.
+    "script-src 'self' https://cdn.jsdelivr.net; "
     # Bootstrap CSS + per-page inline styles.
     "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
     # data: covers the inline SVG favicon and any data-URI icons Swagger ships.

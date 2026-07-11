@@ -19,6 +19,12 @@ async def test_health_response_has_security_headers(client):
     assert csp is not None
     assert "default-src 'self'" in csp
     assert "frame-ancestors 'none'" in csp
+    # script-src must never regress to 'unsafe-inline' — all page JS lives
+    # in /static/js and server data travels via JSON islands (issue #84).
+    directives = {
+        d.strip().split(" ", 1)[0]: d.strip() for d in csp.split(";") if d.strip()
+    }
+    assert directives["script-src"] == "script-src 'self' https://cdn.jsdelivr.net"
 
 
 async def test_404_response_still_has_security_headers(client):

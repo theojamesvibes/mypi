@@ -8,12 +8,12 @@
     <h5 class="fw-semibold mb-0"><i class="bi bi-list-ul me-2 text-primary"></i>Query Log<span class="page-title-site"></span></h5>
     <div class="d-flex gap-2 align-items-center">
       <div class="form-check form-switch mb-0 d-flex align-items-center gap-2" title="Refresh every 2 seconds">
-        <input class="form-check-input" type="checkbox" id="live-toggle" onchange="toggleLiveView(this.checked)">
+        <input class="form-check-input" type="checkbox" id="live-toggle">
         <label class="form-check-label small" for="live-toggle">
           <i class="bi bi-broadcast text-danger" id="live-icon" style="display:none;"></i> Live
         </label>
       </div>
-      <button class="btn btn-sm btn-outline-secondary" onclick="loadQueries(1)" id="refresh-btn">
+      <button class="btn btn-sm btn-outline-secondary" id="refresh-btn">
         <i class="bi bi-arrow-clockwise"></i>
       </button>
     </div>
@@ -25,23 +25,21 @@
       <div class="row g-2 align-items-end">
         <div class="col-sm-3">
           <label class="form-label form-label-sm mb-1">Instance</label>
-          <select id="f-instance" class="form-select form-select-sm" onchange="loadQueries(1)">
+          <select id="f-instance" class="form-select form-select-sm">
             <option value="">All instances</option>
           </select>
         </div>
         <div class="col-sm-3">
           <label class="form-label form-label-sm mb-1">Domain</label>
-          <input type="text" id="f-domain" class="form-control form-control-sm" placeholder="e.g. ads.example.com"
-                 onkeydown="if(event.key==='Enter') loadQueries(1)">
+          <input type="text" id="f-domain" class="form-control form-control-sm" placeholder="e.g. ads.example.com">
         </div>
         <div class="col-sm-2">
           <label class="form-label form-label-sm mb-1">Client</label>
-          <input type="text" id="f-client" class="form-control form-control-sm" placeholder="IP or name"
-                 onkeydown="if(event.key==='Enter') loadQueries(1)">
+          <input type="text" id="f-client" class="form-control form-control-sm" placeholder="IP or name">
         </div>
         <div class="col-sm-2">
           <label class="form-label form-label-sm mb-1">Show</label>
-          <select id="f-blocked" class="form-select form-select-sm" onchange="loadQueries(1)">
+          <select id="f-blocked" class="form-select form-select-sm">
             <option value="">All queries</option>
             <option value="true">Blocked only</option>
             <option value="false">Permitted only</option>
@@ -50,7 +48,7 @@
         </div>
         <div class="col-sm-2">
           <label class="form-label form-label-sm mb-1">Time range</label>
-          <select id="f-hours" class="form-select form-select-sm" onchange="loadQueries(1)">
+          <select id="f-hours" class="form-select form-select-sm">
             <option value="24">Last 24h</option>
             <option value="48">Last 48h</option>
             <option value="168">Last 7 days</option>
@@ -124,17 +122,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script>
-  // Pre-set filters from URL params (e.g. when navigating from dashboard cards)
-  (function () {
-    const p = new URLSearchParams(window.location.search);
-    if (p.has('domain')) { const el = document.getElementById('f-domain'); if (el) el.value = p.get('domain'); }
-    if (p.has('client')) { const el = document.getElementById('f-client'); if (el) el.value = p.get('client'); }
-    if (p.get('blocked') === 'true')  { const el = document.getElementById('f-blocked'); if (el) el.value = 'true'; }
-    if (p.get('blocked') === 'false') { const el = document.getElementById('f-blocked'); if (el) el.value = 'false'; }
-    if (p.get('show') === 'clients')  { const el = document.getElementById('f-blocked'); if (el) el.value = 'clients'; }
-  })();
-  loadInstanceFilter();
-  loadQueries(1);
-</script>
+<script src="/static/js/pages/queries.js"></script>
 {% endblock %}

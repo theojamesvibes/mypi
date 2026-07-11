@@ -26,6 +26,38 @@ document.addEventListener('click', e => {
   openDomainModal(btn.dataset.domain, btn.dataset.qstatus || '');
 });
 
+// Delegated click handlers for the remaining JS-generated buttons —
+// innerHTML markup can't carry inline onclick= under the strict
+// script-src CSP, so each button carries a data-* payload instead.
+document.addEventListener('click', e => {
+  const pageBtn = e.target.closest('button[data-qpage]');
+  if (pageBtn) { loadQueries(parseInt(pageBtn.dataset.qpage)); return; }
+
+  const drillBtn = e.target.closest('button[data-drillpage]');
+  if (drillBtn) { loadDrillPage(parseInt(drillBtn.dataset.drillpage)); return; }
+
+  const actionBtn = e.target.closest('button[data-domain-action]');
+  if (actionBtn) { doDomainAction(actionBtn.dataset.domainAction); return; }
+
+  const revokeBtn = e.target.closest('button[data-revoke-key]');
+  if (revokeBtn) { revokeKey(revokeBtn.dataset.revokeKey); return; }
+
+  const staleBtn = e.target.closest('button[data-stale-instance-id]');
+  if (staleBtn) {
+    deleteStaleInstance(staleBtn.dataset.staleInstanceId, staleBtn.dataset.instanceName);
+    return;
+  }
+
+  const siteBtn = e.target.closest('button[data-orphan-site-slug]');
+  if (siteBtn) {
+    deleteOrphanSite(
+      siteBtn.dataset.orphanSiteSlug,
+      siteBtn.dataset.siteName,
+      parseInt(siteBtn.dataset.instanceCount),
+    );
+  }
+});
+
 // ─── Utilities ───────────────────────────────────────────────────────────────
 
 function fmtNum(n) {
@@ -829,7 +861,7 @@ function renderPagination(id, current, total) {
   el.innerHTML = pages.map(p => {
     if (p === '…') return `<span class="btn btn-sm btn-outline-secondary disabled">…</span>`;
     const active = p === current ? 'btn-secondary' : 'btn-outline-secondary';
-    return `<button class="btn btn-sm ${active}" onclick="loadQueries(${p})">${p}</button>`;
+    return `<button class="btn btn-sm ${active}" data-qpage="${p}">${p}</button>`;
   }).join('');
 }
 
@@ -878,27 +910,27 @@ function renderDomainStatus(domain, queryStatus, status) {
   if (in_deny && in_allow) {
     summaryHtml = '<div class="alert alert-warning py-2 mb-0"><i class="bi bi-exclamation-triangle me-2"></i><strong>Conflict</strong> \u2014 domain is in both lists. Allow takes priority.</div>';
     footerHtml = `<button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-      <button class="btn btn-outline-danger" onclick="doDomainAction('remove_allow')">Remove Allow</button>
-      <button class="btn btn-outline-danger" onclick="doDomainAction('remove_deny')">Remove Block</button>
-      <button class="btn btn-danger" onclick="doDomainAction('clear')"><i class="bi bi-trash me-1"></i>Clear Both</button>`;
+      <button class="btn btn-outline-danger" data-domain-action="remove_allow">Remove Allow</button>
+      <button class="btn btn-outline-danger" data-domain-action="remove_deny">Remove Block</button>
+      <button class="btn btn-danger" data-domain-action="clear"><i class="bi bi-trash me-1"></i>Clear Both</button>`;
   } else if (effective === 'denied') {
     summaryHtml = '<div class="alert alert-danger py-2 mb-0"><i class="bi bi-slash-circle me-2"></i><strong>Blocked</strong> \u2014 domain is in the explicit deny list.</div>';
     footerHtml = `<button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-      <button class="btn btn-outline-success" onclick="doDomainAction('remove_deny')"><i class="bi bi-shield-check me-1"></i>Remove Block</button>
-      <button class="btn btn-success" onclick="doDomainAction('allow')"><i class="bi bi-shield-fill-check me-1"></i>Allow Override</button>`;
+      <button class="btn btn-outline-success" data-domain-action="remove_deny"><i class="bi bi-shield-check me-1"></i>Remove Block</button>
+      <button class="btn btn-success" data-domain-action="allow"><i class="bi bi-shield-fill-check me-1"></i>Allow Override</button>`;
   } else if (effective === 'allowed') {
     summaryHtml = '<div class="alert alert-success py-2 mb-0"><i class="bi bi-check-circle me-2"></i><strong>Allowed</strong> \u2014 domain has an explicit allow override.</div>';
     footerHtml = `<button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-      <button class="btn btn-outline-danger" onclick="doDomainAction('remove_allow')"><i class="bi bi-shield-x me-1"></i>Remove Allow</button>
-      <button class="btn btn-danger" onclick="doDomainAction('deny')"><i class="bi bi-shield-fill-x me-1"></i>Block Instead</button>`;
+      <button class="btn btn-outline-danger" data-domain-action="remove_allow"><i class="bi bi-shield-x me-1"></i>Remove Allow</button>
+      <button class="btn btn-danger" data-domain-action="deny"><i class="bi bi-shield-fill-x me-1"></i>Block Instead</button>`;
   } else {
     const isGravityBlocked = BLOCKED_STATUSES.has(queryStatus);
     summaryHtml = isGravityBlocked
       ? '<div class="alert alert-warning py-2 mb-0"><i class="bi bi-shield-fill-exclamation me-2"></i><strong>Gravity blocked</strong> \u2014 blocked by an adlist. Not in any local list.</div>'
       : '<div class="alert alert-secondary py-2 mb-0"><i class="bi bi-shield me-2"></i>Not managed locally \u2014 not in any explicit allow or deny list.</div>';
     footerHtml = `<button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-      <button class="btn btn-outline-danger" onclick="doDomainAction('deny')"><i class="bi bi-shield-fill-x me-1"></i>Block</button>
-      <button class="btn btn-outline-success" onclick="doDomainAction('allow')"><i class="bi bi-shield-fill-check me-1"></i>Allow</button>`;
+      <button class="btn btn-outline-danger" data-domain-action="deny"><i class="bi bi-shield-fill-x me-1"></i>Block</button>
+      <button class="btn btn-outline-success" data-domain-action="allow"><i class="bi bi-shield-fill-check me-1"></i>Allow</button>`;
   }
 
   body.innerHTML = `<div class="mb-3">${denyBadge}${allowBadge}</div>
@@ -977,7 +1009,7 @@ async function loadApiKeys() {
       <td>${escHtml(k.name)}</td>
       <td class="small text-muted">${fmtTime(k.created_at)}</td>
       <td class="small text-muted">${k.last_used_at ? fmtTime(k.last_used_at) : 'Never'}</td>
-      <td><button class="btn btn-sm btn-outline-danger py-0" onclick="revokeKey('${k.id}')">Revoke</button></td>
+      <td><button class="btn btn-sm btn-outline-danger py-0" data-revoke-key="${k.id}">Revoke</button></td>
     </tr>
   `).join('');
 }
@@ -1103,7 +1135,7 @@ async function loadStaleInstances() {
       <td class="small text-muted">${i.last_seen_at ? new Date(i.last_seen_at).toLocaleString() : '—'}</td>
       <td>
         <button class="btn btn-xs btn-outline-danger py-0 px-1" style="font-size:0.75rem;"
-                onclick="deleteStaleInstance('${i.id}', '${escHtml(i.name)}')">
+                data-stale-instance-id="${i.id}" data-instance-name="${escHtml(i.name)}">
           <i class="bi bi-trash"></i> Remove
         </button>
       </td>
@@ -1168,7 +1200,7 @@ async function loadStaleSites() {
       <td class="small text-muted">${s.instance_count} instance(s)</td>
       <td>
         <button class="btn btn-xs btn-outline-danger py-0 px-1" style="font-size:0.75rem;"
-                onclick="deleteOrphanSite('${escHtml(s.slug)}', '${escHtml(s.name)}', ${s.instance_count})">
+                data-orphan-site-slug="${escHtml(s.slug)}" data-site-name="${escHtml(s.name)}" data-instance-count="${s.instance_count}">
           <i class="bi bi-trash"></i> Remove site + data
         </button>
       </td>
@@ -1284,7 +1316,7 @@ function renderDrillPagination(current, total) {
   el.innerHTML = pages.map(p => {
     if (p === '…') return `<span class="btn btn-sm btn-outline-secondary disabled">…</span>`;
     const active = p === current ? 'btn-secondary' : 'btn-outline-secondary';
-    return `<button class="btn btn-sm ${active}" onclick="loadDrillPage(${p})">${p}</button>`;
+    return `<button class="btn btn-sm ${active}" data-drillpage="${p}">${p}</button>`;
   }).join('');
 }
 
@@ -1357,7 +1389,7 @@ function renderSyncBadge(status) {
     } else {
       // Include master in the count — if per-replica results exist, the master
       // export succeeded (a master failure produces a global error, not results).
-      const masterCount = data.master ? 1 : 0;
+      const masterCount = status.master ? 1 : 0;
       label = `⚠ Synced ${ok + masterCount}/${total + masterCount} ${timeStr}`;
       cls = 'bg-warning text-dark';
     }
@@ -1409,7 +1441,7 @@ async function saveSchedule() {
     body: JSON.stringify(body),
   });
   if (res.status === 401) { window.location.href = '/login'; return; }
-  const btn = document.querySelector('[onclick="saveSchedule()"]');
+  const btn = document.getElementById('sync-schedule-save-btn');
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     if (btn) {
@@ -1574,7 +1606,7 @@ async function savePushoverSettings() {
   });
   if (res.status === 401) { window.location.href = '/login'; return; }
 
-  const btn = document.querySelector('[onclick="savePushoverSettings()"]');
+  const btn = document.getElementById('po-save-btn');
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     if (btn) {
@@ -1660,7 +1692,7 @@ async function loadSessionTimeout() {
 async function saveSessionTimeout() {
   const sel = document.getElementById('session-timeout');
   const result = document.getElementById('session-timeout-result');
-  const btn = document.querySelector('[onclick="saveSessionTimeout()"]');
+  const btn = document.getElementById('session-timeout-save-btn');
   if (!sel) return;
 
   const body = { timeout_minutes: parseInt(sel.value) };
