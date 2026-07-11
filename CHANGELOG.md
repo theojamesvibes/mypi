@@ -8,6 +8,35 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.1.3] — 2026-07-11
+
+### Dependency sweep (#74–#82) + coverage-floor raise to 80%
+
+Routine Dependabot sweep — all nine open PRs reviewed (release notes + CI green on each) and landed together. No advisories against any of the pinned versions this round. Alongside it, the 2.1.2 audit's "raise the coverage floor" follow-up ships: new tests for the per-site sync API and version-check persistence, and the CI gate moves 75% → 80%.
+
+**Runtime (`requirements.txt`):**
+- fastapi 0.138.1 → 0.139.0 (#80) — adds `app.frontend()` dependency support; nothing MyPi uses changes.
+- uvicorn 0.49.0 → 0.50.0 (#82) — startup failures now exit with a dedicated code 3 instead of a mix of 0/1/3, which makes the container restart policy fire reliably on a bad boot. The `--ws auto` default changed to `websockets-sansio`, but MyPi has no WebSocket endpoints. `ProxyHeadersMiddleware` (we run `--proxy-headers`) now memoizes trusted-host checks — behavior verified by the middleware tests.
+- apscheduler 3.11.2 → 3.11.3 (#74) — fixes sub-minute interval jobs stalling across a DST spring-forward gap; directly relevant to our poll loops (queries every 10 s).
+- alembic 1.18.4 → 1.18.5 (#75) — bugfix release (merge `--splice`, autogenerate rendering).
+
+**Dev (`requirements-dev.txt`):**
+- coverage 7.14.3 → 7.15.0 (#81) — LCOV/excluded-function fix; one flaky playwright run on the PR passed on re-run.
+
+**CI (GitHub Actions, `docker-publish.yml`):**
+- docker/setup-buildx-action 4.1.0 → 4.2.0 (#76)
+- docker/build-push-action 7.2.0 → 7.3.0 (#77)
+- docker/metadata-action 6.1.0 → 6.2.0 (#78)
+- docker/login-action 4.2.0 → 4.4.0 (#79)
+
+**Tests / coverage (audit follow-up):**
+- **Per-site sync API now has coverage.** The entire `/api/sites/{slug}/sync/*` router (status, schedule round-trip, trigger) plus the legacy `POST /api/sync` happy path were untested. New tests cover: trigger passes the right toggles and `site_id` to `run_sync`, the 409 "already running" guard is scoped per site (Main mid-sync doesn't block Cabin), schedule persistence failure returns 500, read-only API keys are rejected on the per-site mutation routes, and unknown slugs 404.
+- **`version_check.load_settings` (restart persistence) now tested** — restores enabled/latest/checked-at from the DB row, tolerates a missing row and malformed JSON, plus the `check_now` re-entrancy guard and unparseable-version handling. `version_check.py` is now at 100%.
+- **CI coverage floor raised 75% → 80%** (`test.yml`); suite is now 379 non-playwright cases at ~84%.
+- README refreshed to match (version badge, suite size, floor).
+
+---
+
 ## [2.1.2] — 2026-07-02
 
 ### Correctness + security patch from a full-repo audit

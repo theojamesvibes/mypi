@@ -19,13 +19,13 @@ psycopg[binary]==3.3.4
 # `respx_mock` fixture context.
 respx==0.23.1
 
-# Coverage measurement + gate. CI runs `pytest --cov=app --cov-fail-under=75`
+# Coverage measurement + gate. CI runs `pytest --cov=app --cov-fail-under=80`
 # so a PR that regresses coverage below the floor fails the build.
-# 75% floor was set after the main+config_loader+API push; current actual
-# is ~76%. The remaining 4% to 80% lives mostly in lifespan startup hooks
-# and a few edge branches that aren't worth hand-rolling tests for.
+# Floor raised 75 → 80 in 2.1.3 (2026-07-11 audit follow-up); actual is
+# ~84%. The remainder lives mostly in lifespan startup hooks and error
+# branches in pushover/pihole_client that aren't worth hand-rolling.
 pytest-cov==7.1.0
-coverage==7.14.3
+coverage==7.15.0
 
 # UI / browser tests — pytest-playwright drives a real Chromium against
 # the running FastAPI app. The browser binary itself is installed via

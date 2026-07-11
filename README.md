@@ -2,7 +2,7 @@
 [![build](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/docker-publish.yml?style=flat-square)](https://github.com/theojamesvibes/mypi/actions)
 [![tests](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/test.yml?style=flat-square&label=tests)](https://github.com/theojamesvibes/mypi/actions/workflows/test.yml)
 [![ui-tests](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/ui-tests.yml?style=flat-square&label=ui-tests)](https://github.com/theojamesvibes/mypi/actions/workflows/ui-tests.yml)
-[![version](https://img.shields.io/badge/version-2.1.2-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
+[![version](https://img.shields.io/badge/version-2.1.3-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
 [![platform](https://img.shields.io/badge/platform-linux%2Famd64%20|%20linux%2Farm64-teal?style=flat-square)](https://github.com/theojamesvibes/mypi/pkgs/container/mypi)
 
 > **⚠️ Vibe Code Disclosure**
@@ -509,7 +509,7 @@ uvicorn app.main:app --reload --port 8080
 
 ## Testing
 
-MyPi ships with a pytest suite of ~390 cases (unit + integration + migration + UI) plus a bash smoke for live deployments. The suite runs on every push and PR to `main` via [`.github/workflows/test.yml`](.github/workflows/test.yml) and gates a **75% coverage floor** (current actual: ~83%) — a PR that drops coverage below the floor fails the build.
+MyPi ships with a pytest suite of ~400 cases (unit + integration + migration + UI) plus a bash smoke for live deployments. The suite runs on every push and PR to `main` via [`.github/workflows/test.yml`](.github/workflows/test.yml) and gates an **80% coverage floor** (current actual: ~84%) — a PR that drops coverage below the floor fails the build.
 
 ```bash
 # Local — pytest in a venv on demand
