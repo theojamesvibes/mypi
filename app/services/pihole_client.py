@@ -81,7 +81,7 @@ class PiholeClient:
         Connection keepalive is enabled so repeat polls reuse the same TCP/TLS
         connection.  The 1.7.6 hardening shipped with `max_keepalive_connections=0`
         to prevent half-open connection accumulation, but the self-healing
-        eviction in `collector.py` on `ssl.SSLError | ConnectError |
+        eviction in the collector on `ssl.SSLError | ConnectError |
         RemoteProtocolError` already handles dead connections — killing
         keepalive turned out to be belt-and-suspenders that forced a fresh TLS
         handshake on every request.  On slow hardware (Raspberry Pi 3) the

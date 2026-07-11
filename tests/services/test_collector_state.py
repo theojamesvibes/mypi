@@ -173,7 +173,7 @@ def test_check_stalled_increments_then_alerts(monkeypatch):
     """After _STALL_THRESHOLD_POLLS consecutive flat polls, the alert
     fires exactly once (via _spawn → pushover)."""
     spawned = []
-    monkeypatch.setattr(collector, "_spawn", lambda coro: spawned.append(coro))
+    monkeypatch.setattr(collector.state, "_spawn", lambda coro: spawned.append(coro))
 
     inst = _StubInstance()
     threshold = collector._STALL_THRESHOLD_POLLS
@@ -203,7 +203,7 @@ async def test_vip_transfer_requires_5_confirming_polls(monkeypatch):
     threshold counts. Replaces the dev.20-era 2-poll false-positive
     bug."""
     spawned = []
-    monkeypatch.setattr(collector, "_spawn", lambda coro: spawned.append(coro))
+    monkeypatch.setattr(collector.state, "_spawn", lambda coro: spawned.append(coro))
 
     site_id = uuid.uuid4()
     master = _StubInstance(name="m", vip_role="master", site_id=site_id)
@@ -237,7 +237,7 @@ async def test_vip_transfer_requires_5_confirming_polls(monkeypatch):
 
 async def test_vip_transfer_fires_after_confirm_threshold(monkeypatch):
     spawned: list = []
-    monkeypatch.setattr(collector, "_spawn", lambda coro: spawned.append(coro))
+    monkeypatch.setattr(collector.state, "_spawn", lambda coro: spawned.append(coro))
 
     site_id = uuid.uuid4()
     master = _StubInstance(name="m", vip_role="master", site_id=site_id)
@@ -270,7 +270,7 @@ async def test_vip_group_stall_requires_every_node_observed_online(monkeypatch):
     as 'flat' produced false positives during transient master TLS
     blips. Per-instance offline alerts cover real outages."""
     spawned: list = []
-    monkeypatch.setattr(collector, "_spawn", lambda coro: spawned.append(coro))
+    monkeypatch.setattr(collector.state, "_spawn", lambda coro: spawned.append(coro))
 
     site_id = uuid.uuid4()
     master = _StubInstance(name="m", vip_role="master", site_id=site_id)
@@ -302,7 +302,7 @@ async def test_vip_group_stall_requires_every_node_observed_online(monkeypatch):
 
 async def test_vip_group_stall_fires_when_all_nodes_flat(monkeypatch):
     spawned: list = []
-    monkeypatch.setattr(collector, "_spawn", lambda coro: spawned.append(coro))
+    monkeypatch.setattr(collector.state, "_spawn", lambda coro: spawned.append(coro))
 
     site_id = uuid.uuid4()
     master = _StubInstance(name="m", vip_role="master", site_id=site_id)

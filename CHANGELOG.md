@@ -8,6 +8,23 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.4.1] — 2026-07-11
+
+### Collector split: `collector.py` → `app/services/collector/` package (#83)
+
+Closes the last deferred item from the 2026-07-02 audit. Pure structure — no behavior change; every job body, comment, and log message moved verbatim.
+
+**Changed:**
+- **`app/services/collector.py` (1054 lines, 6 scheduler jobs) is now a package** with one module per concern: `state.py` (shared per-instance/per-site dicts, `_spawn`, circuit breaker), `instances.py` (DB lookup helpers), `stats.py` (stats poll + offline alerts + stall detection), `vip.py` (VIP transfer/group-stall state machine), `queries.py` (query poll + backfill + `_store_queries`), `versions.py`, `maintenance.py` (retention cleanup, state pruning, shutdown), `scheduling.py` (per-site job registration).
+- **`app.services.collector` re-exports the full previous surface**, so `app/main.py` and all existing imports work unchanged. State dicts are re-exported by reference — mutation through the package façade still hits the real state. The façade docstring documents the one rule: `monkeypatch.setattr` must target the owning submodule (`collector.queries._QUERY_POLL_PAGE_SIZE`, `collector.state._spawn`), since rebinding a re-export on the package doesn't reach the implementation.
+- Modules that fire notifications call `state._spawn(...)` via attribute lookup (not a from-import) so a patched `_spawn` takes effect everywhere.
+
+**Tests:**
+- The 9 `monkeypatch.setattr(collector, ...)` sites migrated to the owning submodules (`collector.queries` for the pagination constants, `collector.state` for `_spawn`); the other ~80 state references work unchanged through the re-exports and were left as-is.
+- Full verification: 398 non-Playwright tests, coverage 86.22% (gate 80%), all three Playwright suites (21 + 7 + 1) including the collector E2E suite that drives the real scheduler jobs against the Pi-hole emulator.
+
+---
+
 ## [2.4.0] — 2026-07-11
 
 ### CSP hardening: no more `'unsafe-inline'` scripts (#84)

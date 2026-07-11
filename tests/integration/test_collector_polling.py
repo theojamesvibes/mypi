@@ -360,7 +360,7 @@ async def test_poll_queries_for_paginates_backwards_on_full_pages(
     from app.services import collector
     from app.services.collector import _poll_queries_for
 
-    monkeypatch.setattr(collector, "_QUERY_POLL_PAGE_SIZE", 3)
+    monkeypatch.setattr(collector.queries, "_QUERY_POLL_PAGE_SIZE", 3)
 
     respx_mock.post(f"{PIHOLE}/api/auth").respond(
         200, json={"session": {"sid": "sid"}}
@@ -405,7 +405,7 @@ async def test_poll_queries_for_stops_when_a_full_page_makes_no_progress(
     from app.services import collector
     from app.services.collector import _poll_queries_for
 
-    monkeypatch.setattr(collector, "_QUERY_POLL_PAGE_SIZE", 2)
+    monkeypatch.setattr(collector.queries, "_QUERY_POLL_PAGE_SIZE", 2)
 
     respx_mock.post(f"{PIHOLE}/api/auth").respond(
         200, json={"session": {"sid": "sid"}}
@@ -430,8 +430,8 @@ async def test_poll_queries_for_page_cap_bounds_work_per_tick(
     from app.services import collector
     from app.services.collector import _poll_queries_for
 
-    monkeypatch.setattr(collector, "_QUERY_POLL_PAGE_SIZE", 2)
-    monkeypatch.setattr(collector, "_QUERY_POLL_MAX_PAGES", 3)
+    monkeypatch.setattr(collector.queries, "_QUERY_POLL_PAGE_SIZE", 2)
+    monkeypatch.setattr(collector.queries, "_QUERY_POLL_MAX_PAGES", 3)
 
     respx_mock.post(f"{PIHOLE}/api/auth").respond(
         200, json={"session": {"sid": "sid"}}
