@@ -1,8 +1,6 @@
 """Tests for /api/sites — list, per-slug resolve, slug-history redirects."""
 from __future__ import annotations
 
-import uuid
-
 import pytest
 
 
@@ -47,9 +45,10 @@ async def test_list_sites_returns_instance_counts(authed_client, db_session, two
     """Each row carries instance_count + active_instance_count so the UI
     can show counts without a per-row API roundtrip."""
     from cryptography.fernet import Fernet
+
+    import app.models.pihole as pihole_models
     from app.config import settings
     from app.models.pihole import PiholeInstance
-    import app.models.pihole as pihole_models
 
     if not settings.encryption_key:
         settings.encryption_key = Fernet.generate_key().decode()
@@ -112,8 +111,9 @@ async def test_delete_active_site_returns_409(authed_client, two_sites):
 
 
 async def test_delete_orphan_site_succeeds(authed_client, db_session, two_sites):
-    from app.models.site import Site
     from sqlalchemy import select
+
+    from app.models.site import Site
 
     db_session.add(Site(
         name="Old", slug="old-orphan", is_main=False, is_active=False,

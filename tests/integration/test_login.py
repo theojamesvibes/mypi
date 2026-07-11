@@ -8,9 +8,6 @@ from __future__ import annotations
 
 import time
 
-import pytest
-
-
 # ── Happy path ───────────────────────────────────────────────────────────────
 
 
@@ -168,6 +165,7 @@ async def test_logout_revokes_jwt_so_bearer_use_fails(client, test_user):
     # Build a fresh client without the cookie this client also acquired,
     # so we test the bearer path in isolation.
     from httpx import ASGITransport, AsyncClient
+
     from app.main import app
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://testserver"

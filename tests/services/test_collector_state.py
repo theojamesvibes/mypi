@@ -10,13 +10,10 @@ from __future__ import annotations
 
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
-import pytest
-
-from app.services import collector
 from app.models.pihole import StatsSnapshot
-
+from app.services import collector
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -41,7 +38,7 @@ class _StubInstance:
 def _snap(count: int = 0, status: str = "online") -> StatsSnapshot:
     return StatsSnapshot(
         instance_id=uuid.uuid4(),
-        collected_at=datetime.now(timezone.utc),
+        collected_at=datetime.now(UTC),
         status=status,
         dns_queries_today=count,
     )
@@ -55,12 +52,12 @@ def test_breaker_allows_when_no_cooldown():
 
 
 def test_breaker_blocks_during_active_cooldown():
-    collector._cooldown_until["k"] = datetime.now(timezone.utc) + timedelta(seconds=300)
+    collector._cooldown_until["k"] = datetime.now(UTC) + timedelta(seconds=300)
     assert collector._breaker_allows("k", "name") is False
 
 
 def test_breaker_allows_after_cooldown_expires():
-    collector._cooldown_until["k"] = datetime.now(timezone.utc) - timedelta(seconds=1)
+    collector._cooldown_until["k"] = datetime.now(UTC) - timedelta(seconds=1)
     assert collector._breaker_allows("k", "name") is True
 
 
@@ -91,7 +88,7 @@ def test_breaker_failure_dedups_within_window():
 
 def test_breaker_success_clears_all_state():
     collector._consec_failures["k"] = 2
-    collector._cooldown_until["k"] = datetime.now(timezone.utc) + timedelta(seconds=300)
+    collector._cooldown_until["k"] = datetime.now(UTC) + timedelta(seconds=300)
     collector._last_failure_at["k"] = time.monotonic()
 
     collector._breaker_success("k", "name")

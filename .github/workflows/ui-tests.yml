@@ -21,9 +21,15 @@ on:
   pull_request:
     branches: [main]
 
+# A newer push to the same branch supersedes the in-flight run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   playwright:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     services:
       postgres:
@@ -56,6 +62,10 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: '3.14'
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
 
       - name: Install runtime + dev dependencies
         run: |
@@ -98,6 +108,7 @@ jobs:
     # cadence and the tests assert that real polled data lands on
     # the dashboard.
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     services:
       postgres:
@@ -126,6 +137,10 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: '3.14'
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
 
       - name: Install runtime + dev dependencies
         run: |
@@ -157,6 +172,7 @@ jobs:
     # sync via the UI and assert the teleporter ZIP landed on the
     # replica.
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     services:
       postgres:
@@ -185,6 +201,10 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: '3.14'
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
 
       - name: Install runtime + dev dependencies
         run: |

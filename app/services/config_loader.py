@@ -3,15 +3,14 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from datetime import datetime, timezone
-
-from app.config import SiteConfig, load_site_configs
+from app.config import load_site_configs
 from app.models.pihole import PiholeInstance
 from app.models.site import Site, SiteSetting, SiteSlugHistory
 from app.services.client_manager import close_client
@@ -76,7 +75,7 @@ async def sync_sites_and_instances(db: AsyncSession) -> None:
                 db.add(SiteSlugHistory(
                     old_slug=current_main.slug,
                     site_id=current_main.id,
-                    retired_at=datetime.now(timezone.utc),
+                    retired_at=datetime.now(UTC),
                 ))
                 current_main.name = target_main.name
                 current_main.slug = target_main.slug
@@ -109,13 +108,13 @@ async def sync_sites_and_instances(db: AsyncSession) -> None:
     for sc in site_configs:
         site = slug_to_site[sc.slug]
         for inst_cfg in sc.instances:
-            result = await db.execute(
+            inst_result = await db.execute(
                 select(PiholeInstance).where(
                     PiholeInstance.site_id == site.id,
                     PiholeInstance.name == inst_cfg.name,
                 )
             )
-            instance = result.scalar_one_or_none()
+            instance = inst_result.scalar_one_or_none()
             if instance is None:
                 instance = PiholeInstance(
                     site_id=site.id,
@@ -153,10 +152,10 @@ async def sync_sites_and_instances(db: AsyncSession) -> None:
     deactivated_instance_keys: list[str] = []
     for sc in site_configs:
         site = slug_to_site[sc.slug]
-        result = await db.execute(
+        site_inst_result = await db.execute(
             select(PiholeInstance).where(PiholeInstance.site_id == site.id)
         )
-        for inst in result.scalars().all():
+        for inst in site_inst_result.scalars().all():
             if (site.id, inst.name) not in instance_keys_seen and inst.is_active:
                 inst.is_active = False
                 deactivated_instance_keys.append(str(inst.id))
@@ -202,7 +201,7 @@ async def sync_sites_and_instances(db: AsyncSession) -> None:
         # already handled above.
         pass
     else:
-        target_main = slug_to_site[target_main_slug]
+        new_main = slug_to_site[target_main_slug]
 
         # Current Main in DB.
         result = await db.execute(
@@ -213,17 +212,17 @@ async def sync_sites_and_instances(db: AsyncSession) -> None:
         if current_main is None:
             # Fresh install or migration-created Default was just deactivated
             # as an orphan. Promote target directly.
-            target_main.is_main = True
-            logger.info("Designated site '%s' as Main.", target_main.name)
-        elif current_main.id != target_main.id:
+            new_main.is_main = True
+            logger.info("Designated site '%s' as Main.", new_main.name)
+        elif current_main.id != new_main.id:
             logger.info(
                 "Main reassignment: '%s' → '%s'. Materializing inherited "
                 "settings into new Main.",
-                current_main.name, target_main.name,
+                current_main.name, new_main.name,
             )
-            await _materialize_main_settings(db, current_main.id, target_main.id)
+            await _materialize_main_settings(db, current_main.id, new_main.id)
             current_main.is_main = False
-            target_main.is_main = True
+            new_main.is_main = True
             await db.flush()
 
     await db.commit()

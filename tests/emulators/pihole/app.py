@@ -27,12 +27,10 @@ from __future__ import annotations
 import os
 import secrets
 import time
-from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-
 
 PASSWORD = os.getenv("EMULATOR_PIHOLE_PASSWORD", "emulator-password")
 INSTANCE_NAME = os.getenv("EMULATOR_INSTANCE_NAME", "emu-pihole")

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
+from datetime import UTC
 from pathlib import Path
+from typing import cast
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from cryptography.fernet import Fernet
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -13,8 +16,6 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-
-from cryptography.fernet import Fernet
 
 from app.api import auth as auth_router
 from app.api import display as display_router
@@ -28,12 +29,27 @@ from app.api import sites as sites_router
 from app.api import stats as stats_router
 from app.api import sync as sync_router
 from app.api import version as version_router
-from app.auth import _decode_token_claims, get_current_user, get_current_user_optional, hash_password, is_current_request_readonly, is_user_locked_out, register_login_failure, register_login_success, verify_password, verify_user_password
+from app.auth import (
+    _decode_token_claims,
+    get_current_user_optional,
+    hash_password,
+    is_current_request_readonly,
+    is_user_locked_out,
+    register_login_failure,
+    register_login_success,
+    verify_password,
+    verify_user_password,
+)
 from app.config import SESSION_COOKIE_NAME, settings
 from app.database import AsyncSessionLocal, get_db
 from app.limiter import limiter
 from app.models.settings import AppSetting
 from app.models.user import RevokedToken, User
+from app.services import pihole_version_check as pihole_version_check_service
+from app.services import poll_settings as poll_settings_service
+from app.services import pushover as pushover_service
+from app.services import session_settings, sync_service
+from app.services import version_check as version_check_service
 from app.services.collector import (
     backfill_all_instances,
     cleanup_old_data,
@@ -42,15 +58,11 @@ from app.services.collector import (
     prune_inactive_state,
     reschedule_all_queries_jobs,
     schedule_site,
+)
+from app.services.collector import (
     shutdown as collector_shutdown,
 )
 from app.services.config_loader import sync_sites_and_instances
-from app.services import poll_settings as poll_settings_service
-from app.services import pushover as pushover_service
-from app.services import session_settings
-from app.services import sync_service
-from app.services import pihole_version_check as pihole_version_check_service
-from app.services import version_check as version_check_service
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -104,12 +116,12 @@ async def _ensure_encryption_key() -> None:
         # Validate the explicitly-provided key before anything touches the DB.
         try:
             Fernet(settings.encryption_key.encode())
-        except Exception:
+        except Exception as exc:
             raise RuntimeError(
                 "ENCRYPTION_KEY in .env is not a valid Fernet key. "
                 "Generate a new one with: "
                 "python3 -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
-            )
+            ) from exc
         return  # explicit key is valid — nothing more to do
 
     # No key in environment — check the database.
@@ -252,10 +264,8 @@ async def lifespan(app: FastAPI):
     # grace, a poll mid-flight can race with the engine.dispose() below
     # and error against a closed pool.
     scheduler.pause()
-    try:
+    with suppress(_asyncio.CancelledError):
         await _asyncio.sleep(2)
-    except _asyncio.CancelledError:
-        pass
     scheduler.shutdown(wait=False)
     await collector_shutdown()
     # Give in-flight background tasks a brief grace window to finish
@@ -288,7 +298,7 @@ app = FastAPI(
     redoc_url="/redoc" if settings.enable_api_docs else None,
 )
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]  # slowapi types its handler (Request, RateLimitExceeded), narrower than Starlette's (Request, Exception)
 
 
 # ── Security headers ──────────────────────────────────────────────────────────
@@ -405,8 +415,10 @@ async def login_page(request: Request):
 @limiter.limit("10/minute")
 async def login_form(request: Request, response: Response, db=Depends(get_db)):
     form = await request.form()
+    # FormData.get is typed UploadFile | str; these are plain text inputs,
+    # so the UploadFile arm never occurs — cast for typing only.
     username = form.get("username", "")
-    password = form.get("password", "")
+    password = cast(str, form.get("password", ""))
 
     from app.auth import create_access_token
     result = await db.execute(select(User).where(User.username == username, User.is_active.is_(True)))
@@ -444,13 +456,13 @@ async def logout_web(
     if session_token:
         claims = _decode_token_claims(session_token)
         if claims and claims.get("jti"):
-            from datetime import datetime, timezone
+            from datetime import datetime
             jti = claims["jti"]
             exp = claims.get("exp")
             expires_at = (
-                datetime.fromtimestamp(exp, tz=timezone.utc)
+                datetime.fromtimestamp(exp, tz=UTC)
                 if exp
-                else datetime.now(timezone.utc)
+                else datetime.now(UTC)
             )
             stmt = pg_insert(RevokedToken).values(jti=jti, expires_at=expires_at).on_conflict_do_nothing()
             await db.execute(stmt)
@@ -573,9 +585,11 @@ async def change_password_form(request: Request, db=Depends(get_db), current_use
         raise HTTPException(status_code=403, detail="This API key is read-only and cannot perform mutations.")
 
     form = await request.form()
-    current_pw = form.get("current_password", "")
-    new_pw = form.get("new_password", "")
-    confirm_pw = form.get("confirm_password", "")
+    # FormData.get is typed UploadFile | str; these are plain text inputs,
+    # so the UploadFile arm never occurs — casts for typing only.
+    current_pw = cast(str, form.get("current_password", ""))
+    new_pw = cast(str, form.get("new_password", ""))
+    confirm_pw = cast(str, form.get("confirm_password", ""))
 
     def _error(msg: str):
         return templates.TemplateResponse(
@@ -591,6 +605,9 @@ async def change_password_form(request: Request, db=Depends(get_db), current_use
 
     async with AsyncSessionLocal() as session:
         user = await session.get(User, current_user.id)
+        # current_user was just authenticated against this same database, so
+        # the primary-key lookup cannot miss. Narrowing only.
+        assert user is not None
         user.hashed_password = hash_password(new_pw)
         user.password_change_required = False
         await session.commit()

@@ -7,11 +7,10 @@ respx; the master + replicas live in a real testcontainer DB.
 """
 from __future__ import annotations
 
+import contextlib
 import io
-import uuid
 import zipfile
 
-import httpx
 import pytest
 
 
@@ -88,9 +87,10 @@ async def site(db_session):
 async def cluster(db_session, site):
     """One master + one replica with respx-friendly URLs."""
     from cryptography.fernet import Fernet
+
+    import app.models.pihole as pihole_models
     from app.config import settings
     from app.models.pihole import PiholeInstance
-    import app.models.pihole as pihole_models
 
     if not settings.encryption_key:
         settings.encryption_key = Fernet.generate_key().decode()
@@ -122,10 +122,8 @@ async def _clear_client_registry():
     client_manager._last_persisted_sid.clear()
     yield
     for key in list(client_manager._clients):
-        try:
+        with contextlib.suppress(Exception):
             await client_manager._clients[key].close()
-        except Exception:
-            pass
     client_manager._clients.clear()
     client_manager._last_persisted_sid.clear()
 

@@ -1,18 +1,17 @@
 """Tests for /api/stats — summary, history, top."""
 from __future__ import annotations
 
-import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import select
 
 
 @pytest.fixture(autouse=True)
 def _ensure_fernet_key():
     from cryptography.fernet import Fernet
-    from app.config import settings
+
     import app.models.pihole as pihole_models
+    from app.config import settings
 
     if not settings.encryption_key:
         settings.encryption_key = Fernet.generate_key().decode()
@@ -49,7 +48,7 @@ async def seed_data(db_session, instance):
     endpoints have something to chew on."""
     from app.models.pihole import QueryLog, StatsSnapshot
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     db_session.add_all([
         StatsSnapshot(
             instance_id=instance.id,

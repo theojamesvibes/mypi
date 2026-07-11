@@ -2,15 +2,14 @@
 and the YAML loader (including the wave-3 loud-fail and perms warning)."""
 from __future__ import annotations
 
+import logging
 import os
 import textwrap
-import logging
 from pathlib import Path
 
 import pytest
 
 from app import config
-
 
 # ── slugify ──────────────────────────────────────────────────────────────────
 
@@ -277,9 +276,8 @@ def test_load_site_configs_raises_on_yaml_parse_error(tmp_path: Path, caplog):
     # raises ScannerError/ParserError at the unexpected EOF.
     p = tmp_path / "broken.yml"
     p.write_text("sites: [\n  - name: A\n")
-    with caplog.at_level(logging.ERROR):
-        with pytest.raises(RuntimeError) as exc_info:
-            config.load_site_configs(str(p))
+    with caplog.at_level(logging.ERROR), pytest.raises(RuntimeError) as exc_info:
+        config.load_site_configs(str(p))
     # Error message includes file path and line/column for grep-ability.
     msg = str(exc_info.value)
     assert "Could not parse" in msg

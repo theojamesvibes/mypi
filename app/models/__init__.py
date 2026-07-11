@@ -1,7 +1,7 @@
-from app.models.user import User, ApiKey
-from app.models.site import Site, SiteSlugHistory, SiteSetting
-from app.models.pihole import PiholeInstance, StatsSnapshot, QueryLog
+from app.models.pihole import PiholeInstance, QueryLog, StatsSnapshot
 from app.models.settings import AppSetting
+from app.models.site import Site, SiteSetting, SiteSlugHistory
+from app.models.user import ApiKey, User
 
 __all__ = [
     "User",

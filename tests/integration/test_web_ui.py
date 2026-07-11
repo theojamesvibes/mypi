@@ -8,7 +8,6 @@ recognisable bytes in the response body.
 """
 from __future__ import annotations
 
-
 # ── Anonymous → /login redirect ──────────────────────────────────────────────
 
 
@@ -132,8 +131,9 @@ async def test_login_form_post_with_password_change_required_redirects_to_change
 ):
     """A user flagged for forced password change is sent to
     /change-password instead of /."""
-    from app.models.user import User
     from sqlalchemy import select
+
+    from app.models.user import User
 
     user, password = test_user
     fresh = (

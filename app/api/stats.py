@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import and_, case, distinct, func, not_, or_, select
+from sqlalchemy import ColumnElement, and_, case, distinct, func, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api._site_dep import resolve_site
@@ -77,7 +77,7 @@ async def _summary_body(
 ) -> AggregatedSummary:
     """Shared body for summary endpoints. site_id=None → all active
     instances across every site (legacy behavior)."""
-    inst_filters = [PiholeInstance.is_active.is_(True)]
+    inst_filters: list[ColumnElement[bool]] = [PiholeInstance.is_active.is_(True)]
     if site_id is not None:
         inst_filters.append(PiholeInstance.site_id == site_id)
     # Join Site so the per-instance payload can carry site name/slug for the
@@ -166,7 +166,7 @@ async def _summary_body(
 
     per_instance = []
     for inst in instances:
-        snap = snapshots.get(inst.id)
+        inst_snap = snapshots.get(inst.id)
         i_total, i_blocked, i_clients = inst_agg.get(inst.id, (0, 0, 0))
         i_pct = round(i_blocked / i_total * 100, 1) if i_total > 0 else 0.0
         site = site_by_instance.get(inst.id)
@@ -179,7 +179,7 @@ async def _summary_body(
             "vip_role": inst.vip_role,
             "is_active": inst.is_active,
             "last_seen_at": inst.last_seen_at.isoformat() if inst.last_seen_at else None,
-            "status": snap.status if snap else "unknown",
+            "status": inst_snap.status if inst_snap else "unknown",
             # Site attribution — consumed by the Combined view.
             "site_id": str(site.id) if site else None,
             "site_name": site.name if site else None,
@@ -190,7 +190,7 @@ async def _summary_body(
             "percent_blocked": i_pct,
             "unique_clients": i_clients,
             # Time-independent — from latest snapshot:
-            "domains_on_blocklist": snap.domains_on_blocklist if snap else 0,
+            "domains_on_blocklist": inst_snap.domains_on_blocklist if inst_snap else 0,
         })
 
     return AggregatedSummary(totals=totals, instances=per_instance)
@@ -204,9 +204,9 @@ async def get_summary(
     db: AsyncSession = Depends(get_db),
 ):
     if since is not None:
-        since_dt = since if since.tzinfo else since.replace(tzinfo=timezone.utc)
+        since_dt = since if since.tzinfo else since.replace(tzinfo=UTC)
     else:
-        since_dt = datetime.now(timezone.utc) - timedelta(hours=hours)
+        since_dt = datetime.now(UTC) - timedelta(hours=hours)
     return await _summary_body(db, since_dt, site_id=None)
 
 
@@ -244,10 +244,10 @@ async def get_history(
     db: AsyncSession = Depends(get_db),
 ):
     if since is not None:
-        since_dt = since if since.tzinfo else since.replace(tzinfo=timezone.utc)
+        since_dt = since if since.tzinfo else since.replace(tzinfo=UTC)
     else:
-        since_dt = datetime.now(timezone.utc) - timedelta(hours=hours)
-    now = datetime.now(timezone.utc)
+        since_dt = datetime.now(UTC) - timedelta(hours=hours)
+    now = datetime.now(UTC)
     return await _history_body(db, since_dt, now, bucket_minutes, instance_id, site_instance_ids=None)
 
 
@@ -258,13 +258,13 @@ async def _history_body(
     bucket_minutes: int,
     instance_id: uuid.UUID | None = None,
     site_instance_ids: list[uuid.UUID] | None = None,
-) -> "HistoryResponse":
+) -> HistoryResponse:
     # A bucket that had zero queries during an outage still needs to appear in
     # the response — otherwise the chart silently closes the gap and the outage
     # is invisible. Build the full contiguous bucket series via generate_series
     # and LEFT JOIN the aggregated counts, coalescing missing rows to zero.
     # date_bin (PG 14+) honours the full bucket_minutes stride.
-    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    epoch = datetime(1970, 1, 1, tzinfo=UTC)
     bucket_interval = func.make_interval(0, 0, 0, 0, 0, bucket_minutes)
 
     series_start = func.date_bin(bucket_interval, since, epoch)
@@ -325,9 +325,9 @@ async def get_top(
     db: AsyncSession = Depends(get_db),
 ):
     if since is not None:
-        since_dt = since if since.tzinfo else since.replace(tzinfo=timezone.utc)
+        since_dt = since if since.tzinfo else since.replace(tzinfo=UTC)
     else:
-        since_dt = datetime.now(timezone.utc) - timedelta(hours=hours)
+        since_dt = datetime.now(UTC) - timedelta(hours=hours)
     hide_self = await _should_hide_pihole_self(db, site_id=None)
     return await _top_body(
         db, since_dt, instance_id, limit,
@@ -438,9 +438,9 @@ async def get_summary_for_site(
     db: AsyncSession = Depends(get_db),
 ):
     if since is not None:
-        since_dt = since if since.tzinfo else since.replace(tzinfo=timezone.utc)
+        since_dt = since if since.tzinfo else since.replace(tzinfo=UTC)
     else:
-        since_dt = datetime.now(timezone.utc) - timedelta(hours=hours)
+        since_dt = datetime.now(UTC) - timedelta(hours=hours)
     return await _summary_body(db, since_dt, site_id=site.id)
 
 
@@ -455,10 +455,10 @@ async def get_history_for_site(
     db: AsyncSession = Depends(get_db),
 ):
     if since is not None:
-        since_dt = since if since.tzinfo else since.replace(tzinfo=timezone.utc)
+        since_dt = since if since.tzinfo else since.replace(tzinfo=UTC)
     else:
-        since_dt = datetime.now(timezone.utc) - timedelta(hours=hours)
-    now = datetime.now(timezone.utc)
+        since_dt = datetime.now(UTC) - timedelta(hours=hours)
+    now = datetime.now(UTC)
     scope = await _site_instance_ids(db, site.id)
     return await _history_body(db, since_dt, now, bucket_minutes, instance_id, site_instance_ids=scope)
 
@@ -474,9 +474,9 @@ async def get_top_for_site(
     db: AsyncSession = Depends(get_db),
 ):
     if since is not None:
-        since_dt = since if since.tzinfo else since.replace(tzinfo=timezone.utc)
+        since_dt = since if since.tzinfo else since.replace(tzinfo=UTC)
     else:
-        since_dt = datetime.now(timezone.utc) - timedelta(hours=hours)
+        since_dt = datetime.now(UTC) - timedelta(hours=hours)
     scope = await _site_instance_ids(db, site.id)
     hide_self = await _should_hide_pihole_self(db, site_id=site.id)
     return await _top_body(

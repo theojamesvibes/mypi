@@ -1,4 +1,3 @@
-import asyncio
 
 import logging
 
@@ -88,7 +87,7 @@ async def set_schedule(req: ScheduleRequest, user: User = Depends(require_mutati
         )
     except Exception as exc:
         logger.exception("Failed to persist sync schedule: %s", exc)
-        raise HTTPException(status_code=500, detail="Failed to save sync schedule.")
+        raise HTTPException(status_code=500, detail="Failed to save sync schedule.") from exc
     logger.info(
         "user=%s set sync schedule: interval=%dmin auto_gravity=%s",
         user.username, req.interval_minutes, req.auto_gravity,
@@ -162,7 +161,7 @@ async def set_schedule_for_site(
         )
     except Exception as exc:
         logger.exception("Failed to persist sync schedule for site %s: %s", site.slug, exc)
-        raise HTTPException(status_code=500, detail="Failed to save sync schedule.")
+        raise HTTPException(status_code=500, detail="Failed to save sync schedule.") from exc
     logger.info(
         "user=%s set sync schedule for site '%s': interval=%dmin auto_gravity=%s",
         user.username, site.name, req.interval_minutes, req.auto_gravity,

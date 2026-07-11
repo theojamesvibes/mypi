@@ -3,9 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
-
 import uuid
-from typing import Optional
 
 import httpx
 from cryptography.fernet import InvalidToken
@@ -83,7 +81,7 @@ async def _post(app_token: str, user_key: str, message: str, title: str, priorit
         return False
 
 
-async def _resolve_site_config(site_id: uuid.UUID) -> Optional[dict]:
+async def _resolve_site_config(site_id: uuid.UUID) -> dict | None:
     """Return the effective Pushover config for a site (with Main-fallback
     inheritance). None if no credentials configured at this site or Main."""
     try:

@@ -32,9 +32,9 @@ import subprocess
 import sys
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Iterator
 
 import httpx
 import pytest
@@ -152,7 +152,7 @@ def live_app() -> Iterator[str]:
     # Capture stdout/stderr to a log file so failures are diagnosable
     # from CI artifacts without piping through pytest's capture machinery.
     log_path = REPO_ROOT / "playwright-app.log"
-    log_fh = open(log_path, "w")
+    log_fh = open(log_path, "w")  # noqa: SIM115 — subprocess stdout, closed in teardown
     proc = subprocess.Popen(
         [
             sys.executable, "-m", "uvicorn", "app.main:app",
@@ -291,7 +291,7 @@ def seed_data(db_engine, db_reset_data):
 
     site_id = uuid.uuid4()
     instance_id = uuid.uuid4()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     with db_engine.begin() as conn:
         conn.execute(

@@ -73,7 +73,7 @@ async def save_display_settings(
         )
     except Exception as exc:
         logger.exception("Failed to persist display settings: %s", exc)
-        raise HTTPException(status_code=500, detail="Failed to save display settings.")
+        raise HTTPException(status_code=500, detail="Failed to save display settings.") from exc
     logger.info(
         "user=%s updated display settings: hide_pihole_self_in_top_clients=%s",
         user.username, req.hide_pihole_self_in_top_clients,

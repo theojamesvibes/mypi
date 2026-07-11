@@ -3,8 +3,9 @@ history), api/_site_dep slug-history redirect, /api/auth session-
 timeout + list-keys, /api/version + /api/display + /api/poll-settings."""
 from __future__ import annotations
 
-import pytest
+from datetime import UTC
 
+import pytest
 
 # ── /api/sites PATCH ─────────────────────────────────────────────────────────
 
@@ -35,8 +36,9 @@ async def test_patch_site_changes_slug_and_writes_history(
 ):
     """Slug change writes the old slug into site_slug_history so
     bookmarks keep working via 301."""
-    from app.models.site import SiteSlugHistory
     from sqlalchemy import select
+
+    from app.models.site import SiteSlugHistory
 
     a, _ = two_sites
     old_slug = a.slug
@@ -87,13 +89,14 @@ async def test_old_slug_resolves_via_history_redirect(
 ):
     """Hitting /api/sites/{old_slug}/something after a rename returns
     a 301 redirect to the new slug — bookmarks survive renames."""
+    from datetime import datetime
+
     from app.models.site import SiteSlugHistory
-    from datetime import datetime, timezone
 
     a, _ = two_sites
     db_session.add(SiteSlugHistory(
         old_slug="legacy-a", site_id=a.id,
-        retired_at=datetime.now(timezone.utc),
+        retired_at=datetime.now(UTC),
     ))
     await db_session.commit()
 
@@ -132,9 +135,8 @@ async def test_list_api_keys_excludes_other_users_keys(
     authed_client, db_session, test_user,
 ):
     """User can only see their own keys, not other users'."""
-    from app.auth import generate_api_key
+    from app.auth import generate_api_key, hash_password
     from app.models.user import ApiKey, User
-    from app.auth import hash_password
 
     other = User(
         username="bob", hashed_password=hash_password("p"),
@@ -259,10 +261,11 @@ async def test_delete_inactive_instance_succeeds(authed_client, db_session):
     """An is_active=False instance can be permanently deleted via DELETE
     /api/instances/{id}."""
     from cryptography.fernet import Fernet
+
+    import app.models.pihole as pihole_models
     from app.config import settings
     from app.models.pihole import PiholeInstance
     from app.models.site import Site
-    import app.models.pihole as pihole_models
 
     if not settings.encryption_key:
         settings.encryption_key = Fernet.generate_key().decode()
@@ -288,10 +291,11 @@ async def test_delete_inactive_instance_succeeds(authed_client, db_session):
 async def test_delete_active_instance_returns_409(authed_client, db_session):
     """Active instances must be removed from YAML first."""
     from cryptography.fernet import Fernet
+
+    import app.models.pihole as pihole_models
     from app.config import settings
     from app.models.pihole import PiholeInstance
     from app.models.site import Site
-    import app.models.pihole as pihole_models
 
     if not settings.encryption_key:
         settings.encryption_key = Fernet.generate_key().decode()

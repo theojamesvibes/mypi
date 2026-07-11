@@ -18,7 +18,7 @@ import ssl
 import uuid
 import zipfile
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 import httpx
@@ -406,7 +406,7 @@ async def run_sync(
         raise RuntimeError(f"A sync is already in progress for site '{site_name}'.")
 
     async with lock:
-        _state_by_site[sid_key] = SyncState(status="running", started_at=datetime.now(timezone.utc))
+        _state_by_site[sid_key] = SyncState(status="running", started_at=datetime.now(UTC))
         results: list[InstanceSyncResult] = []
 
         try:
@@ -552,7 +552,7 @@ async def run_sync(
             _state_by_site[sid_key] = SyncState(
                 status=overall,
                 started_at=_state_by_site[sid_key].started_at,
-                completed_at=datetime.now(timezone.utc),
+                completed_at=datetime.now(UTC),
                 master=master.name,
                 master_vip_role=master.vip_role,
                 results=results,
@@ -563,7 +563,7 @@ async def run_sync(
             _state_by_site[sid_key] = SyncState(
                 status="error",
                 started_at=_state_by_site[sid_key].started_at,
-                completed_at=datetime.now(timezone.utc),
+                completed_at=datetime.now(UTC),
                 error=str(exc),
                 results=results,
             )

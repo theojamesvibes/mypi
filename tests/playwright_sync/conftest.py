@@ -12,17 +12,18 @@ Required env vars (set by ui-tests workflow's `playwright-sync` job):
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import socket
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
+from typing import Any
 
 import httpx
 import pytest
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TEST_YAML = Path(__file__).parent / "pihole_instances.sync.yml"
@@ -73,13 +74,15 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-def _spawn_emulator(name: str, port: int, log_basename: str) -> tuple[subprocess.Popen, "Any"]:
+def _spawn_emulator(name: str, port: int, log_basename: str) -> tuple[subprocess.Popen, Any]:
     env = os.environ.copy()
     env["EMULATOR_PIHOLE_PASSWORD"] = EMULATOR_PASSWORD
     env["EMULATOR_INSTANCE_NAME"] = name
 
     log_path = REPO_ROOT / log_basename
-    log_fh = open(log_path, "w")
+    # Held open as the subprocess's stdout for its whole lifetime; closed
+    # in the fixture teardown after terminate().
+    log_fh = open(log_path, "w")  # noqa: SIM115
     proc = subprocess.Popen(
         [
             sys.executable, "-m", "uvicorn",
@@ -149,7 +152,7 @@ def live_app(emulators) -> Iterator[str]:
     migrate_env = env.copy()
     migrate_env["DATABASE_URL"] = sync_db_url
     subprocess.run(
-        ["alembic", "upgrade", "head"],
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
         cwd=REPO_ROOT, env=migrate_env, check=True,
     )
 
@@ -157,7 +160,8 @@ def live_app(emulators) -> Iterator[str]:
     base_url = f"http://127.0.0.1:{port}"
 
     log_path = REPO_ROOT / "playwright-sync-app.log"
-    log_fh = open(log_path, "w")
+    # Held open as the app subprocess's stdout; closed in teardown.
+    log_fh = open(log_path, "w")  # noqa: SIM115
     proc = subprocess.Popen(
         [
             sys.executable, "-m", "uvicorn", "app.main:app",
@@ -253,7 +257,5 @@ def reset_emulators(emulators):
     keeps the contract simple.)
     """
     for url in (emulators["master"], emulators["replica"]):
-        try:
+        with contextlib.suppress(Exception):
             httpx.post(f"{url}/__test__/reset", timeout=2.0)
-        except Exception:
-            pass

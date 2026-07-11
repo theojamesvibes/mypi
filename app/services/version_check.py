@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -112,7 +112,7 @@ async def check_now() -> None:
             resp.raise_for_status()
             latest = resp.text.strip()
         _latest_version = latest
-        _checked_at = datetime.now(timezone.utc)
+        _checked_at = datetime.now(UTC)
         await _persist()
         logger.info("Version check complete — latest: %s (running: %s)", latest, _current_version)
     except Exception as exc:

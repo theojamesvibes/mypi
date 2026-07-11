@@ -14,12 +14,9 @@ SQLAlchemy session, real bcrypt.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-
-import pytest
+from datetime import UTC, datetime, timedelta
 
 from app.config import settings
-
 
 # ── Threshold + lockout window ──────────────────────────────────────────────
 
@@ -51,7 +48,7 @@ async def test_consecutive_failures_lock_the_account(client, test_user, db_sessi
     await db_session.refresh(user)
     assert user.failed_login_count == threshold
     assert user.failed_login_lockout_until is not None
-    assert user.failed_login_lockout_until > datetime.now(timezone.utc)
+    assert user.failed_login_lockout_until > datetime.now(UTC)
 
 
 async def test_locked_account_rejects_correct_password(
@@ -64,7 +61,7 @@ async def test_locked_account_rejects_correct_password(
 
     # Stamp a lockout directly so the test isn't sensitive to the
     # threshold setting.
-    user.failed_login_lockout_until = datetime.now(timezone.utc) + timedelta(minutes=15)
+    user.failed_login_lockout_until = datetime.now(UTC) + timedelta(minutes=15)
     user.failed_login_count = settings.login_lockout_threshold
     await db_session.commit()
 
@@ -84,7 +81,7 @@ async def test_lockout_response_does_not_leak_state(
     they've successfully locked a target account."""
     user, _ = test_user
 
-    user.failed_login_lockout_until = datetime.now(timezone.utc) + timedelta(minutes=15)
+    user.failed_login_lockout_until = datetime.now(UTC) + timedelta(minutes=15)
     await db_session.commit()
 
     locked = await client.post(
@@ -141,7 +138,7 @@ async def test_lockout_clears_after_window_expires(
     password during that window logs in successfully."""
     user, raw_password = test_user
 
-    user.failed_login_lockout_until = datetime.now(timezone.utc) - timedelta(minutes=1)
+    user.failed_login_lockout_until = datetime.now(UTC) - timedelta(minutes=1)
     user.failed_login_count = settings.login_lockout_threshold
     await db_session.commit()
 

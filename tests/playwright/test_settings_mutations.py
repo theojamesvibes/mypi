@@ -20,7 +20,6 @@ import re
 import httpx
 from playwright.sync_api import Page, expect
 
-
 # ── Sync schedule ──────────────────────────────────────────────────────────
 
 

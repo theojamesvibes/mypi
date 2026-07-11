@@ -3,9 +3,6 @@ notifications/sync/poll/session settings pages all rely on:
 session_settings, poll_settings, site_settings."""
 from __future__ import annotations
 
-import pytest
-
-
 # ── session_settings (timeout) ───────────────────────────────────────────────
 
 

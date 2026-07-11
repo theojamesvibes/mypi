@@ -109,11 +109,11 @@ def test_collector_writes_query_logs(
     live_app, base_url: str, db_engine, wait_for_first_poll: bool,
 ):
     """The query backfill should land emulator queries in query_logs."""
-    from sqlalchemy import text
-
     # The query poll fires every 2 s; give it a few cycles to land
     # rows after the first stats poll completes.
     import time as _time
+
+    from sqlalchemy import text
     deadline = _time.monotonic() + 20.0
     count = 0
     while _time.monotonic() < deadline:

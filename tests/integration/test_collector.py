@@ -1,12 +1,10 @@
 """Integration tests for collector.py functions that touch the DB."""
 from __future__ import annotations
 
-import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
-
 
 # ── Reset collector state between tests ──────────────────────────────────────
 
@@ -48,9 +46,10 @@ async def site(db_session):
 @pytest.fixture
 async def instance(db_session, site):
     from cryptography.fernet import Fernet
+
+    import app.models.pihole as pihole_models
     from app.config import settings
     from app.models.pihole import PiholeInstance
-    import app.models.pihole as pihole_models
 
     if not settings.encryption_key:
         settings.encryption_key = Fernet.generate_key().decode()
@@ -117,11 +116,11 @@ async def test_cleanup_old_data_removes_rows_past_retention(
     """Stats snapshots, query logs, and revoked-token rows older than
     DATA_RETENTION_DAYS get deleted nightly."""
     from app.config import settings
-    from app.models.pihole import StatsSnapshot, QueryLog
+    from app.models.pihole import QueryLog, StatsSnapshot
     from app.models.user import RevokedToken
     from app.services import collector
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=settings.data_retention_days + 1)
+    cutoff = datetime.now(UTC) - timedelta(days=settings.data_retention_days + 1)
 
     db_session.add_all([
         StatsSnapshot(
@@ -134,7 +133,7 @@ async def test_cleanup_old_data_removes_rows_past_retention(
         RevokedToken(jti="ancient-jti", expires_at=cutoff),
     ])
     # Recent rows must SURVIVE.
-    recent = datetime.now(timezone.utc) - timedelta(days=1)
+    recent = datetime.now(UTC) - timedelta(days=1)
     db_session.add_all([
         StatsSnapshot(
             instance_id=instance.id, collected_at=recent, status="online",

@@ -2,8 +2,6 @@
 that protects creds at rest, the masking helper, and alert filtering."""
 from __future__ import annotations
 
-import json
-
 import pytest
 from cryptography.fernet import Fernet
 
@@ -12,8 +10,8 @@ from cryptography.fernet import Fernet
 def _ensure_fernet_key():
     """Fernet encryption needs an active key — ensure one exists before
     any encrypt/decrypt call."""
-    from app.config import settings
     import app.models.pihole as pihole_models
+    from app.config import settings
 
     if not settings.encryption_key:
         settings.encryption_key = Fernet.generate_key().decode()

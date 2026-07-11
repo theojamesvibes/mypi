@@ -38,10 +38,10 @@ async def resolve_site(
     if site is not None:
         return site
 
-    result = await db.execute(
+    history_result = await db.execute(
         select(SiteSlugHistory).where(SiteSlugHistory.old_slug == slug)
     )
-    history = result.scalar_one_or_none()
+    history = history_result.scalar_one_or_none()
     if history is not None:
         current = await db.execute(
             select(Site).where(Site.id == history.site_id, Site.is_active.is_(True))

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
@@ -64,7 +64,7 @@ async def _query_stream_sse(
                         except asyncio.QueueEmpty:
                             break
                     yield b"event: tick\ndata: \n\n"
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield b": keepalive\n\n"
     except query_stream.SubscriberLimitReached:
         yield b"event: error\ndata: subscriber limit reached\n\n"
@@ -115,7 +115,7 @@ async def get_queries(
     db: AsyncSession = Depends(get_db),
 ):
     if since is None:
-        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+        since = datetime.now(UTC) - timedelta(hours=hours)
 
     base_q = (
         select(QueryLog, PiholeInstance.name.label("instance_name"))
@@ -186,7 +186,7 @@ async def get_client_summary(
 ):
     """Return one row per unique client with aggregate query counts."""
     if since is None:
-        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+        since = datetime.now(UTC) - timedelta(hours=hours)
 
     q = (
         select(
@@ -256,7 +256,7 @@ async def get_queries_for_site(
     db: AsyncSession = Depends(get_db),
 ):
     if since is None:
-        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+        since = datetime.now(UTC) - timedelta(hours=hours)
 
     site_ids = await _site_instance_ids(db, site.id)
     if not site_ids:
@@ -327,7 +327,7 @@ async def get_client_summary_for_site(
     db: AsyncSession = Depends(get_db),
 ):
     if since is None:
-        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+        since = datetime.now(UTC) - timedelta(hours=hours)
 
     site_ids = await _site_instance_ids(db, site.id)
     if not site_ids:

@@ -6,7 +6,7 @@ import logging
 import secrets
 import uuid
 from contextvars import ContextVar
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import bcrypt
 from fastapi import Cookie, Depends, Header, HTTPException, Request, status
@@ -76,11 +76,11 @@ def is_user_locked_out(user: User | None) -> bool:
     changes. A None user always returns False; the caller handles the
     "no such user" case via the dummy-hash timing-equalisation path.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     if user is None or user.failed_login_lockout_until is None:
         return False
-    return user.failed_login_lockout_until > datetime.now(timezone.utc)
+    return user.failed_login_lockout_until > datetime.now(UTC)
 
 
 async def register_login_failure(user: User | None, db) -> None:
@@ -94,14 +94,14 @@ async def register_login_failure(user: User | None, db) -> None:
 
     No-op when settings.login_lockout_threshold <= 0 (disabled).
     """
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
     if user is None or settings.login_lockout_threshold <= 0:
         return
     user.failed_login_count = (user.failed_login_count or 0) + 1
     if user.failed_login_count >= settings.login_lockout_threshold:
         user.failed_login_lockout_until = (
-            datetime.now(timezone.utc)
+            datetime.now(UTC)
             + timedelta(minutes=settings.login_lockout_minutes)
         )
     await db.commit()
@@ -151,7 +151,7 @@ def _jwt_algorithm() -> str:
 
 def create_access_token(subject: str, expire_minutes: int | None = None) -> str:
     minutes = expire_minutes if expire_minutes is not None else settings.access_token_expire_minutes
-    expire = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+    expire = datetime.now(UTC) + timedelta(minutes=minutes)
     jti = str(uuid.uuid4())
     return jwt.encode(
         {"sub": subject, "exp": expire, "jti": jti},
@@ -255,7 +255,7 @@ async def get_current_user(
                 # would commit a write transaction per API call (heavy for
                 # iOS clients polling stats). Once-per-minute resolution is
                 # plenty for the "last used" UI.
-                now = datetime.now(timezone.utc)
+                now = datetime.now(UTC)
                 last_used_stale = (
                     api_key.last_used_at is None
                     or (now - api_key.last_used_at).total_seconds()

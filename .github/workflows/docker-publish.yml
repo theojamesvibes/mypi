@@ -10,9 +10,17 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
+# Queue publishes per ref rather than cancelling — aborting a half-pushed
+# multi-arch manifest is worse than waiting out the previous run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    # Generous ceiling: the arm64 leg runs under QEMU emulation.
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
@@ -40,6 +48,12 @@ jobs:
             type=ref,event=branch
             type=sha,prefix=sha-,format=short
 
+      # QEMU provides the arm64 emulation for cross-building on the amd64
+      # runner. The build is pip-wheel-only (no source compiles), so the
+      # emulated leg stays fast.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4.2.0
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4.2.0
 
@@ -47,6 +61,7 @@ jobs:
         uses: docker/build-push-action@v7.3.0
         with:
           context: .
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

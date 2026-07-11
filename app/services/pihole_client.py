@@ -5,7 +5,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -126,7 +126,7 @@ class PiholeClient:
         self._no_auth = False
         self._last_backoff_warn = 0.0
 
-    async def __aenter__(self) -> "PiholeClient":
+    async def __aenter__(self) -> PiholeClient:
         await self.open()
         return self
 
@@ -454,7 +454,7 @@ class PiholeClient:
         queries = []
         for item in queries_raw:
             try:
-                ts = datetime.fromtimestamp(item.get("time", 0), tz=timezone.utc)
+                ts = datetime.fromtimestamp(item.get("time", 0), tz=UTC)
                 reply = item.get("reply", {}) or {}
                 client = item.get("client", {}) or {}
                 queries.append(
@@ -477,6 +477,10 @@ class PiholeClient:
 
     async def get_domain_list_status(self, domain: str) -> dict[str, bool]:
         """Return {in_deny, in_allow} by checking both exact lists in parallel."""
+        # Explicit annotations: mypy can't infer the unpacked element types
+        # from gather(..., return_exceptions=True) when the coroutines return Any.
+        deny_data: Any
+        allow_data: Any
         deny_data, allow_data = await asyncio.gather(
             self._get("/api/domains/deny/exact"),
             self._get("/api/domains/allow/exact"),

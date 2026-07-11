@@ -82,9 +82,10 @@ async def test_change_password_clears_change_required_flag(
 ):
     """After a successful change, password_change_required must be
     cleared so the user isn't prompted again on the next login."""
+    from sqlalchemy import select
+
     from app.database import AsyncSessionLocal
     from app.models.user import User
-    from sqlalchemy import select
 
     user, old_pw = test_user
     user.password_change_required = True

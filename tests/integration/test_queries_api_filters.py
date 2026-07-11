@@ -2,7 +2,7 @@
 client-summary endpoint. Complements test_queries.py (SSE) from PR 5."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -10,8 +10,9 @@ import pytest
 @pytest.fixture(autouse=True)
 def _ensure_fernet_key():
     from cryptography.fernet import Fernet
-    from app.config import settings
+
     import app.models.pihole as pihole_models
+    from app.config import settings
 
     if not settings.encryption_key:
         settings.encryption_key = Fernet.generate_key().decode()
@@ -39,7 +40,7 @@ async def site_with_queries(db_session):
     await db_session.commit()
     await db_session.refresh(inst)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     rows = [
         QueryLog(
             instance_id=inst.id,

@@ -3,7 +3,6 @@ mask-on-read, validate, test endpoint rate-limited."""
 from __future__ import annotations
 
 import pytest
-import respx
 
 
 @pytest.fixture

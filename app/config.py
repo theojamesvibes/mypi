@@ -253,7 +253,7 @@ def load_site_configs(path: str | None = None) -> list[SiteConfig]:
     first flagged one wins and the rest are logged as demoted.
     """
     logger = logging.getLogger(__name__)
-    config_path = path or os.getenv("PIHOLE_CONFIG_PATH", "pihole_instances.yml")
+    config_path = path if path else os.getenv("PIHOLE_CONFIG_PATH", "pihole_instances.yml")
     p = Path(config_path)
     if not p.exists():
         return []
@@ -378,4 +378,4 @@ def load_instance_configs(path: str | None = None) -> list[PiholeInstanceConfig]
     return []
 
 
-settings = Settings()
+settings = Settings()  # type: ignore[call-arg]  # required fields (database_url, secret_key) come from env/.env at runtime

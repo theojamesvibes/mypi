@@ -84,7 +84,9 @@ async def get_domain_status(
         raw = await client.get_domain_list_status(domain)
     except Exception as exc:
         logger.exception("Failed to check domain status on master %s: %s", master.name, exc)
-        raise HTTPException(status_code=502, detail="Failed to check domain status on master Pi-hole.")
+        raise HTTPException(
+            status_code=502, detail="Failed to check domain status on master Pi-hole.",
+        ) from exc
 
     in_deny = raw["in_deny"]
     in_allow = raw["in_allow"]

@@ -9,8 +9,6 @@ let _drillPage = 1;
 let _drillHours = 24;
 let _drillSince = null;   // ISO string when "today" mode is active; null otherwise
 let _drillModal = null;
-let _searchPage = 1;
-let _searchModal = null;
 const _topTableDrillData = {};
 
 // Delegated click handler for drill-row entries in top tables
@@ -1287,91 +1285,6 @@ function renderDrillPagination(current, total) {
     if (p === '…') return `<span class="btn btn-sm btn-outline-secondary disabled">…</span>`;
     const active = p === current ? 'btn-secondary' : 'btn-outline-secondary';
     return `<button class="btn btn-sm ${active}" onclick="loadDrillPage(${p})">${p}</button>`;
-  }).join('');
-}
-
-// ─── Global search ────────────────────────────────────────────────────────────
-
-function openSearch() {
-  if (!_searchModal) {
-    _searchModal = new bootstrap.Modal(document.getElementById('searchModal'));
-  }
-  _searchModal.show();
-  // Focus the input after show
-  document.getElementById('searchModal').addEventListener('shown.bs.modal', () => {
-    document.getElementById('s-domain').focus();
-  }, { once: true });
-}
-
-async function runSearch(page) {
-  _searchPage = page || 1;
-  const domain = document.getElementById('s-domain')?.value.trim() || '';
-  const client = document.getElementById('s-client')?.value.trim() || '';
-  const filter = document.getElementById('s-filter')?.value || '';
-  const hours = document.getElementById('s-hours')?.value || 24;
-
-  const params = new URLSearchParams({ page: _searchPage, page_size: 50, hours });
-  if (domain) params.set('domain', domain);
-  if (client) params.set('client', client);
-  if (filter === 'blocked') params.set('blocked', 'true');
-  if (filter === 'permitted') params.set('blocked', 'false');
-
-  document.getElementById('s-count').textContent = 'Searching…';
-  document.getElementById('s-tbody').innerHTML =
-    '<tr><td colspan="7" class="text-center text-muted py-3">Searching…</td></tr>';
-
-  try {
-    const data = await apiFetch(window.siteApiUrl(`/queries?${params}`));
-    if (!data) return;
-
-    const totalPages = Math.ceil(data.total / data.page_size);
-    document.getElementById('s-count').textContent =
-      `${fmtNum(data.total)} results — page ${_searchPage} of ${Math.max(1, totalPages)}`;
-
-    document.getElementById('s-tbody').innerHTML = data.items.length
-      ? data.items.map(q => `
-          <tr>
-            <td class="text-nowrap small">${fmtTime(q.timestamp)}</td>
-            <td><span class="badge rounded-pill" style="background:#6c757d;font-weight:500;">${escHtml(q.instance_name)}</span></td>
-            <td class="text-truncate" style="max-width:180px;" title="${escHtml(q.domain || '')}">${escHtml(q.domain || '—')}</td>
-            <td><code class="small">${escHtml(q.query_type || '—')}</code></td>
-            <td class="small">${escHtml(q.client_name || q.client_ip || '—')}</td>
-            <td>${statusPill(q.status)}</td>
-            <td class="text-end small">${q.reply_time_ms != null ? Number(q.reply_time_ms).toFixed(1) : '—'}</td>
-          </tr>
-        `).join('')
-      : '<tr><td colspan="7" class="text-center text-muted py-3">No results found.</td></tr>';
-
-    renderSearchPagination(totalPages);
-  } catch (err) {
-    console.error('Search error:', err);
-    document.getElementById('s-count').textContent = 'Error — see console';
-  }
-}
-
-function renderSearchPagination(total) {
-  const el = document.getElementById('s-pagination');
-  if (!el) return;
-  if (total <= 1) { el.innerHTML = ''; return; }
-
-  const current = _searchPage;
-  let pages = [];
-  if (total <= 7) {
-    pages = Array.from({ length: total }, (_, i) => i + 1);
-  } else {
-    pages = [1];
-    const start = Math.max(2, current - 2);
-    const end = Math.min(total - 1, current + 2);
-    if (start > 2) pages.push('…');
-    for (let p = start; p <= end; p++) pages.push(p);
-    if (end < total - 1) pages.push('…');
-    pages.push(total);
-  }
-
-  el.innerHTML = pages.map(p => {
-    if (p === '…') return `<span class="btn btn-sm btn-outline-secondary disabled">…</span>`;
-    const active = p === current ? 'btn-secondary' : 'btn-outline-secondary';
-    return `<button class="btn btn-sm ${active}" onclick="runSearch(${p})">${p}</button>`;
   }).join('');
 }
 

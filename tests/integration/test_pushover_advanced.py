@@ -11,8 +11,9 @@ import pytest
 @pytest.fixture(autouse=True)
 def _ensure_fernet_key():
     from cryptography.fernet import Fernet
-    from app.config import settings
+
     import app.models.pihole as pihole_models
+    from app.config import settings
 
     if not settings.encryption_key:
         settings.encryption_key = Fernet.generate_key().decode()
@@ -70,6 +71,7 @@ async def test_send_returns_false_on_transport_error(respx_mock):
     """A network error during _post is logged and swallowed — the
     scheduler tick mustn't crash because Pushover is unreachable."""
     import httpx
+
     from app.services import pushover
 
     pushover._enabled = True

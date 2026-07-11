@@ -46,11 +46,12 @@ else:
     # tables already in place.
     from sqlalchemy import create_engine
 
+    import app.models.pihole  # noqa: F401
+    import app.models.settings  # noqa: F401
+    import app.models.site  # noqa: F401
+
     # Importing the model modules registers their tables on Base.metadata.
     import app.models.user  # noqa: F401
-    import app.models.pihole  # noqa: F401
-    import app.models.site  # noqa: F401
-    import app.models.settings  # noqa: F401
     from app.database import Base
 
     _sync_engine = create_engine(sync_url)

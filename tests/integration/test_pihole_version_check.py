@@ -29,13 +29,37 @@ def test_compute_update_available_with_no_cached_returns_none():
     assert pihole_version_check.compute_update_available("6.4.2", "core") is None
 
 
-def test_compute_update_available_compares_strings(monkeypatch):
+def test_compute_update_available_compares_numerically(monkeypatch):
     from app.services import pihole_version_check
     monkeypatch.setattr(pihole_version_check, "_latest", {
-        "core": "6.4.2", "ftl": "6.6.1", "web": "6.5",
+        "core": "6.4.2", "ftl": "6.6.1", "web": "6.10",
     })
     assert pihole_version_check.compute_update_available("6.4.2", "core") is False
     assert pihole_version_check.compute_update_available("6.4.1", "core") is True
+    # Numeric ordering, not string: "6.9" < "6.10". A string compare would
+    # get both of these wrong.
+    assert pihole_version_check.compute_update_available("6.9", "web") is True
+    assert pihole_version_check.compute_update_available("6.10", "web") is False
+
+
+def test_compute_update_available_newer_than_latest_is_not_flagged(monkeypatch):
+    """Running ahead of the cached latest (stale cache mid-release, beta
+    build) must not show a phantom "update available"."""
+    from app.services import pihole_version_check
+    monkeypatch.setattr(pihole_version_check, "_latest", {"core": "6.4.2"})
+    assert pihole_version_check.compute_update_available("6.5.0", "core") is False
+    # "v" prefix and pre-release suffixes parse to the numeric core.
+    assert pihole_version_check.compute_update_available("v6.4.2", "core") is False
+
+
+def test_compute_update_available_unparseable_falls_back_to_inequality(monkeypatch):
+    """FTL vDev builds don't parse — fall back to plain != so a dev build
+    still shows as differing from the release."""
+    from app.services import pihole_version_check
+    monkeypatch.setattr(pihole_version_check, "_latest", {"ftl": "6.6.1"})
+    assert pihole_version_check.compute_update_available("vDev-abc123", "ftl") is True
+    monkeypatch.setattr(pihole_version_check, "_latest", {"ftl": "vDev-abc123"})
+    assert pihole_version_check.compute_update_available("vDev-abc123", "ftl") is False
 
 
 async def test_check_now_fetches_three_repos_and_strips_v(respx_mock):

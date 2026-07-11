@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Callable
+from collections.abc import Callable
 
 from app.database import AsyncSessionLocal
 from app.services.site_settings import get_main_site_id, get_setting, set_setting

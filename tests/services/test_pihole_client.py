@@ -13,15 +13,12 @@ import time
 
 import httpx
 import pytest
-import respx
 
 from app.services.pihole_client import (
     PiholeClient,
-    PiholeQuery,
     PiholeSummary,
     PiholeVersionInfo,
 )
-
 
 PIHOLE = "http://pihole.test"
 
@@ -372,9 +369,11 @@ async def test_post_teleporter_logs_response_body_on_4xx(
         400,
         json={"error": {"key": "bad_request", "message": "gravity database is locked"}},
     )
-    with caplog.at_level(logging.ERROR, logger="app.services.pihole_client"):
-        with pytest.raises(httpx.HTTPStatusError):
-            await client.post_teleporter(b"PK\x03\x04zip")
+    with (
+        caplog.at_level(logging.ERROR, logger="app.services.pihole_client"),
+        pytest.raises(httpx.HTTPStatusError),
+    ):
+        await client.post_teleporter(b"PK\x03\x04zip")
     assert any(
         "gravity database is locked" in rec.getMessage()
         and "HTTP 400" in rec.getMessage()

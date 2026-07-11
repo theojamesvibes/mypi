@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 from sqlalchemy import select
@@ -44,18 +44,39 @@ def get_status() -> dict:
     }
 
 
-def compute_update_available(installed: str | None, component: str) -> bool | None:
-    """Compare installed version string against cached latest.
+def _version_tuple(v: str) -> tuple[int, ...] | None:
+    """Parse "6.10.2" / "v6.10.2" / "6.10.2-rc1" into (6, 10, 2).
 
-    Returns None when the latest version is not yet known so callers can
-    distinguish "not checked yet" from "up to date / behind".
+    Returns None for strings without a leading numeric dotted core (e.g.
+    FTL "vDev-..." builds) so callers can fall back rather than mis-order.
+    """
+    core = v.strip().lstrip("v").split("-")[0].split("+")[0]
+    try:
+        return tuple(int(p) for p in core.split("."))
+    except ValueError:
+        return None
+
+
+def compute_update_available(installed: str | None, component: str) -> bool | None:
+    """Compare installed version against cached latest, numerically.
+
+    Numeric compare, not string: "6.9" < "6.10" must hold, and an instance
+    running *newer* than the cached latest (stale cache mid-release, beta
+    builds) must not be flagged. Unparseable versions (vDev builds) fall
+    back to plain inequality. Returns None when the latest version is not
+    yet known so callers can distinguish "not checked yet" from
+    "up to date / behind".
     """
     if not installed:
         return None
     latest = _latest.get(component)
     if not latest:
         return None
-    return installed != latest
+    installed_t = _version_tuple(installed)
+    latest_t = _version_tuple(latest)
+    if installed_t is None or latest_t is None:
+        return installed != latest
+    return installed_t < latest_t
 
 
 async def load_settings() -> None:
@@ -133,7 +154,7 @@ async def check_now() -> None:
                     new_latest[component] = _latest.get(component, "")
         versions_changed = new_latest != _latest
         _latest = new_latest
-        _checked_at = datetime.now(timezone.utc)
+        _checked_at = datetime.now(UTC)
         await _persist()
         logger.info(
             "Pi-hole version check complete — core=%s, ftl=%s, web=%s",

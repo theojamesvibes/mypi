@@ -60,7 +60,7 @@ async def save_settings(
         )
     except Exception as exc:
         logger.exception("Failed to persist Pushover settings: %s", exc)
-        raise HTTPException(status_code=500, detail="Failed to save notification settings.")
+        raise HTTPException(status_code=500, detail="Failed to save notification settings.") from exc
     logger.info("user=%s updated Pushover settings (enabled=%s)", user.username, req.enabled)
     return pushover_service.get_settings()
 

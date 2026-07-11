@@ -3,14 +3,29 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from cryptography.fernet import Fernet, InvalidToken
-from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, UniqueConstraint, func
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import TypeDecorator
 
 from app.database import Base
+
+if TYPE_CHECKING:
+    from app.models.site import Site
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +98,7 @@ class PiholeInstance(Base):
     update_available_ftl: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     update_available_web: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
-    site: Mapped["Site"] = relationship("Site", back_populates="instances")
+    site: Mapped[Site] = relationship("Site", back_populates="instances")
     snapshots: Mapped[list[StatsSnapshot]] = relationship(
         "StatsSnapshot", back_populates="instance", cascade="all, delete-orphan"
     )

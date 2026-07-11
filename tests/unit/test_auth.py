@@ -9,7 +9,6 @@ from jose import jwt
 from app import auth
 from app.config import settings
 
-
 # ── bcrypt password hashing ──────────────────────────────────────────────────
 
 

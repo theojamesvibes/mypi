@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -133,7 +133,7 @@ async def patch_site(
         try:
             validate_slug(new_slug, f"PATCH site '{site.name}'")
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         # Reject if an active site already owns that slug.
         conflict = await db.execute(
@@ -153,7 +153,7 @@ async def patch_site(
         db.add(SiteSlugHistory(
             old_slug=site.slug,
             site_id=site.id,
-            retired_at=datetime.now(timezone.utc),
+            retired_at=datetime.now(UTC),
         ))
         logger.info(
             "user=%s renaming slug for site '%s': %s → %s",

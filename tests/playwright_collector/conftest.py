@@ -29,12 +29,11 @@ import socket
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 import httpx
 import pytest
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TEST_YAML = Path(__file__).parent / "pihole_instances.emulator.yml"
@@ -108,7 +107,7 @@ def pihole_emulator() -> Iterator[str]:
     env["EMULATOR_INSTANCE_NAME"] = "emu-pihole-1"
 
     log_path = REPO_ROOT / "playwright-emulator.log"
-    log_fh = open(log_path, "w")
+    log_fh = open(log_path, "w")  # noqa: SIM115 — subprocess stdout, closed in teardown
     proc = subprocess.Popen(
         [
             sys.executable, "-m", "uvicorn",
@@ -170,7 +169,7 @@ def live_app(pihole_emulator) -> Iterator[str]:
     base_url = f"http://127.0.0.1:{port}"
 
     log_path = REPO_ROOT / "playwright-collector-app.log"
-    log_fh = open(log_path, "w")
+    log_fh = open(log_path, "w")  # noqa: SIM115 — subprocess stdout, closed in teardown
     proc = subprocess.Popen(
         [
             sys.executable, "-m", "uvicorn", "app.main:app",

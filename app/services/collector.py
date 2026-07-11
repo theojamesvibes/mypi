@@ -26,22 +26,20 @@ import logging
 import ssl
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 
 import httpx
-
-from sqlalchemy import delete, func, select
+from sqlalchemy import CursorResult, delete, func, select
 
 from app.config import settings
 from app.database import AsyncSessionLocal
 from app.models.pihole import PiholeInstance, QueryLog, StatsSnapshot
 from app.models.site import Site
 from app.models.user import RevokedToken
-from app.services import pihole_version_check
+from app.services import pihole_version_check, query_stream, sync_service
 from app.services import pushover as pushover_service
-from app.services import query_stream
-from app.services import sync_service
-from app.services.client_manager import close_client, close_all_clients, get_client, save_sid
+from app.services.client_manager import close_all_clients, close_client, get_client, save_sid
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +158,7 @@ def _breaker_allows(key: str, name: str) -> bool:
     until = _cooldown_until.get(key)
     if until is None:
         return True
-    if datetime.now(timezone.utc) >= until:
+    if datetime.now(UTC) >= until:
         logger.info("Circuit breaker probe for %s (cooldown elapsed)", name)
         return True
     return False
@@ -186,7 +184,7 @@ def _breaker_failure(key: str, name: str) -> None:
     count = _consec_failures.get(key, 0) + 1
     _consec_failures[key] = count
     if count >= _CIRCUIT_FAIL_THRESHOLD:
-        _cooldown_until[key] = datetime.now(timezone.utc) + _CIRCUIT_COOLDOWN
+        _cooldown_until[key] = datetime.now(UTC) + _CIRCUIT_COOLDOWN
         logger.warning(
             "Circuit breaker tripped for %s (%d consecutive failures) — "
             "cooling down for %s", name, count, _CIRCUIT_COOLDOWN,
@@ -423,11 +421,12 @@ async def _check_vip_state(
             if inst.id == current_active_id:
                 continue
             streak = _vip_advance_streak.get(str(inst.id), 0)
-            if streak >= _VIP_TRANSFER_CONFIRM_POLLS:
-                # Prefer the configured vip_master if multiple nodes
-                # qualify — closest match to "the cluster's normal state."
-                if challenger is None or inst.vip_role == "master":
-                    challenger = inst
+            # Prefer the configured vip_master if multiple nodes
+            # qualify — closest match to "the cluster's normal state."
+            if streak >= _VIP_TRANSFER_CONFIRM_POLLS and (
+                challenger is None or inst.vip_role == "master"
+            ):
+                challenger = inst
 
         if challenger is not None and challenger.id != current_active_id:
             old_name = (
@@ -508,7 +507,7 @@ async def _poll_stats_for(
         await save_sid(instance.id, client.sid)
         snapshot = StatsSnapshot(
             instance_id=instance.id,
-            collected_at=datetime.now(timezone.utc),
+            collected_at=datetime.now(UTC),
             status="online",
             dns_queries_today=summary.dns_queries_today,
             queries_blocked=summary.queries_blocked,
@@ -522,7 +521,7 @@ async def _poll_stats_for(
     except _CircuitOpen:
         snapshot = StatsSnapshot(
             instance_id=instance.id,
-            collected_at=datetime.now(timezone.utc),
+            collected_at=datetime.now(UTC),
             status="offline",
         )
     except Exception as exc:
@@ -533,7 +532,7 @@ async def _poll_stats_for(
             _breaker_failure(key, instance.name)
         snapshot = StatsSnapshot(
             instance_id=instance.id,
-            collected_at=datetime.now(timezone.utc),
+            collected_at=datetime.now(UTC),
             status="offline",
         )
 
@@ -628,7 +627,7 @@ async def poll_stats_for_site(site_id: uuid.UUID) -> None:
     # single instance crashing the poll doesn't break VIP bookkeeping for
     # the rest of the cluster.
     poll_outcomes: list[tuple[PiholeInstance, StatsSnapshot, bool | None]] = []
-    for inst, res in zip(instances, results):
+    for inst, res in zip(instances, results, strict=False):
         if isinstance(res, BaseException):
             logger.warning(
                 "_poll_stats_for(%s) raised: %s: %s",
@@ -859,7 +858,7 @@ async def backfill_queries_for(instance: PiholeInstance, hours: int = 24) -> Non
     the bottleneck.  Within each window, pages forward by timestamp if a full
     10 000-row page is returned.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     recent_threshold = timedelta(minutes=10)
 
     # Check the most recent stored query for this instance.
@@ -870,7 +869,7 @@ async def backfill_queries_for(instance: PiholeInstance, hours: int = 24) -> Non
         latest_ts: datetime | None = result.scalar_one_or_none()
 
     if latest_ts is not None and latest_ts.tzinfo is None:
-        latest_ts = latest_ts.replace(tzinfo=timezone.utc)
+        latest_ts = latest_ts.replace(tzinfo=UTC)
 
     if latest_ts is not None and (now - latest_ts) < recent_threshold:
         logger.debug("Backfill skipped for %s — data is current (latest: %s)", instance.name, latest_ts)
@@ -937,18 +936,20 @@ async def backfill_all_instances(hours: int = 24) -> None:
 
 
 async def cleanup_old_data() -> None:
-    cutoff = datetime.now(timezone.utc) - timedelta(days=settings.data_retention_days)
-    now = datetime.now(timezone.utc)
+    cutoff = datetime.now(UTC) - timedelta(days=settings.data_retention_days)
+    now = datetime.now(UTC)
     async with AsyncSessionLocal() as db:
-        snap_result = await db.execute(
+        # DELETE statements always yield a CursorResult at runtime; the cast
+        # exposes .rowcount, which the generic Result stub doesn't declare.
+        snap_result = cast(CursorResult[Any], await db.execute(
             delete(StatsSnapshot).where(StatsSnapshot.collected_at < cutoff)
-        )
-        query_result = await db.execute(
+        ))
+        query_result = cast(CursorResult[Any], await db.execute(
             delete(QueryLog).where(QueryLog.timestamp < cutoff)
-        )
-        token_result = await db.execute(
+        ))
+        token_result = cast(CursorResult[Any], await db.execute(
             delete(RevokedToken).where(RevokedToken.expires_at < now)
-        )
+        ))
         await db.commit()
         logger.info(
             "Cleanup: removed %d snapshots, %d query log entries older than %d days, %d expired revoked tokens.",

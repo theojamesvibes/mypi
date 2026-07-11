@@ -10,14 +10,14 @@ and schedule_site / unschedule_site / reschedule_all_queries_jobs.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
-
 
 PIHOLE = "http://pihole.test"
 
@@ -78,10 +78,8 @@ async def _clear_client_registry():
     client_manager._last_persisted_sid.clear()
     yield
     for key in list(client_manager._clients):
-        try:
+        with contextlib.suppress(Exception):
             await client_manager._clients[key].close()
-        except Exception:
-            pass
     client_manager._clients.clear()
     client_manager._last_persisted_sid.clear()
 
@@ -102,9 +100,10 @@ async def site(db_session):
 @pytest.fixture
 async def instance(db_session, site):
     from cryptography.fernet import Fernet
+
+    import app.models.pihole as pihole_models
     from app.config import settings
     from app.models.pihole import PiholeInstance
-    import app.models.pihole as pihole_models
 
     if not settings.encryption_key:
         settings.encryption_key = Fernet.generate_key().decode()
@@ -199,7 +198,7 @@ async def test_poll_stats_for_circuit_open_skips_http(
         200, json={"session": {"sid": "x"}}
     )
     collector._cooldown_until[str(instance.id)] = (
-        datetime.now(timezone.utc) + timedelta(seconds=300)
+        datetime.now(UTC) + timedelta(seconds=300)
     )
 
     snapshot, _ = await _poll_stats_for(instance, site_name="Main")
@@ -213,7 +212,7 @@ async def test_offline_alert_fires_after_retries_exhausted(
     """First offline poll establishes baseline. Subsequent offline
     polls advance the retry counter; once `_offline_alert_retries`
     is exhausted, notify_instance_offline fires."""
-    from app.services import collector, pushover
+    from app.services import pushover
     from app.services.collector import _poll_stats_for
 
     monkeypatch.setattr(pushover, "get_offline_alert_retries", lambda: 1)
@@ -222,7 +221,7 @@ async def test_offline_alert_fires_after_retries_exhausted(
     respx_mock.post(f"{PIHOLE}/api/auth").respond(
         200, json={"session": {"sid": "sid"}}
     )
-    online_route = respx_mock.get(f"{PIHOLE}/api/stats/summary").respond(
+    respx_mock.get(f"{PIHOLE}/api/stats/summary").respond(
         200, json={
             "queries": {"total": 100, "blocked": 20, "percent_blocked": 20.0,
                         "cached": 30, "forwarded": 50},
@@ -429,10 +428,11 @@ async def test_fetch_all_instance_versions_iterates_active(
     instance, db_session, respx_mock,
 ):
     from cryptography.fernet import Fernet
+
+    import app.models.pihole as pihole_models
     from app.config import settings
     from app.database import AsyncSessionLocal
     from app.models.pihole import PiholeInstance
-    import app.models.pihole as pihole_models
     from app.services.collector import fetch_all_instance_versions
 
     if not settings.encryption_key:
@@ -496,7 +496,7 @@ async def test_backfill_skips_when_recent_data_exists(
 
     db_session.add(QueryLog(
         instance_id=instance.id,
-        timestamp=datetime.now(timezone.utc) - timedelta(seconds=30),
+        timestamp=datetime.now(UTC) - timedelta(seconds=30),
         domain="recent.example", status="OK",
     ))
     await db_session.commit()
@@ -520,12 +520,11 @@ async def test_backfill_fetches_from_last_stored_timestamp(
     """Stored data is older than the recency window — backfill
     fetches every clock-aligned hour from the last stored timestamp
     forward."""
+    from app.models.pihole import QueryLog
     from app.services.collector import backfill_queries_for
 
-    old_ts = datetime.now(timezone.utc) - timedelta(hours=2, minutes=30)
-    db_session.add(QueryLog := __import__(
-        "app.models.pihole", fromlist=["QueryLog"]
-    ).QueryLog(
+    old_ts = datetime.now(UTC) - timedelta(hours=2, minutes=30)
+    db_session.add(QueryLog(
         instance_id=instance.id, timestamp=old_ts,
         domain="old.example", status="OK",
     ))
@@ -577,7 +576,8 @@ async def test_reschedule_all_queries_jobs_only_touches_queries(site):
     queries job for every registered site without disturbing the
     stats jobs."""
     from app.services.collector import (
-        reschedule_all_queries_jobs, schedule_site,
+        reschedule_all_queries_jobs,
+        schedule_site,
     )
 
     sched = AsyncIOScheduler()

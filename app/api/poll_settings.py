@@ -36,6 +36,6 @@ async def save_poll_settings(
         # column names / SQL fragments to a caller. Log it for the operator
         # and return a generic 500 to the client.
         logger.exception("Failed to save poll settings: %s", exc)
-        raise HTTPException(status_code=500, detail="Failed to save poll settings.")
+        raise HTTPException(status_code=500, detail="Failed to save poll settings.") from exc
     logger.info("user=%s set query poll interval to %ds", user.username, req.interval_seconds)
     return {"interval_seconds": poll_settings_service.get_interval_seconds()}

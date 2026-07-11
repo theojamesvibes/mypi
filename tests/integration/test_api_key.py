@@ -6,10 +6,7 @@ auto-upgrade introduced in 1.4.0, and revocation.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-
-import pytest_asyncio
-
+from datetime import UTC, datetime, timedelta
 
 # ── Happy path ───────────────────────────────────────────────────────────────
 
@@ -106,8 +103,9 @@ async def test_me_reports_not_read_only_for_password_login(authed_client):
 
 async def test_last_used_at_updates_on_first_use(client, api_key, db_session):
     """First request bumps last_used_at — the column was NULL on creation."""
-    from app.models.user import ApiKey
     from sqlalchemy import select
+
+    from app.models.user import ApiKey
 
     # Pre-condition: last_used_at is None or close to created_at.
     pre = (await db_session.execute(select(ApiKey))).scalars().all()
@@ -130,8 +128,9 @@ async def test_last_used_at_does_not_update_on_rapid_reuse(
     """Wave-1 coalescing: a second request within 60 s of the first
     must NOT trigger another commit on last_used_at — saves write
     amplification on iOS-style polling clients."""
-    from app.models.user import ApiKey
     from sqlalchemy import select
+
+    from app.models.user import ApiKey
 
     # First request — establishes last_used_at.
     await client.get("/api/auth/me", headers={"X-API-Key": api_key})
@@ -155,13 +154,14 @@ async def test_last_used_at_does_update_after_coalesce_window(
 ):
     """If the recorded last_used_at is more than the coalesce window
     in the past, the next request DOES advance the timestamp."""
-    from app.models.user import ApiKey
     from sqlalchemy import select
+
+    from app.models.user import ApiKey
 
     # Push last_used_at backwards so the coalesce window has elapsed.
     keys = (await db_session.execute(select(ApiKey))).scalars().all()
     target = next(k for k in keys if not k.is_read_only)
-    target.last_used_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+    target.last_used_at = datetime.now(UTC) - timedelta(minutes=5)
     await db_session.commit()
     stale = target.last_used_at
 

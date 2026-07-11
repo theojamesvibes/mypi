@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response, status
 from pydantic import BaseModel
@@ -55,6 +55,9 @@ async def login(request: Request, body: LoginRequest, response: Response, db: As
         await register_login_failure(user, db)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
+    # verify_user_password always returns False for user=None, so the raise
+    # above guarantees a real user here. Narrowing only — no runtime change.
+    assert user is not None
     await register_login_success(user, db)
     expire_minutes = session_settings.effective_minutes(session_settings.get_timeout_minutes())
     token = create_access_token(user.username, expire_minutes=expire_minutes)
@@ -92,9 +95,9 @@ async def logout(
             jti = claims["jti"]
             exp = claims.get("exp")
             expires_at = (
-                datetime.fromtimestamp(exp, tz=timezone.utc)
+                datetime.fromtimestamp(exp, tz=UTC)
                 if exp
-                else datetime.now(timezone.utc)
+                else datetime.now(UTC)
             )
             stmt = pg_insert(RevokedToken).values(jti=jti, expires_at=expires_at).on_conflict_do_nothing()
             await db.execute(stmt)
@@ -202,6 +205,9 @@ async def change_password(
         raise HTTPException(status_code=422, detail="Passwords do not match.")
 
     user = await db.get(User, current_user.id)
+    # current_user was loaded from this same session by the auth dependency,
+    # so the primary-key lookup cannot miss. Narrowing only.
+    assert user is not None
     user.hashed_password = hash_password(body.new_password)
     user.password_change_required = False
     await db.commit()
@@ -232,6 +238,6 @@ async def set_session_timeout(
         await session_settings.save_settings(body.timeout_minutes)
     except Exception as exc:
         logger.exception("Failed to save session timeout: %s", exc)
-        raise HTTPException(status_code=500, detail="Failed to save session timeout.")
+        raise HTTPException(status_code=500, detail="Failed to save session timeout.") from exc
     logger.info("user=%s set session timeout to %d min", user.username, body.timeout_minutes)
     return {"timeout_minutes": session_settings.get_timeout_minutes()}

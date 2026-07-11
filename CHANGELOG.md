@@ -8,6 +8,27 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.2.0] — 2026-07-11
+
+### Multi-arch image, lint/type tooling, CI ergonomics — the 2026-07-02 audit's tooling batch
+
+**Added:**
+- **The Docker image now builds for linux/arm64 as well as linux/amd64.** The README has advertised arm64 since 2.0 but the publish workflow only ever built amd64 — on a Raspberry Pi (the natural home for a Pi-hole companion), `docker pull` either failed or ran amd64 under emulation. `docker-publish.yml` now sets up QEMU and passes `platforms: linux/amd64,linux/arm64`. The arm64 image was built and smoke-tested locally (app imports, all wheels resolve — no source compiles).
+- **ruff + mypy, wired into CI.** New `pyproject.toml` with a moderate ruff profile (defaults + import-sorting, bugbear, pyupgrade, simplify; B008 ignored — FastAPI's `Depends()` idiom) and a lenient-baseline mypy (`check_untyped_defs`, no blanket strictness). A new `lint` job in `test.yml` runs both on every push/PR. Both are pinned in `requirements-dev.txt` (ruff 0.15.21, mypy 2.2.0). `.python-version` (3.14) added for uv/pyenv.
+- The initial lint/type sweep that makes both pass clean: ~250 mechanical fixes (import sorting, `X | Y` unions, `datetime.UTC`, unused imports) plus a few real ones — 9 API handlers now chain `raise ... from exc` so internal tracebacks keep their cause; SQLAlchemy forward-refs in models resolved under `TYPE_CHECKING`; two intentionally-typed `# type: ignore`s (pydantic-settings' env-driven `Settings()`, slowapi's handler signature), each with a justification comment.
+
+**Fixed:**
+- **Pi-hole "update available" flags now compare versions numerically, not as strings.** `compute_update_available` treated any difference as an available update, so an instance running *newer* than the cached latest (stale cache mid-release, beta builds) was flagged, and orderings like `6.9` vs `6.10` were wrong in the string domain. Now parses to numeric tuples (`v`-prefix and pre-release suffixes stripped), flags only `installed < latest`, and falls back to plain inequality for unparseable `vDev` builds. The old test that enshrined string comparison is replaced with numeric-ordering, newer-than-latest, and vDev-fallback cases.
+- `tests/playwright_sync` invoked the bare `alembic` binary (same portability bug fixed for `tests/migration` in 2.1.2) — now `sys.executable -m alembic`.
+
+**Removed:**
+- **Dead "Global Search" UI** (~163 lines): a search modal in `base.html` and its `openSearch`/`runSearch`/pagination JS in `dashboard.js` that nothing ever invoked — no button, no shortcut, no route. Verified reference-free before removal; the Query Log page is the real search surface.
+
+**CI:**
+- Workflows gained pip caching (`setup-python` `cache: pip`), `timeout-minutes` on every job (10 lint / 20 pytest / 30 playwright / 45 publish — the arm64 leg runs under QEMU), and concurrency groups: test/ui runs are superseded by newer pushes to the same branch; publishes queue instead of cancelling so a half-pushed multi-arch manifest can't be aborted.
+
+---
+
 ## [2.1.3] — 2026-07-11
 
 ### Dependency sweep (#74–#82) + coverage-floor raise to 80%

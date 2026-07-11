@@ -20,8 +20,9 @@ def _ensure_fernet_key():
     """sync_sites_and_instances writes the (encrypted) api_password,
     which needs an active Fernet key."""
     from cryptography.fernet import Fernet
-    from app.config import settings
+
     import app.models.pihole as pihole_models
+    from app.config import settings
 
     if not settings.encryption_key:
         settings.encryption_key = Fernet.generate_key().decode()
@@ -46,9 +47,9 @@ def _inst_cfg(name, url, master=False, vip_role=None, password=""):
 
 
 async def test_initial_sync_creates_sites_and_instances(db_session, monkeypatch):
-    from app.services import config_loader
     from app.models.pihole import PiholeInstance
     from app.models.site import Site
+    from app.services import config_loader
 
     site = _site_cfg("Main", "main", main=True, instances=[
         _inst_cfg("p1", "http://10.0.0.1", master=True),
@@ -78,9 +79,9 @@ async def test_initial_sync_creates_sites_and_instances(db_session, monkeypatch)
 async def test_sync_is_idempotent(db_session, monkeypatch):
     """Re-running sync with the same YAML must not duplicate rows
     or flip flags."""
-    from app.services import config_loader
     from app.models.pihole import PiholeInstance
     from app.models.site import Site
+    from app.services import config_loader
 
     site = _site_cfg("Main", "main", main=True, instances=[
         _inst_cfg("p1", "http://10.0.0.1", master=True),
@@ -107,8 +108,8 @@ async def test_sync_is_idempotent(db_session, monkeypatch):
 async def test_removed_instance_marked_inactive(db_session, monkeypatch):
     """An instance present in the previous YAML but absent in the
     current one is marked is_active=False (not deleted)."""
-    from app.services import config_loader
     from app.models.pihole import PiholeInstance
+    from app.services import config_loader
 
     initial = _site_cfg("Main", "main", main=True, instances=[
         _inst_cfg("p1", "http://10.0.0.1", master=True),
@@ -141,9 +142,9 @@ async def test_removed_site_deactivates_site_and_instances(db_session, monkeypat
     instances. Regression: this path lazy-loaded Site.instances inside the
     async session and crashed startup with MissingGreenlet (fixed by
     selectinload in the orphan-site query)."""
-    from app.services import config_loader
     from app.models.pihole import PiholeInstance
     from app.models.site import Site
+    from app.services import config_loader
 
     two_sites = [
         _site_cfg("Main", "main", main=True, instances=[
@@ -179,8 +180,8 @@ async def test_removed_site_deactivates_site_and_instances(db_session, monkeypat
 async def test_returning_instance_is_reactivated(db_session, monkeypatch):
     """An instance that was orphaned and is then re-added to the YAML
     flips back to is_active=True without losing its stats history."""
-    from app.services import config_loader
     from app.models.pihole import PiholeInstance
+    from app.services import config_loader
 
     full = _site_cfg("Main", "main", main=True, instances=[
         _inst_cfg("p1", "http://10.0.0.1", master=True),
@@ -213,8 +214,8 @@ async def test_main_reassignment_carries_settings_to_new_main(
     Main's site_settings are materialised into the new Main where
     that key is NULL/missing — so non-Main sites' inheritance still
     resolves correctly."""
-    from app.services import config_loader
     from app.models.site import Site, SiteSetting
+    from app.services import config_loader
 
     # Start: site_a is Main, site_b is not.
     monkeypatch.setattr(config_loader, "load_site_configs", lambda: [
@@ -265,9 +266,9 @@ async def test_main_site_rename_preserves_data_via_slug_history(
     """When the YAML's only Main site has a different name+slug than
     the DB's Main and no other site claims the new slug, treat as a
     rename: stash the old slug in slug_history and update in place."""
-    from app.services import config_loader
-    from app.models.site import Site, SiteSlugHistory
     from app.database import AsyncSessionLocal
+    from app.models.site import Site, SiteSlugHistory
+    from app.services import config_loader
 
     monkeypatch.setattr(config_loader, "load_site_configs", lambda: [
         _site_cfg("Default", "default", main=True, instances=[]),
@@ -304,8 +305,8 @@ async def test_main_site_rename_preserves_data_via_slug_history(
 
 async def test_sync_with_no_sites_is_noop(db_session, monkeypatch):
     """Empty / blank YAML returns early without touching the DB."""
-    from app.services import config_loader
     from app.models.site import Site
+    from app.services import config_loader
 
     monkeypatch.setattr(config_loader, "load_site_configs", lambda: [])
     await config_loader.sync_sites_and_instances(db_session)

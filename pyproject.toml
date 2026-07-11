@@ -1,0 +1,35 @@
+# Tooling config only — MyPi is an app deployed via Docker, not a package.
+# Dependencies stay in requirements.txt / requirements-dev.txt; pytest config
+# stays in pytest.ini.
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+extend-exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+# Defaults (E4/E7/E9/F) plus: import sorting (I), bugbear (B), pyupgrade (UP),
+# and simplify (SIM). Kept deliberately moderate — the goal is catching real
+# mistakes (unused imports, undefined names, exception-chaining slips), not
+# style churn.
+select = ["E4", "E7", "E9", "F", "I", "B", "UP", "SIM"]
+ignore = [
+    # FastAPI's dependency injection *is* a function call in a default
+    # argument (`user: User = Depends(...)`) — idiomatic, not a bug.
+    "B008",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests use intentional re-imports inside test bodies for fixture isolation.
+"tests/**" = ["B017"]
+
+[tool.mypy]
+python_version = "3.14"
+files = ["app"]
+# Lenient baseline: catch real type errors without demanding annotations
+# everywhere. Tighten incrementally (per-module strict) as coverage grows.
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_optional = true

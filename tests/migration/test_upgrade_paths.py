@@ -39,10 +39,8 @@ import sys
 import uuid
 from pathlib import Path
 
-import pytest
 from sqlalchemy import create_engine, text
 from testcontainers.postgres import PostgresContainer
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 

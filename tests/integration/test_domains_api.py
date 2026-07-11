@@ -2,14 +2,17 @@
 mocked via respx."""
 from __future__ import annotations
 
+import contextlib
+
 import pytest
 
 
 @pytest.fixture(autouse=True)
 def _ensure_fernet_key():
     from cryptography.fernet import Fernet
-    from app.config import settings
+
     import app.models.pihole as pihole_models
+    from app.config import settings
 
     if not settings.encryption_key:
         settings.encryption_key = Fernet.generate_key().decode()
@@ -24,10 +27,8 @@ async def _clear_client_registry():
     client_manager._last_persisted_sid.clear()
     yield
     for key in list(client_manager._clients):
-        try:
+        with contextlib.suppress(Exception):
             await client_manager._clients[key].close()
-        except Exception:
-            pass
     client_manager._clients.clear()
     client_manager._last_persisted_sid.clear()
 
