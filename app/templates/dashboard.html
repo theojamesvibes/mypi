@@ -8,7 +8,7 @@
   <div class="d-flex align-items-center justify-content-between mb-3">
     <h5 class="fw-semibold mb-0"><i class="bi bi-speedometer2 me-2 text-success"></i>Dashboard<span class="page-title-site"></span></h5>
     <div class="d-flex gap-2 align-items-center">
-      <select id="time-range" class="form-select form-select-sm" style="width:auto;">
+      <select id="time-range" class="form-select form-select-sm w-auto">
         <option value="15m">Last 15 minutes</option>
         <option value="1h">Last 1 hour</option>
         <option value="today">Today</option>
@@ -91,7 +91,7 @@
   </div>
 
   <!-- Sync status indicator -->
-  <div id="sync-last-synced" class="mb-2 small text-muted px-1" style="min-height:1.2em;"></div>
+  <div id="sync-last-synced" class="mb-2 small text-muted px-1 reserve-line"></div>
 
   <!-- Charts row -->
   <div class="row g-3 mb-3">
@@ -110,7 +110,7 @@
       <div class="card h-100">
         <div class="card-header"><i class="bi bi-pie-chart me-1"></i>Query Types</div>
         <div class="card-body p-2 d-flex">
-          <div class="flex-grow-1" style="position: relative; min-height: 280px;">
+          <div class="flex-grow-1 chart-holder">
             <canvas id="typeChart"></canvas>
           </div>
         </div>

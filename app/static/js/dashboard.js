@@ -119,12 +119,21 @@ function instanceDot(status) {
 // when role is null/undefined so callers can interpolate unconditionally.
 function vipPill(role) {
   if (role === 'master') {
-    return '<span class="badge bg-info ms-1" style="font-size:0.65rem;" title="VIP cluster: configured-active node">vip-master</span>';
+    return '<span class="badge bg-info ms-1 fs-65" title="VIP cluster: configured-active node">vip-master</span>';
   }
   if (role === 'replica') {
-    return '<span class="badge bg-secondary ms-1" style="font-size:0.65rem;" title="VIP cluster: standby">vip-replica</span>';
+    return '<span class="badge bg-secondary ms-1 fs-65" title="VIP cluster: standby">vip-replica</span>';
   }
   return '';
+}
+
+// CSP style-src has no 'unsafe-inline', so HTML strings can't carry
+// style="background:…" for per-instance colors. Emitters set data-bg and this
+// applies it through the CSSOM (which CSP allows) after the markup lands.
+function applyDataBg(root) {
+  for (const el of root.querySelectorAll('[data-bg]')) {
+    el.style.background = el.dataset.bg;
+  }
 }
 
 async function apiFetch(url) {
@@ -311,8 +320,8 @@ function renderQueriesChart(buckets, bucketMinutes = 10, spanHours = 24) {
   const legend = document.getElementById('chart-legend');
   if (legend) {
     legend.innerHTML = `
-      <span><span style="display:inline-block;width:12px;height:12px;background:rgba(60,141,188,0.8);border-radius:2px;margin-right:4px;"></span>Queries</span>
-      <span><span style="display:inline-block;width:12px;height:12px;background:rgba(221,75,57,0.8);border-radius:2px;margin-right:4px;"></span>Blocked</span>
+      <span><span class="chart-legend-swatch chart-legend-swatch-queries"></span>Queries</span>
+      <span><span class="chart-legend-swatch chart-legend-swatch-blocked"></span>Blocked</span>
     `;
   }
 }
@@ -385,9 +394,9 @@ function renderInstancesTable(instances) {
   tbody.innerHTML = sorted.map(inst => `
     <tr>
       <td>
-        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${escHtml(inst.color)};margin-right:6px;"></span>
+        <span class="inst-dot" data-bg="${escHtml(inst.color)}"></span>
         <strong>${escHtml(inst.name)}</strong>
-        ${inst.is_master ? '<span class="badge bg-primary ms-1" style="font-size:0.65rem;">master</span>' : ''}
+        ${inst.is_master ? '<span class="badge bg-primary ms-1 fs-65">master</span>' : ''}
         ${vipPill(inst.vip_role)}
       </td>
       <td>${instanceDot(inst.status)}${escHtml(inst.status)}</td>
@@ -399,6 +408,7 @@ function renderInstancesTable(instances) {
       <td class="text-muted small">${inst.last_seen_at ? fmtTime(inst.last_seen_at) : '—'}</td>
     </tr>
   `).join('');
+  applyDataBg(tbody);
 }
 
 function renderTopTable(tbodyId, rows, labelFn, countFn, drillFn) {
@@ -411,7 +421,7 @@ function renderTopTable(tbodyId, rows, labelFn, countFn, drillFn) {
   if (drillFn) _topTableDrillData[tbodyId] = rows.map(r => drillFn(r));
   tbody.innerHTML = rows.map((r, i) => `
     <tr ${drillFn ? `class="drill-row" data-tbl="${tbodyId}" data-idx="${i}"` : ''}>
-      <td class="text-truncate" style="max-width:200px;" title="${escHtml(labelFn(r))}">${escHtml(labelFn(r))}</td>
+      <td class="text-truncate cell-w-200" title="${escHtml(labelFn(r))}">${escHtml(labelFn(r))}</td>
       <td class="text-end">${countFn(r)}</td>
     </tr>
   `).join('');
@@ -514,13 +524,13 @@ function renderCombinedInstancesTable(instances) {
     <tr>
       <td>
         ${inst.site_name
-          ? `<a href="/dashboard/${encodeURIComponent(inst.site_slug || '')}" class="badge text-decoration-none" style="background:${escHtml(inst.color)};color:#fff;font-weight:500;">${escHtml(inst.site_name)}</a>`
+          ? `<a href="/dashboard/${encodeURIComponent(inst.site_slug || '')}" class="badge text-decoration-none site-badge-link" data-bg="${escHtml(inst.color)}">${escHtml(inst.site_name)}</a>`
           : '<span class="text-muted small">—</span>'}
       </td>
       <td>
-        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${escHtml(inst.color)};margin-right:6px;"></span>
+        <span class="inst-dot" data-bg="${escHtml(inst.color)}"></span>
         <strong>${escHtml(inst.name)}</strong>
-        ${inst.is_master ? '<span class="badge bg-primary ms-1" style="font-size:0.65rem;">master</span>' : ''}
+        ${inst.is_master ? '<span class="badge bg-primary ms-1 fs-65">master</span>' : ''}
         ${vipPill(inst.vip_role)}
       </td>
       <td>${instanceDot(inst.status)}${escHtml(inst.status)}</td>
@@ -532,6 +542,7 @@ function renderCombinedInstancesTable(instances) {
       <td class="text-muted small">${inst.last_seen_at ? fmtTime(inst.last_seen_at) : '—'}</td>
     </tr>
   `).join('');
+  applyDataBg(tbody);
 }
 
 // Ticker — polls /api/queries every 3s, animates new rows in at the top,
@@ -575,6 +586,7 @@ async function tickCombinedTicker() {
       const li = document.createElement('li');
       li.className = 'combined-ticker-row' + (firstPaint ? '' : ' combined-ticker-row-new');
       li.innerHTML = renderCombinedTickerRow(q);
+      applyDataBg(li);
       list.insertBefore(li, list.firstChild);
     }
 
@@ -601,7 +613,7 @@ function renderCombinedTickerRow(q) {
     : '<i class="bi bi-shield-fill-check text-success me-1"></i>';
   return (
     '<span class="combined-ticker-time">' + fmtTimeShort(q.timestamp) + '</span>' +
-    '<span class="combined-ticker-site" style="background:' + escHtml(color) + ';">' + escHtml(siteName) + '</span>' +
+    '<span class="combined-ticker-site" data-bg="' + escHtml(color) + '">' + escHtml(siteName) + '</span>' +
     '<span class="combined-ticker-instance text-muted small">' + escHtml(q.instance_name || '') + '</span>' +
     '<span class="combined-ticker-domain">' + icon + escHtml(q.domain || '—') + '</span>' +
     '<span class="combined-ticker-client text-muted small">' + escHtml(q.client_name || q.client_ip || '') + '</span>'
@@ -686,13 +698,13 @@ async function loadQueries(page) {
           const isBlocked = BLOCKED_STATUSES.has(q.status);
           return `<tr>
             <td class="text-nowrap small">${fmtTime(q.timestamp)}</td>
-            <td><span class="badge rounded-pill" style="background:#6c757d;font-weight:500;">${escHtml(q.instance_name)}</span></td>
-            <td class="text-truncate" style="max-width:220px;" title="${d}">${d || '—'}</td>
+            <td><span class="badge rounded-pill badge-instance">${escHtml(q.instance_name)}</span></td>
+            <td class="text-truncate cell-w-220" title="${d}">${d || '—'}</td>
             <td><code class="small">${escHtml(q.query_type || '—')}</code></td>
             <td class="small">${escHtml(q.client_name || q.client_ip || '—')}</td>
             <td>${statusPill(q.status)}</td>
             <td class="text-end small">${q.reply_time_ms != null ? Number(q.reply_time_ms).toFixed(1) : '—'}</td>
-            <td class="text-end">${q.domain ? `<button class="btn btn-sm btn-outline-secondary py-0 px-1 domain-manage-btn" data-domain="${d}" data-qstatus="${escHtml(q.status || '')}" title="Manage domain" style="font-size:.7rem;"><i class="bi bi-shield"></i></button>` : ''}</td>
+            <td class="text-end">${q.domain ? `<button class="btn btn-sm btn-outline-secondary py-0 px-1 domain-manage-btn fs-70" data-domain="${d}" data-qstatus="${escHtml(q.status || '')}" title="Manage domain"><i class="bi bi-shield"></i></button>` : ''}</td>
           </tr>`;
         }).join('')
       : '<tr><td colspan="8" class="text-center text-muted py-4">No queries found.</td></tr>';
@@ -1079,9 +1091,9 @@ async function loadSettingsInstances() {
   tbody.innerHTML = instances.map(i => `
     <tr>
       <td class="ps-3">
-        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${i.color};margin-right:6px;"></span>
+        <span class="inst-dot" data-bg="${escHtml(i.color)}"></span>
         ${escHtml(i.name)}
-        ${i.is_master ? '<span class="badge bg-primary ms-1" style="font-size:0.65rem;">master</span>' : ''}
+        ${i.is_master ? '<span class="badge bg-primary ms-1 fs-65">master</span>' : ''}
         ${vipPill(i.vip_role)}
       </td>
       <td class="small"><a href="${escHtml(i.url.replace(/\/+$/, '') + '/admin')}" target="_blank" class="text-muted">${escHtml(i.url)}</a></td>
@@ -1092,6 +1104,7 @@ async function loadSettingsInstances() {
       ${versionCell(i.version_web, i.update_available_web, 'web')}
     </tr>
   `).join('');
+  applyDataBg(tbody);
 
   // Version check health notices
   const noticeDiv = document.getElementById('instances-version-notice');
@@ -1134,7 +1147,7 @@ async function loadStaleInstances() {
       <td class="small text-muted">${escHtml(i.url)}</td>
       <td class="small text-muted">${i.last_seen_at ? new Date(i.last_seen_at).toLocaleString() : '—'}</td>
       <td>
-        <button class="btn btn-xs btn-outline-danger py-0 px-1" style="font-size:0.75rem;"
+        <button class="btn btn-xs btn-outline-danger py-0 px-1 fs-75"
                 data-stale-instance-id="${i.id}" data-instance-name="${escHtml(i.name)}">
           <i class="bi bi-trash"></i> Remove
         </button>
@@ -1199,7 +1212,7 @@ async function loadStaleSites() {
       <td><code class="small">${escHtml(s.slug)}</code></td>
       <td class="small text-muted">${s.instance_count} instance(s)</td>
       <td>
-        <button class="btn btn-xs btn-outline-danger py-0 px-1" style="font-size:0.75rem;"
+        <button class="btn btn-xs btn-outline-danger py-0 px-1 fs-75"
                 data-orphan-site-slug="${escHtml(s.slug)}" data-site-name="${escHtml(s.name)}" data-instance-count="${s.instance_count}">
           <i class="bi bi-trash"></i> Remove site + data
         </button>
@@ -1278,8 +1291,8 @@ async function loadDrillPage(page) {
       ? data.items.map(q => `
           <tr>
             <td class="text-nowrap small">${fmtTime(q.timestamp)}</td>
-            <td><span class="badge rounded-pill" style="background:#6c757d;font-weight:500;">${escHtml(q.instance_name)}</span></td>
-            <td class="text-truncate" style="max-width:200px;" title="${escHtml(q.domain || '')}">${escHtml(q.domain || '—')}</td>
+            <td><span class="badge rounded-pill badge-instance">${escHtml(q.instance_name)}</span></td>
+            <td class="text-truncate cell-w-200" title="${escHtml(q.domain || '')}">${escHtml(q.domain || '—')}</td>
             <td><code class="small">${escHtml(q.query_type || '—')}</code></td>
             <td class="small">${escHtml(q.client_name || q.client_ip || '—')}</td>
             <td>${statusPill(q.status)}</td>
@@ -1359,7 +1372,7 @@ function renderSyncBadge(status) {
   if (!badge) return;
 
   if (!status || !status.completed_at) {
-    badge.style.setProperty('display', 'none', 'important');
+    badge.classList.add('d-none');
     return;
   }
 
@@ -1397,7 +1410,6 @@ function renderSyncBadge(status) {
 
   badge.className = `badge ${cls}`;
   badge.textContent = label;
-  badge.style.removeProperty('display');
 }
 
 // ─── Sync ────────────────────────────────────────────────────────────────────
@@ -1493,7 +1505,7 @@ function renderSyncStatus(data) {
   }
 
   const masterRow = data.master
-    ? `<div><i class="bi bi-check-circle text-success me-1"></i><strong>${escHtml(data.master)}</strong><span class="badge bg-primary ms-1" style="font-size:0.65rem;">master</span>${vipPill(data.master_vip_role)}</div>`
+    ? `<div><i class="bi bi-check-circle text-success me-1"></i><strong>${escHtml(data.master)}</strong><span class="badge bg-primary ms-1 fs-65">master</span>${vipPill(data.master_vip_role)}</div>`
     : '';
 
   const rows = (data.results || []).map(r => {
@@ -1754,13 +1766,13 @@ async function loadVersionCheckSettings() {
         if (badge)  { badge.className = 'badge bg-success'; badge.textContent = 'MyPi current'; }
         if (status) status.innerHTML =
           `<span class="text-success"><i class="bi bi-check-circle me-1"></i>v${escHtml(mypi.current_version)} is the latest</span>
-           <span class="text-muted ms-2" style="font-size:0.72rem;">checked ${escHtml(checked)}</span>`;
+           <span class="text-muted ms-2 fs-72">checked ${escHtml(checked)}</span>`;
       } else {
         if (badge)  { badge.className = 'badge bg-danger'; badge.textContent = 'MyPi update'; }
         if (status) status.innerHTML =
           `<span class="text-danger"><i class="bi bi-exclamation-circle me-1"></i>Update available: v${escHtml(mypi.latest_version)}</span>
-           <a href="${escHtml(mypi.release_url)}" target="_blank" class="btn btn-xs btn-outline-danger ms-2 py-0 px-1" style="font-size:0.75rem;">View release</a>
-           <span class="text-muted ms-2" style="font-size:0.72rem;">checked ${escHtml(checked)}</span>`;
+           <a href="${escHtml(mypi.release_url)}" target="_blank" class="btn btn-xs btn-outline-danger ms-2 py-0 px-1 fs-75">View release</a>
+           <span class="text-muted ms-2 fs-72">checked ${escHtml(checked)}</span>`;
       }
     }
   }
@@ -1783,7 +1795,7 @@ async function loadVersionCheckSettings() {
       if (badge)  { badge.className = 'badge bg-success'; badge.textContent = 'Pi-hole checked'; }
       if (status) status.innerHTML =
         `<span class="text-success"><i class="bi bi-check-circle me-1"></i>Latest — core: ${escHtml(pihole.latest_core)}, FTL: ${escHtml(pihole.latest_ftl)}, web: ${escHtml(pihole.latest_web)}</span>
-         <span class="text-muted ms-2" style="font-size:0.72rem;">checked ${escHtml(checked)}</span>`;
+         <span class="text-muted ms-2 fs-72">checked ${escHtml(checked)}</span>`;
     }
   }
 

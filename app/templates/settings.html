@@ -51,7 +51,7 @@
             </thead>
             <tbody id="settings-instances-tbody"></tbody>
           </table>
-          <div id="instances-version-notice" class="px-3 py-2" style="font-size:0.72rem;"></div>
+          <div id="instances-version-notice" class="px-3 py-2 fs-72"></div>
         </div>
       </div>
     </div>
@@ -152,7 +152,7 @@
                 <input class="form-check-input" type="checkbox" id="sync-auto-gravity">
                 <label class="form-check-label small" for="sync-auto-gravity">
                   Auto-sync when master blocklist changes
-                  <span class="text-muted d-block" style="font-size:0.7rem;">Syncs immediately when Pi-hole gravity is updated on the master</span>
+                  <span class="text-muted d-block fs-70">Syncs immediately when Pi-hole gravity is updated on the master</span>
                 </label>
               </div>
               <button id="sync-schedule-save-btn" class="btn btn-sm btn-outline-secondary mt-2">
@@ -217,7 +217,7 @@
             <input class="form-check-input" type="checkbox" id="hide-pihole-self">
             <label class="form-check-label small" for="hide-pihole-self">
               Hide Pi-hole self-traffic in Top Clients
-              <span class="text-muted d-block" style="font-size:0.7rem;">
+              <span class="text-muted d-block fs-70">
                 Excludes <code>pi.hole</code>, <code>localhost</code>, and the configured Pi-hole instance hostnames so Top Clients shows real LAN clients instead of Pi-hole's own internal queries (PTR refresh, gravity URL resolution, version checks). Mirrors Pi-hole's admin UI behaviour.
               </span>
             </label>
@@ -283,7 +283,7 @@
 
           <!-- MyPi row -->
           <div class="d-flex align-items-center gap-3 mb-2">
-            <div class="form-check border rounded px-3 py-2 flex-shrink-0" class="check-highlight" style="min-width:11rem;">
+            <div class="form-check border rounded px-3 py-2 flex-shrink-0 minw-11">
               <input class="form-check-input" type="checkbox" id="vc-enabled">
               <label class="form-check-label fw-semibold small" for="vc-enabled">MyPi updates</label>
             </div>
@@ -292,7 +292,7 @@
 
           <!-- Pi-hole row -->
           <div class="d-flex align-items-center gap-3 mb-3">
-            <div class="form-check border rounded px-3 py-2 flex-shrink-0" class="check-highlight" style="min-width:11rem;">
+            <div class="form-check border rounded px-3 py-2 flex-shrink-0 minw-11">
               <input class="form-check-input" type="checkbox" id="vc-pihole-enabled">
               <label class="form-check-label fw-semibold small" for="vc-pihole-enabled">Pi-hole updates</label>
             </div>
@@ -332,12 +332,12 @@
               <div class="mb-1">
                 <label class="form-label form-label-sm mb-1">App Token</label>
                 <input type="password" id="po-app-token" class="form-control form-control-sm" placeholder="Enter new token to update" autocomplete="off">
-                <div class="text-muted mt-1" style="font-size:0.72rem;">Saved: <code id="po-app-token-display">—</code></div>
+                <div class="text-muted mt-1 fs-72">Saved: <code id="po-app-token-display">—</code></div>
               </div>
               <div class="mb-2">
                 <label class="form-label form-label-sm mb-1">User Key</label>
                 <input type="password" id="po-user-key" class="form-control form-control-sm" placeholder="Enter new key to update" autocomplete="off">
-                <div class="text-muted mt-1" style="font-size:0.72rem;">Saved: <code id="po-user-key-display">—</code></div>
+                <div class="text-muted mt-1 fs-72">Saved: <code id="po-user-key-display">—</code></div>
               </div>
               <div class="d-flex gap-2 mt-2">
                 <button id="po-validate-btn" class="btn btn-sm btn-outline-secondary">
@@ -356,7 +356,7 @@
                 <input class="form-check-input" type="checkbox" id="po-enabled">
                 <label class="form-check-label fw-semibold small" for="po-enabled">
                   Enable notifications
-                  <span class="text-muted fw-normal ms-2" style="font-size:0.75rem;">Must be on for any alerts to fire</span>
+                  <span class="text-muted fw-normal ms-2 fs-75">Must be on for any alerts to fire</span>
                 </label>
               </div>
             </div>
@@ -373,8 +373,8 @@
                 <label class="form-check-label small" for="po-alert-offline">Instance goes offline / comes back</label>
               </div>
               <div class="ms-4 mb-2">
-                <label class="form-label form-label-sm mb-1 text-muted" style="font-size:0.72rem;">Retries before alert</label>
-                <select id="po-offline-retries" class="form-select form-select-sm" style="width:auto;min-width:13rem;">
+                <label class="form-label form-label-sm mb-1 text-muted fs-72">Retries before alert</label>
+                <select id="po-offline-retries" class="form-select form-select-sm w-auto minw-13">
                   <option value="1">1 (60 s)</option>
                   <option value="2">2 (2 min)</option>
                   <option value="3">3 (3 min)</option>
@@ -386,11 +386,11 @@
                   <option value="9">9 (9 min)</option>
                   <option value="10">10 (10 min)</option>
                 </select>
-                <div class="form-text" style="font-size:0.68rem;">Retries every 60 s before the first alert fires.</div>
+                <div class="form-text fs-68">Retries every 60 s before the first alert fires.</div>
               </div>
               <div class="ms-4 mb-2">
-                <label class="form-label form-label-sm mb-1 text-muted" style="font-size:0.72rem;">Repeat alert while offline</label>
-                <select id="po-offline-max-count" class="form-select form-select-sm" style="width:auto;min-width:13rem;">
+                <label class="form-label form-label-sm mb-1 text-muted fs-72">Repeat alert while offline</label>
+                <select id="po-offline-max-count" class="form-select form-select-sm w-auto minw-13">
                   <option value="1">Once (on transition only)</option>
                   <option value="2">Up to 2 times</option>
                   <option value="3">Up to 3 times</option>
@@ -403,20 +403,20 @@
                   <option value="10">Up to 10 times</option>
                   <option value="0">Always (every check)</option>
                 </select>
-                <div class="form-text" style="font-size:0.68rem;">How many offline alerts to send while the instance stays down. Counts reset when it recovers.</div>
+                <div class="form-text fs-68">How many offline alerts to send while the instance stays down. Counts reset when it recovers.</div>
               </div>
               <div class="form-check mb-1">
                 <input class="form-check-input" type="checkbox" id="po-alert-block-rate">
                 <label class="form-check-label small" for="po-alert-block-rate">
                   High block rate
-                  <span class="text-muted d-block" style="font-size:0.7rem;">Requires ≥7 days of data to establish a baseline</span>
+                  <span class="text-muted d-block fs-70">Requires ≥7 days of data to establish a baseline</span>
                 </label>
               </div>
               <div class="form-check mb-1">
                 <input class="form-check-input" type="checkbox" id="po-alert-vip-transfer">
                 <label class="form-check-label small" for="po-alert-vip-transfer">
                   VIP transfer
-                  <span class="text-muted d-block" style="font-size:0.7rem;">Active node in a VIP cluster shifted between vip_master and vip_replica</span>
+                  <span class="text-muted d-block fs-70">Active node in a VIP cluster shifted between vip_master and vip_replica</span>
                 </label>
               </div>
             </div>
@@ -430,7 +430,7 @@
                   <input type="number" id="po-block-rate-pct" class="form-control" min="10" max="500" value="50">
                   <span class="input-group-text">%</span>
                 </div>
-                <div class="form-text" style="font-size:0.68rem;">e.g. 50 = alert when today's block rate is 50% higher than your weekly average</div>
+                <div class="form-text fs-68">e.g. 50 = alert when today's block rate is 50% higher than your weekly average</div>
               </div>
             </div>
           </div>

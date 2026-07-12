@@ -90,7 +90,7 @@ A self-hosted dashboard that consolidates up to 10 locally running [Pi-hole](htt
 - Version badge in topbar is green (up to date) or red (update available), links to GitHub releases
 
 ### Security & Hardening
-- **Security headers on every response** — `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: same-origin`, a Content-Security-Policy that denies framing and arbitrary external script origins, and `Strict-Transport-Security` when `SECURE_COOKIES=true`
+- **Security headers on every response** — `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: same-origin`, a Content-Security-Policy with no `'unsafe-inline'` for scripts *or* styles (same-origin + jsdelivr only; `/docs`/`/redoc` relax style-src for Swagger UI/ReDoc), and `Strict-Transport-Security` when `SECURE_COOKIES=true`
 - **Rate limits on mutation endpoints** — `/api/sync` (10/min), `/api/domains/{deny,allow}` (30/min each), `/api/notifications/test` (5/min), `/api/notifications/validate` (10/min), `/api/auth/change-password` (5/min)
 - **Audit logging on mutations** — every mutation handler logs `user=<username>` plus the action and target, so the application log doubles as an audit trail
 - **Encrypted secrets at rest** — Pi-hole API passwords and Pushover credentials are Fernet-encrypted in PostgreSQL using `ENCRYPTION_KEY`

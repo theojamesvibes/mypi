@@ -317,8 +317,11 @@ _CSP_POLICY = (
     # executes, and JS-generated buttons dispatch through delegated
     # listeners keyed on data-* attributes instead of inline onclick=.
     "script-src 'self' https://cdn.jsdelivr.net; "
-    # Bootstrap CSS + per-page inline styles.
-    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    # Stylesheets from same-origin files and jsdelivr (Bootstrap). No
+    # 'unsafe-inline': former style="" attributes now live in dashboard.css
+    # utility classes, and dynamic per-instance colors are applied through
+    # the CSSOM (el.style.background), which style-src doesn't govern.
+    "style-src 'self' https://cdn.jsdelivr.net; "
     # data: covers the inline SVG favicon and any data-URI icons Swagger ships.
     "img-src 'self' data:; "
     # Bootstrap Icons ships webfonts from jsdelivr; allow data: for base64'd glyphs.
@@ -329,6 +332,16 @@ _CSP_POLICY = (
     "frame-ancestors 'none'; "
     "base-uri 'self'; "
     "form-action 'self'"
+)
+
+# Swagger UI (/docs) and ReDoc (/redoc) render themselves with inline styles
+# (React style props / styled-components) — a long-standing upstream
+# limitation with no nonce hook. Those two pages only ever display our own
+# OpenAPI schema, so they keep 'unsafe-inline' for styles rather than
+# holding the whole app's CSP hostage. Scripts stay strict everywhere.
+_CSP_DOCS_PATHS = frozenset({"/docs", "/redoc"})
+_CSP_POLICY_DOCS = _CSP_POLICY.replace(
+    "style-src 'self'", "style-src 'self' 'unsafe-inline'"
 )
 
 
@@ -366,7 +379,8 @@ async def _security_headers(request: Request, call_next):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "same-origin")
-    response.headers.setdefault("Content-Security-Policy", _CSP_POLICY)
+    csp = _CSP_POLICY_DOCS if request.url.path in _CSP_DOCS_PATHS else _CSP_POLICY
+    response.headers.setdefault("Content-Security-Policy", csp)
     if settings.secure_cookies:
         response.headers.setdefault(
             "Strict-Transport-Security", "max-age=31536000; includeSubDomains"

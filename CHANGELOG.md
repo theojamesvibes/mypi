@@ -8,6 +8,28 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.5.0] — 2026-07-12
+
+### CSP hardening, part 2: no more `'unsafe-inline'` styles
+
+Closes the style-src half deferred from #84 (v2.4.0 dropped it for scripts). App pages now ship `style-src 'self' https://cdn.jsdelivr.net` — an injected `style` attribute or `<style>` block no longer applies, closing off CSS-based exfiltration/UI-redress tricks on pages that render untrusted DNS data (domain names, client hostnames).
+
+**Changed:**
+- **All 29 `style=""` attributes across the 7 templates** replaced with Bootstrap utilities (`d-none`, `w-auto`, `text-decoration-none`) or new value-named utility classes in `dashboard.css` (`fs-65`…`fs-75`, `minw-11`/`minw-13`, `auth-icon`, `chart-holder`, `reserve-line`, `chart-canvas-capped`).
+- **All 25 `style=""` occurrences in dashboard.js HTML strings** replaced the same way (`cell-w-200/220`, `badge-instance`, `chart-legend-swatch-*`, `inst-dot`, `site-badge-link`). Dynamic per-instance colors can't become static classes, so emitters now set `data-bg="…"` and a new `applyDataBg()` helper applies it after render via the CSSOM (`el.style.background`), which style-src doesn't govern.
+- **Initially-hidden elements** (`#nav-combined-item`, `#site-picker`, `#sync-status-badge`, `#live-icon`) switched from `style="display:none"` to the `d-none` class, and their JS toggles from `el.style.display` to `classList` — CSSOM `display` can't override the class's `!important`.
+- **`/docs` and `/redoc` keep `'unsafe-inline'` for styles only** — Swagger UI and ReDoc render themselves with inline styles (long-standing upstream limitation, no nonce hook). Both pages only display our own OpenAPI schema and are off by default (`ENABLE_API_DOCS=false`); `script-src` stays strict there too.
+- settings.html: dropped a duplicate `class` attribute on the two version-check `form-check` boxes (the second attribute — `check-highlight` — was dead; browsers honor only the first). Rendered appearance is unchanged.
+
+**Tests:**
+- Header regression test now pins `style-src` exactly (no `'unsafe-inline'`) and covers the `/docs`+`/redoc` exception (`tests/integration/test_middleware.py`).
+- New Playwright suite `tests/playwright/test_csp.py`: drives `/`, `/queries`, `/settings`, `/combined`, `/login` in a real browser and asserts zero "Content Security Policy" console violations, plus verifies the `data-bg` CSSOM path actually paints the instance color dot. Listener sensitivity was proven with a deliberate violation before trusting the zero.
+- Full verification: 399 non-Playwright tests, ruff + mypy clean, all three Playwright suites green (21 + 7 + 1, plus the 3 new CSP tests).
+
+Remaining stretch goal from #84: self-hosting the jsdelivr assets so `script-src`/`style-src` could drop the CDN origin entirely.
+
+---
+
 ## [2.4.1] — 2026-07-11
 
 ### Collector split: `collector.py` → `app/services/collector/` package (#83)

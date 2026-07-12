@@ -40,7 +40,7 @@
     <li class="nav-item {% if request.url.path.startswith('/settings') %}active{% endif %}">
       <a id="nav-settings" href="/settings"><i class="bi bi-gear"></i><span> Settings</span></a>
     </li>
-    <li class="nav-item {% if request.url.path.startswith('/combined') %}active{% endif %}" id="nav-combined-item" style="display:none;">
+    <li class="nav-item d-none {% if request.url.path.startswith('/combined') %}active{% endif %}" id="nav-combined-item">
       <a id="nav-combined" href="/combined"><i class="bi bi-diagram-3"></i><span> Combined</span></a>
     </li>
     {% if enable_api_docs %}
@@ -63,15 +63,15 @@
       <button id="sidebar-toggle" class="btn btn-sm btn-outline-secondary">
         <i class="bi bi-list"></i>
       </button>
-      <a id="version-badge" class="badge bg-secondary topbar-version" href="https://github.com/theojamesvibes/mypi/blob/main/CHANGELOG.md" target="_blank" style="text-decoration:none;">v{{ app_version }}</a>
+      <a id="version-badge" class="badge bg-secondary topbar-version text-decoration-none" href="https://github.com/theojamesvibes/mypi/blob/main/CHANGELOG.md" target="_blank">v{{ app_version }}</a>
       {% if 'dev' in app_version %}
       <span class="badge bg-warning text-dark" title="Development build — not for production use">DEV</span>
       {% endif %}
     </div>
     <div class="d-flex align-items-center gap-2">
       <!-- Site picker: hidden when only 1 active site; populated by JS below. -->
-      <select id="site-picker" class="form-select form-select-sm" style="display:none; width:auto;"></select>
-      <span class="badge bg-secondary" id="sync-status-badge" style="display:none!important;"></span>
+      <select id="site-picker" class="form-select form-select-sm w-auto d-none"></select>
+      <span class="badge bg-secondary d-none" id="sync-status-badge"></span>
       <span class="badge bg-success" id="online-count">— online</span>
       <span class="text-muted small" id="last-updated"></span>
     </div>

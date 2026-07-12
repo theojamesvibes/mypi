@@ -43,13 +43,13 @@ document.getElementById('sidebar-toggle').addEventListener('click', () => {
   // the Combined page itself isn't necessary (no redirect loop); we keep
   // it visible there so users can tell which page they're on via 'active'.
   if (combinedNavItem) {
-    combinedNavItem.style.display = multi ? '' : 'none';
+    combinedNavItem.classList.toggle('d-none', !multi);
   }
 
   // Site picker — irrelevant on /combined (view is cross-site by nature).
   if (picker) {
     if (!multi || section === 'combined') {
-      picker.style.display = 'none';
+      picker.classList.add('d-none');
     } else {
       picker.innerHTML = '';
       const currentSlug = window.currentSiteSlug;
@@ -69,7 +69,7 @@ document.getElementById('sidebar-toggle').addEventListener('click', () => {
           }
         }
       }
-      picker.style.display = '';
+      picker.classList.remove('d-none');
       picker.addEventListener('change', () => {
         const slug = picker.value;
         window.location.href = '/' + window.currentSection + '/' + encodeURIComponent(slug);

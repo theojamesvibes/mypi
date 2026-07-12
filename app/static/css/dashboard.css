@@ -432,3 +432,58 @@ body.login-body {
   .combined-ticker-instance,
   .combined-ticker-client { display: none; }
 }
+
+/* ── Former inline styles ─────────────────────────────────────────────────────
+   CSP style-src has no 'unsafe-inline', so style="" attributes (server-rendered
+   or built via innerHTML) are blocked. Everything below replaces one. Dynamic
+   values (instance colors) go through data-bg + CSSOM in dashboard.js instead. */
+
+/* Value-named font-size utilities (Bootstrap's fs-1…6 are too coarse). */
+.fs-65 { font-size: 0.65rem; }
+.fs-68 { font-size: 0.68rem; }
+.fs-70 { font-size: 0.7rem; }
+.fs-72 { font-size: 0.72rem; }
+.fs-75 { font-size: 0.75rem; }
+
+.minw-11 { min-width: 11rem; }
+.minw-13 { min-width: 13rem; }
+
+/* Hero shield icon on the login / change-password cards. */
+.auth-icon { font-size: 2.5rem; }
+
+/* Keeps the sync line from collapsing while empty (avoids layout shift). */
+.reserve-line { min-height: 1.2em; }
+
+/* Chart.js needs a positioned, height-stable parent for responsive resize. */
+.chart-holder { position: relative; min-height: 280px; }
+.chart-canvas-capped { max-height: 220px; }
+
+/* Truncated table cells (pair with Bootstrap's .text-truncate). */
+.cell-w-200 { max-width: 200px; }
+.cell-w-220 { max-width: 220px; }
+
+/* Chart legend swatches (dashboard "Queries over Time" header). */
+.chart-legend-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  margin-right: 4px;
+}
+.chart-legend-swatch-queries { background: rgba(60, 141, 188, 0.8); }
+.chart-legend-swatch-blocked { background: rgba(221, 75, 57, 0.8); }
+
+/* Per-instance color dot in system panels; background set via data-bg. */
+.inst-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+
+/* Neutral instance-name pill in query tables. */
+.badge-instance { background: #6c757d; font-weight: 500; }
+
+/* Site-colored link badge on combined instance rows; background via data-bg. */
+.site-badge-link { color: #fff; font-weight: 500; }

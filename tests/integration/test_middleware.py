@@ -19,12 +19,26 @@ async def test_health_response_has_security_headers(client):
     assert csp is not None
     assert "default-src 'self'" in csp
     assert "frame-ancestors 'none'" in csp
-    # script-src must never regress to 'unsafe-inline' — all page JS lives
-    # in /static/js and server data travels via JSON islands (issue #84).
+    # Neither script-src nor style-src may regress to 'unsafe-inline' —
+    # page JS lives in /static/js with server data in JSON islands (issue
+    # #84), and former style="" attributes live in dashboard.css classes
+    # with dynamic colors applied via the CSSOM.
     directives = {
         d.strip().split(" ", 1)[0]: d.strip() for d in csp.split(";") if d.strip()
     }
     assert directives["script-src"] == "script-src 'self' https://cdn.jsdelivr.net"
+    assert directives["style-src"] == "style-src 'self' https://cdn.jsdelivr.net"
+
+
+async def test_docs_pages_get_style_unsafe_inline_exception(client):
+    """Swagger UI and ReDoc render with inline styles (upstream limitation),
+    so /docs and /redoc — and only they — relax style-src. Scripts stay
+    strict there too."""
+    for path in ("/docs", "/redoc"):
+        resp = await client.get(path)
+        csp = resp.headers.get("Content-Security-Policy") or ""
+        assert "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net" in csp, path
+        assert "script-src 'self' https://cdn.jsdelivr.net" in csp, path
 
 
 async def test_404_response_still_has_security_headers(client):
