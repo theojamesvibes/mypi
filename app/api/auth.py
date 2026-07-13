@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import (
     _decode_token_claims,
     create_access_token,
+    equalize_login_timing,
     generate_api_key,
     get_current_user,
     hash_password,
@@ -46,8 +47,10 @@ async def login(request: Request, body: LoginRequest, response: Response, db: As
     user = result.scalar_one_or_none()
     # Enforce lockout *before* the password check so a locked account
     # can't be probed for password correctness during the cooldown.
-    # Same 401 shape as a wrong password — no enumeration leak.
+    # Same 401 shape as a wrong password — no enumeration leak — and a
+    # dummy bcrypt so the early return isn't a timing oracle either.
     if is_user_locked_out(user):
+        equalize_login_timing()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     # verify_user_password runs bcrypt against a dummy hash when user is None
     # so response time doesn't leak whether the username is registered.

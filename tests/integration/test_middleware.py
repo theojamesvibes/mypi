@@ -95,6 +95,22 @@ async def test_invalid_content_length_header_returns_400(client):
     assert resp.status_code in (400, 422)
 
 
+async def test_oversized_chunked_body_returns_413(client):
+    """A chunked transfer carries no Content-Length, so the header check
+    can't gate it — the counting receive-wrapper must cut it off instead."""
+
+    async def _two_mib_stream():
+        for _ in range(32):
+            yield b"x" * (64 * 1024)  # 32 × 64 KiB = 2 MiB
+
+    resp = await client.post(
+        "/api/auth/login",
+        content=_two_mib_stream(),
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 413
+
+
 async def test_normal_body_passes_through(client):
     """Sanity: a small body still gets routed normally and processed
     by the login handler (which 401s a missing user)."""

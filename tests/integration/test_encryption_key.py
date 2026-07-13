@@ -97,3 +97,126 @@ async def test_key_generated_and_persisted_when_absent(db_session):
     assert row is not None
     assert row.value == settings.encryption_key
     assert pihole_models._fernet is None
+
+
+# ── scripts/rotate_encryption_key.py ─────────────────────────────────────────
+#
+# The rotation script moves the key out of app_settings: everything Fernet-
+# encrypted (pihole passwords, pushover creds) is re-encrypted under a fresh
+# key and the DB copy of the old key is deleted. scripts/ is not a package,
+# so load it by path.
+
+
+def _load_rotation_module():
+    import importlib.util
+    from pathlib import Path
+
+    script = Path(__file__).parents[2] / "scripts" / "rotate_encryption_key.py"
+    spec = importlib.util.spec_from_file_location("rotate_encryption_key", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+async def test_rotation_reencrypts_everything_and_deletes_db_key(db_session):
+    import json
+
+    from sqlalchemy import text
+
+    rot = _load_rotation_module()
+
+    old_key = Fernet.generate_key().decode()
+    old = Fernet(old_key.encode())
+    settings.encryption_key = ""  # force _resolve_old_key onto the DB row
+    db_session.add(AppSetting(key=_ENCRYPTION_KEY_SETTING, value=old_key))
+
+    # A site with one instance whose password is encrypted under the old key,
+    # plus a pushover settings row with encrypted creds and one legacy
+    # plaintext field (pre-encryption row).
+    from app.models.site import Site, SiteSetting
+
+    site = Site(name="Rot", slug="rot", is_main=True)
+    db_session.add(site)
+    await db_session.flush()
+    await db_session.execute(
+        text(
+            "INSERT INTO pihole_instances (id, site_id, name, url, api_password, color, is_active, is_master) "
+            "VALUES (gen_random_uuid(), :sid, 'ph1', 'http://ph1', :pw, '#fff', true, true)"
+        ),
+        {"sid": site.id, "pw": old.encrypt(b"hunter2").decode()},
+    )
+    db_session.add(
+        SiteSetting(
+            site_id=site.id,
+            key="pushover_settings",
+            value=json.dumps(
+                {
+                    "app_token": old.encrypt(b"tok").decode(),
+                    "user_key": "legacy-plaintext",
+                    "enabled": True,
+                }
+            ),
+        )
+    )
+    await db_session.commit()
+
+    resolved = await rot._resolve_old_key(db_session)
+    assert resolved == old_key
+    new = Fernet(Fernet.generate_key())
+
+    rotated, blanked = await rot._rotate_pihole_passwords(db_session, old, new)
+    assert (rotated, blanked) == (1, 0)
+    pushover_rows = await rot._rotate_pushover_settings(db_session, old, new)
+    assert pushover_rows == 1
+    await db_session.commit()
+
+    pw = (
+        await db_session.execute(text("SELECT api_password FROM pihole_instances"))
+    ).scalar_one()
+    assert new.decrypt(pw.encode()).decode() == "hunter2"
+
+    po = json.loads(
+        (
+            await db_session.execute(
+                text("SELECT value FROM site_settings WHERE key = 'pushover_settings'")
+            )
+        ).scalar_one()
+    )
+    assert new.decrypt(po["app_token"].encode()).decode() == "tok"
+    # Legacy plaintext must come out encrypted under the new key, not dropped.
+    assert new.decrypt(po["user_key"].encode()).decode() == "legacy-plaintext"
+    assert po["enabled"] is True
+
+
+async def test_rotation_blanks_undecryptable_password(db_session):
+    """A password that doesn't decrypt under the old key is blanked —
+    mirroring EncryptedString's read behaviour, where YAML re-sync
+    restores the real value on next startup."""
+    from sqlalchemy import text
+
+    from app.models.site import Site
+
+    rot = _load_rotation_module()
+
+    site = Site(name="Rot2", slug="rot2", is_main=True)
+    db_session.add(site)
+    await db_session.flush()
+    await db_session.execute(
+        text(
+            "INSERT INTO pihole_instances (id, site_id, name, url, api_password, color, is_active, is_master) "
+            "VALUES (gen_random_uuid(), :sid, 'ph1', 'http://ph1', 'not-a-fernet-token', '#fff', true, true)"
+        ),
+        {"sid": site.id},
+    )
+    await db_session.commit()
+
+    old = Fernet(Fernet.generate_key())
+    new = Fernet(Fernet.generate_key())
+    rotated, blanked = await rot._rotate_pihole_passwords(db_session, old, new)
+    await db_session.commit()
+
+    assert (rotated, blanked) == (0, 1)
+    pw = (
+        await db_session.execute(text("SELECT api_password FROM pihole_instances"))
+    ).scalar_one()
+    assert pw == ""

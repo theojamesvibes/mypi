@@ -8,6 +8,30 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.5.1] — 2026-07-13
+
+### Post-audit hardening sweep (2026-07-13 external review follow-ups)
+
+Six small security items from the July 2026 external (Grok) review pass, plus the week's Dependabot batch. Nothing here is a response to an actual vulnerability report — all are defense-in-depth or hygiene.
+
+**Security:**
+- **Subresource Integrity on every CDN asset.** All jsDelivr `<script>`/`<link>` tags (Bootstrap 5.3.3, Bootstrap Icons 1.11.3, Chart.js 4.4.4, Swagger UI) now carry `integrity="sha384-…" crossorigin="anonymous"`, so a compromised CDN or package can no longer execute in the app — previously the CSP whitelisted the whole `cdn.jsdelivr.net` origin with nothing pinning the content. Swagger UI pinned from the floating `@5` tag to `@5.32.8` (a floating tag can't carry a stable SRI hash). Self-hosting the assets remains the stretch goal that would drop the CDN origin from the CSP entirely.
+- **python-jose → PyJWT 2.13.0.** Only HMAC-family encode/decode was ever used; PyJWT is the actively-maintained standard for that. Drops a semi-maintained dependency (and its bundled ECDSA/JWE surface) from the tree. Same HS256/384/512 allow-list on both encode and decode; `alg=none` and wrong-signature tokens still rejected (covered by existing tests).
+- **`/logout` is now POST-only.** It revokes the session JTI, and `SameSite=Lax` cookies accompany cross-site *top-level GET navigations* — so as a GET route, any page could forcibly log a user out via a plain link. The sidebar logout link became a form button (`#logout-btn`). GET `/logout` now returns 405.
+- **Body-size cap now covers chunked uploads.** The 1 MiB limit only inspected `Content-Length`, which a `Transfer-Encoding: chunked` request simply doesn't send. The middleware was rewritten as pure ASGI (BaseHTTPMiddleware wraps downstream `receive()` in an anyio task group, which mangles the 413 into a generic 400) and now counts streamed bytes, cutting the request off with a clean 413 once the cap is crossed.
+- **Lockout timing oracle closed.** The locked-account branch on both login paths returned before any bcrypt call, answering measurably faster than a wrong password — confirming to a prober that a username exists and is locked. Both branches now burn a dummy bcrypt verify (`equalize_login_timing()`) before rejecting.
+- **Encryption-at-rest honesty.** When `ENCRYPTION_KEY` is unset, the auto-generated Fernet key is stored in `app_settings` — the same database (and every backup) as the ciphertext it protects, so a DB dump contains both. New `scripts/rotate_encryption_key.py` generates a fresh key, re-encrypts Pi-hole passwords + Pushover creds in one transaction, deletes the DB copy of the key, and prints the value to pin in `.env`. The app now warns on **every** startup while the key is DB-sourced (was: one INFO line), and the README documents the threat model plainly.
+
+**Dependencies (Dependabot batch):**
+- uvicorn 0.50.0 → 0.51.0 (#86)
+- coverage 7.15.0 → 7.15.1 (#85)
+
+**Tests:**
+- New: chunked-body 413 (`test_middleware.py`), GET-`/logout`-returns-405 (`test_web_ui.py`), rotation-script round-trip incl. legacy-plaintext Pushover fields and undecryptable-password blanking (`test_encryption_key.py`), `equalize_login_timing` smoke (`test_auth.py`).
+- Playwright logout flow drives the new `#logout-btn` form instead of navigating to the URL.
+
+---
+
 ## [2.5.0] — 2026-07-12
 
 ### CSP hardening, part 2: no more `'unsafe-inline'` styles

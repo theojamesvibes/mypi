@@ -3,8 +3,8 @@ functions that wave-1, wave-2, and wave-3 hardening touched."""
 from __future__ import annotations
 
 import bcrypt
+import jwt
 import pytest
-from jose import jwt
 
 from app import auth
 from app.config import settings
@@ -64,6 +64,12 @@ def test_verify_user_password_returns_false_for_none_user():
     assert auth.verify_user_password("anything", None) is False
 
 
+def test_equalize_login_timing_runs_without_raising():
+    """The lockout branch calls this instead of a real password check;
+    it must burn a bcrypt verify quietly (no return value, no exception)."""
+    assert auth.equalize_login_timing() is None
+
+
 def test_dummy_bcrypt_hash_is_a_real_bcrypt_hash():
     """If the dummy hash isn't a valid $2b$ string, bcrypt.checkpw raises
     instead of returning False — which would break the timing assumption
@@ -112,8 +118,9 @@ def test_decode_token_rejects_none_algorithm_token():
     """Even if an attacker hand-crafts a token with alg=none, the
     decode allow-list refuses to accept it.
 
-    python-jose refuses to *encode* with alg=none, so we forge the token
-    by hand: base64url(header).base64url(payload).<empty signature>.
+    PyJWT refuses to *encode* with alg=none unless the key is None, so we
+    forge the token by hand: base64url(header).base64url(payload).<empty
+    signature>.
     """
     import base64
     import json
@@ -130,9 +137,10 @@ def test_decode_token_rejects_none_algorithm_token():
 
 def test_decode_token_rejects_wrong_signature(monkeypatch):
     """A token signed with a different secret must not validate."""
+    # 32+ bytes so PyJWT's InsecureKeyLengthWarning stays out of the run.
     token = jwt.encode(
         {"sub": "alice", "exp": 9999999999, "jti": "x"},
-        key="some-other-secret",
+        key="some-other-secret-that-is-long-enough",
         algorithm="HS256",
     )
     assert auth._decode_token_claims(token) is None

@@ -16,6 +16,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from starlette.datastructures import Headers
 
 from app.api import auth as auth_router
 from app.api import display as display_router
@@ -31,6 +32,7 @@ from app.api import sync as sync_router
 from app.api import version as version_router
 from app.auth import (
     _decode_token_claims,
+    equalize_login_timing,
     get_current_user_optional,
     hash_password,
     is_current_request_readonly,
@@ -130,7 +132,19 @@ async def _ensure_encryption_key() -> None:
         if row and row.value:
             settings.encryption_key = row.value
             pihole_models._fernet = None  # force _get_fernet() to re-initialise
-            logger.info("Loaded encryption key from database.")
+            # WARN on every startup, not just at generation time: while the
+            # key lives in app_settings it sits in the same database (and
+            # every backup of it) as the ciphertext it protects, so
+            # encryption-at-rest defends against nothing beyond casual
+            # observation. Only moving the key to the environment separates
+            # the secret from the data store.
+            logger.warning(
+                "Encryption key loaded from the app_settings table. A key stored "
+                "in the database does NOT protect Pi-hole passwords against "
+                "database or backup exposure — the key ships alongside the "
+                "ciphertext. Run scripts/rotate_encryption_key.py to move it "
+                "into .env as ENCRYPTION_KEY."
+            )
             return
 
         # No key anywhere — generate one and persist it.
@@ -149,8 +163,10 @@ async def _ensure_encryption_key() -> None:
         # the key for portability can read it from the app_settings table.
         logger.warning(
             "ENCRYPTION_KEY was not set — a key has been auto-generated and saved to the "
-            "app_settings table (key='%s'). For portability, copy it from the database "
-            "into your .env as ENCRYPTION_KEY before redeploying.",
+            "app_settings table (key='%s'). While it lives there, it ships inside every "
+            "database dump alongside the ciphertext it protects. Run "
+            "scripts/rotate_encryption_key.py to generate a fresh key, re-encrypt stored "
+            "passwords, and move the key into .env as ENCRYPTION_KEY.",
             _ENCRYPTION_KEY_SETTING,
         )
 
@@ -354,23 +370,69 @@ _CSP_POLICY_DOCS = _CSP_POLICY.replace(
 _MAX_BODY_BYTES = 1 * 1024 * 1024
 
 
-@app.middleware("http")
-async def _body_size_limit(request: Request, call_next):
-    content_length = request.headers.get("content-length")
-    if content_length:
-        try:
-            length = int(content_length)
-        except ValueError:
-            return JSONResponse(
-                {"detail": "Invalid Content-Length header."},
-                status_code=400,
-            )
-        if length > _MAX_BODY_BYTES:
-            return JSONResponse(
-                {"detail": f"Request body exceeds {_MAX_BODY_BYTES} bytes."},
-                status_code=413,
-            )
-    return await call_next(request)
+class _BodySizeLimitMiddleware:
+    """Reject request bodies over _MAX_BODY_BYTES.
+
+    Deliberately pure ASGI, not @app.middleware("http"): BaseHTTPMiddleware
+    runs downstream receive() calls inside an anyio task group, which
+    re-raises our 413 HTTPException as an ExceptionGroup — FastAPI's body
+    parsing then converts that to a generic 400. As plain ASGI (and kept
+    innermost, i.e. registered before the security-headers middleware), the
+    exception surfaces directly in the routing frame and FastAPI's
+    `except HTTPException: raise` returns a clean 413.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        content_length = Headers(scope=scope).get("content-length")
+        if content_length:
+            try:
+                length = int(content_length)
+            except ValueError:
+                response = JSONResponse(
+                    {"detail": "Invalid Content-Length header."},
+                    status_code=400,
+                )
+                await response(scope, receive, send)
+                return
+            if length > _MAX_BODY_BYTES:
+                response = JSONResponse(
+                    {"detail": f"Request body exceeds {_MAX_BODY_BYTES} bytes."},
+                    status_code=413,
+                )
+                await response(scope, receive, send)
+                return
+            await self.app(scope, receive, send)
+            return
+
+        # No Content-Length — a chunked transfer, which the header check
+        # above can't see. Count the streamed bytes and cut the request off
+        # once the cap is crossed; the HTTPException surfaces wherever the
+        # body is read (FastAPI body parsing / route handler).
+        received = 0
+
+        async def _counting_receive():
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > _MAX_BODY_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Request body exceeds {_MAX_BODY_BYTES} bytes.",
+                    )
+            return message
+
+        await self.app(scope, _counting_receive, send)
+
+
+app.add_middleware(_BodySizeLimitMiddleware)
 
 
 @app.middleware("http")
@@ -444,8 +506,10 @@ async def login_form(request: Request, response: Response, db=Depends(get_db)):
 
     # Lockout check runs before the password check so a locked account
     # can't be probed during cooldown. Same generic error message as a
-    # wrong password — no enumeration leak.
+    # wrong password — no enumeration leak — and a dummy bcrypt so the
+    # early return isn't a timing oracle either.
     if is_user_locked_out(user):
+        equalize_login_timing()
         return templates.TemplateResponse(
             request, "login.html", {"error": "Invalid username or password"}, status_code=401
         )
@@ -466,7 +530,10 @@ async def login_form(request: Request, response: Response, db=Depends(get_db)):
     return redirect
 
 
-@app.get("/logout", include_in_schema=False)
+# POST-only: logout mutates state (JTI revocation + cookie deletion), and a
+# GET route would be triggerable cross-site via a plain link — SameSite=Lax
+# sends the session cookie on top-level GET navigations.
+@app.post("/logout", include_in_schema=False)
 async def logout_web(
     session_token: str | None = Cookie(default=None),
     db=Depends(get_db),

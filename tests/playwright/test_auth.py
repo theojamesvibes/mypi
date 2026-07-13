@@ -83,7 +83,9 @@ def test_full_login_then_logout(logged_in_page: Page, base_url: str):
     page = logged_in_page
     expect(page).to_have_url(f"{base_url}/")
 
-    page.goto(f"{base_url}/logout")
+    # /logout is POST-only (2.5.1) — drive it through the sidebar button
+    # like a real user instead of navigating to the URL.
+    page.click("#logout-btn")
     expect(page).to_have_url(f"{base_url}/login")
 
     # Cookie cleared — visiting / should redirect back to login.

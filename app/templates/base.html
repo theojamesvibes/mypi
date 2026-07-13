@@ -6,9 +6,9 @@
   <title>{% block title %}MyPi{% endblock %} — Pi-hole Dashboard</title>
   <link rel="icon" type="image/svg+xml" href="/static/img/logo.svg">
   <!-- Bootstrap 5 -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
   <!-- Bootstrap Icons -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" integrity="sha384-XGjxtQfXaH2tnPFa9x+ruJTuLE3Aa6LhHSWRr1XeTyhezb4abCG4ccI5AkVDxqC+" crossorigin="anonymous">
   <!-- Custom -->
   <link rel="stylesheet" href="/static/css/dashboard.css">
   <!-- Server data for boot.js — a JSON island is data, not code, so the
@@ -50,9 +50,14 @@
     {% endif %}
   </ul>
   <div class="sidebar-footer">
-    <a href="/logout" class="btn btn-sm btn-outline-secondary w-100">
-      <i class="bi bi-box-arrow-right"></i><span> Logout ({{ user.username }})</span>
-    </a>
+    <!-- POST, not a GET link: logout revokes the session JTI, and SameSite=Lax
+         cookies ride along on cross-site top-level GET navigations — a plain
+         link would let any page forcibly log the user out. -->
+    <form method="post" action="/logout">
+      <button type="submit" id="logout-btn" class="btn btn-sm btn-outline-secondary w-100">
+        <i class="bi bi-box-arrow-right"></i><span> Logout ({{ user.username }})</span>
+      </button>
+    </form>
   </div>
 </nav>
 
@@ -83,9 +88,9 @@
 </div>
 
 <!-- Bootstrap JS -->
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
 <!-- Chart.js -->
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js" integrity="sha384-NrKB+u6Ts6AtkIhwPixiKTzgSKNblyhlk0Sohlgar9UHUBzai/sgnNNWWd291xqt" crossorigin="anonymous"></script>
 <!-- App JS -->
 <script src="/static/js/dashboard.js"></script>
 {% block extra_js %}{% endblock %}

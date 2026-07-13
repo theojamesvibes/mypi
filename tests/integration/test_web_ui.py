@@ -155,9 +155,17 @@ async def test_login_form_post_with_password_change_required_redirects_to_change
 
 
 async def test_logout_redirects_to_login_and_clears_cookie(authed_client):
-    resp = await authed_client.get("/logout", follow_redirects=False)
+    resp = await authed_client.post("/logout", follow_redirects=False)
     assert resp.status_code == 303
     assert resp.headers["location"] == "/login"
+
+
+async def test_logout_rejects_get(authed_client):
+    """Logout mutates state (JTI revocation), so it must not be reachable
+    via GET — SameSite=Lax cookies accompany cross-site top-level GET
+    navigations, which would let any page log the user out via a link."""
+    resp = await authed_client.get("/logout", follow_redirects=False)
+    assert resp.status_code == 405
 
 
 # ── /change-password POST validation ─────────────────────────────────────────

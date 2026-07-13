@@ -9,8 +9,8 @@ from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
 
 import bcrypt
+import jwt
 from fastapi import Cookie, Depends, Header, HTTPException, Request, status
-from jose import JWTError, jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -66,6 +66,17 @@ def verify_user_password(plain: str, user: User | None) -> bool:
     target = user.hashed_password if user is not None else _DUMMY_BCRYPT_HASH
     matched = bcrypt.checkpw(plain.encode()[:_BCRYPT_MAX_BYTES], target.encode())
     return bool(matched and user is not None)
+
+
+def equalize_login_timing() -> None:
+    """Burn one bcrypt verify against the dummy hash.
+
+    Called on login branches that reject *without* running the real
+    password check (currently: an active lockout). Without it, those
+    branches answer measurably faster than a wrong-password attempt,
+    which confirms to a prober that the username exists and is locked.
+    """
+    bcrypt.checkpw(b"timing-equalization-only", _DUMMY_BCRYPT_HASH.encode())
 
 
 def is_user_locked_out(user: User | None) -> bool:
@@ -126,8 +137,8 @@ def _api_key_salt() -> str:
 
 
 # Allow-list — only HMAC-family algorithms are accepted by both encode and
-# decode. Guards against the "ALGORITHM=none in .env" footgun where
-# python-jose would happily accept unsigned tokens when "none" is listed.
+# decode. Guards against the "ALGORITHM=none in .env" footgun where a JWT
+# library would happily accept unsigned tokens when "none" is listed.
 # RS256/ES256 etc. would require an asymmetric keypair we don't ship, so
 # they're not in the list either.
 _VALID_JWT_ALGORITHMS: frozenset[str] = frozenset({"HS256", "HS384", "HS512"})
@@ -164,7 +175,7 @@ def _decode_token_claims(token: str) -> dict | None:
     """Decode a JWT and return its full claims dict, or None if invalid."""
     try:
         return jwt.decode(token, _jwt_key(), algorithms=[_jwt_algorithm()])
-    except JWTError:
+    except jwt.PyJWTError:
         return None
 
 

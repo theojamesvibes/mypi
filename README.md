@@ -2,7 +2,7 @@
 [![build](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/docker-publish.yml?style=flat-square)](https://github.com/theojamesvibes/mypi/actions)
 [![tests](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/test.yml?style=flat-square&label=tests)](https://github.com/theojamesvibes/mypi/actions/workflows/test.yml)
 [![ui-tests](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/ui-tests.yml?style=flat-square&label=ui-tests)](https://github.com/theojamesvibes/mypi/actions/workflows/ui-tests.yml)
-[![version](https://img.shields.io/badge/version-2.3.0-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
+[![version](https://img.shields.io/badge/version-2.5.1-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
 [![platform](https://img.shields.io/badge/platform-linux%2Famd64%20|%20linux%2Farm64-teal?style=flat-square)](https://github.com/theojamesvibes/mypi/pkgs/container/mypi)
 
 > **⚠️ Vibe Code Disclosure**
@@ -93,7 +93,7 @@ A self-hosted dashboard that consolidates up to 10 locally running [Pi-hole](htt
 - **Security headers on every response** — `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: same-origin`, a Content-Security-Policy with no `'unsafe-inline'` for scripts *or* styles (same-origin + jsdelivr only; `/docs`/`/redoc` relax style-src for Swagger UI/ReDoc), and `Strict-Transport-Security` when `SECURE_COOKIES=true`
 - **Rate limits on mutation endpoints** — `/api/sync` (10/min), `/api/domains/{deny,allow}` (30/min each), `/api/notifications/test` (5/min), `/api/notifications/validate` (10/min), `/api/auth/change-password` (5/min)
 - **Audit logging on mutations** — every mutation handler logs `user=<username>` plus the action and target, so the application log doubles as an audit trail
-- **Encrypted secrets at rest** — Pi-hole API passwords and Pushover credentials are Fernet-encrypted in PostgreSQL using `ENCRYPTION_KEY`
+- **Encrypted secrets at rest** — Pi-hole API passwords and Pushover credentials are Fernet-encrypted in PostgreSQL using `ENCRYPTION_KEY`. **Honest threat model:** when `ENCRYPTION_KEY` is unset, the auto-generated key is stored in the same database (`app_settings`) as the ciphertext, so a database dump or backup contains both — the encryption then defends against nothing beyond casual observation. It only protects against DB/backup exposure once the key lives outside the data store: run `docker compose exec app python scripts/rotate_encryption_key.py` to generate a fresh key, re-encrypt stored secrets, remove the DB copy, and get the value to pin in `.env`. Treat pre-rotation backups as containing plaintext passwords.
 - **Optional split secrets** — `JWT_SECRET_KEY` and `API_KEY_SALT` let you rotate JWT signing keys without invalidating API keys (or vice versa); both fall back to `SECRET_KEY` when unset
 - **Per-instance circuit breaker** — a flap-prone Pi-hole is absorbed locally: after N consecutive connection failures, polling for that instance is suspended for a cooldown window, then one probe either closes the breaker or re-arms it. Defaults: 3 failures, 300 s cooldown, 2 s dedup (stats+queries share one connection). Tunable via `CIRCUIT_FAIL_THRESHOLD` / `CIRCUIT_COOLDOWN_SECONDS` / `CIRCUIT_DEDUP_SECONDS`
 - **Container runs as non-root** (UID 1000, no shell); image ships with a `HEALTHCHECK` against `/api/health`
@@ -246,7 +246,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 | `ENABLE_API_DOCS` | `false` | Expose Swagger UI at `/docs`, ReDoc at `/redoc`, and the OpenAPI schema at `/openapi.json`. Default flipped to `false` in 1.8.0 — fail-closed posture. Set to `true` when you actively need the docs (local development, regenerating an iOS OpenAPI client, etc.). |
 | `JWT_SECRET_KEY` | *(falls back to `SECRET_KEY`)* | Separate signing key for session JWTs. Set alongside `API_KEY_SALT` if you want to rotate one without invalidating the other. |
 | `API_KEY_SALT` | *(falls back to `SECRET_KEY`)* | Separate HMAC salt for stored API keys. |
-| `ENCRYPTION_KEY` | *(auto-generated on first boot)* | Fernet key used to encrypt Pi-hole API passwords and Pushover credentials at rest. Auto-generated and persisted to the database if unset; pin it in `.env` for portability. |
+| `ENCRYPTION_KEY` | *(auto-generated on first boot)* | Fernet key used to encrypt Pi-hole API passwords and Pushover credentials at rest. Auto-generated and persisted to the database if unset — but a key stored next to its ciphertext protects nothing against DB/backup exposure (the app warns on every startup while this is the case). Use `scripts/rotate_encryption_key.py` to rotate the key out of the database and pin it here. |
 | `CIRCUIT_FAIL_THRESHOLD` | `3` | Consecutive connection failures against one Pi-hole before the per-instance circuit breaker trips. |
 | `CIRCUIT_COOLDOWN_SECONDS` | `300` | How long polling is suspended for a tripped instance before the next probe. |
 | `CIRCUIT_DEDUP_SECONDS` | `2.0` | Window in which a stats+queries failure on the shared connection counts as one event. |
