@@ -16,12 +16,14 @@ from app.services import pushover as pushover_service
 from app.services.collector import state
 from app.services.collector.state import (
     _STALL_THRESHOLD_POLLS,
+    _VIP_DOMINANCE_SHARE,
     _VIP_TRANSFER_CONFIRM_POLLS,
     _site_poll_seq,
     _vip_active_node,
-    _vip_advance_streak,
     _vip_group_stall_alerted,
     _vip_last_advance_seq,
+    _vip_lead_streak,
+    _vip_prev_count,
 )
 
 logger = logging.getLogger(__name__)
@@ -65,20 +67,38 @@ async def _check_vip_state(
     seq = _site_poll_seq.get(site_id, 0) + 1
     _site_poll_seq[site_id] = seq
 
-    # Update per-instance advance bookkeeping.
+    # Per-poll bookkeeping.
+    #   - `_vip_last_advance_seq` / `any_advanced` / `ever_advanced` drive the
+    #     group-stall check below (did the *whole* cluster go flat?), keyed off
+    #     the boolean `advanced` signal.
+    #   - `deltas[instance_id]` is each node's query *volume* this poll — the
+    #     signal that distinguishes the VIP holder (serves the bulk of the
+    #     cluster's traffic) from a standby (residual direct queries only).
+    #     A boolean "did it advance at all?" can't: where a standby's real IP
+    #     is a client's secondary resolver it advances every poll too, so both
+    #     nodes look permanently active and the old streak-of-advances logic
+    #     flapped the active label on any single incumbent blip.
     any_advanced_this_poll = False
     ever_advanced = False
-    for inst, _snap, advanced in vip_outcomes:
+    deltas: dict[uuid.UUID, int] = {}
+    for inst, snap, advanced in vip_outcomes:
         key = str(inst.id)
         if advanced:
             _vip_last_advance_seq[key] = seq
-            _vip_advance_streak[key] = _vip_advance_streak.get(key, 0) + 1
             any_advanced_this_poll = True
-        elif advanced is False:
-            _vip_advance_streak[key] = 0
-        # advanced is None on bootstrap → don't update streak yet.
+        # advanced is None on bootstrap → don't touch stall bookkeeping yet.
         if key in _vip_last_advance_seq:
             ever_advanced = True
+
+        new_count = snap.dns_queries_today or 0
+        prev_count = _vip_prev_count.get(key)
+        _vip_prev_count[key] = new_count
+        if prev_count is None or new_count < prev_count:
+            # Bootstrap poll, or a counter rollover (midnight / FTL restart):
+            # no meaningful volume delta to attribute this poll.
+            deltas[inst.id] = 0
+        else:
+            deltas[inst.id] = new_count - prev_count
 
     # Seed the active node on the very first poll where we can determine
     # one. Prefer the configured vip_master so a fresh start doesn't
@@ -92,52 +112,67 @@ async def _check_vip_state(
             configured_master.id if configured_master else None
         )
 
-    # Transfer detection — pick the node with the highest streak that
-    # also has the most recent advance. If the current active node also
-    # advanced this poll, it stays put; only when *another* node has
-    # been advancing for `_VIP_TRANSFER_CONFIRM_POLLS` polls in a row
-    # while the current active has gone idle do we declare a transfer.
     current_active_id = _vip_active_node.get(site_id)
-    current_active_inst = next(
-        (inst for inst, _, _ in vip_outcomes if inst.id == current_active_id),
-        None,
-    )
-    current_active_idle = (
-        current_active_inst is None
-        or _vip_advance_streak.get(str(current_active_inst.id), 0) == 0
-    )
 
-    if current_active_idle and any_advanced_this_poll:
-        # Look for a confirmed challenger.
-        challenger: PiholeInstance | None = None
+    # Active-node / transfer detection by query-volume dominance. Find the
+    # node carrying the dominant share of this poll's cluster traffic; a
+    # transfer is confirmed only once a *different* node has held that share
+    # for `_VIP_TRANSFER_CONFIRM_POLLS` consecutive polls. A single idle poll
+    # on the incumbent momentarily hands the lead to a chattering standby, but
+    # the streak resets the moment the incumbent serves the majority again, so
+    # it never reaches the confirm gate — killing the phantom flapping.
+    total_delta = sum(deltas.values())
+    dominant_id: uuid.UUID | None = None
+    if total_delta > 0:
+        leader_id, leader_delta = max(deltas.items(), key=lambda kv: kv[1])
+        if leader_delta / total_delta >= _VIP_DOMINANCE_SHARE:
+            dominant_id = leader_id
+
+    if dominant_id is not None:
+        # One node clearly owns this poll's traffic: advance its lead streak
+        # and reset every other node's (dominance must be *consecutive*).
         for inst, _snap, _adv in vip_outcomes:
-            if inst.id == current_active_id:
-                continue
-            streak = _vip_advance_streak.get(str(inst.id), 0)
-            # Prefer the configured vip_master if multiple nodes
-            # qualify — closest match to "the cluster's normal state."
-            if streak >= _VIP_TRANSFER_CONFIRM_POLLS and (
-                challenger is None or inst.vip_role == "master"
-            ):
-                challenger = inst
+            key = str(inst.id)
+            if inst.id == dominant_id:
+                _vip_lead_streak[key] = _vip_lead_streak.get(key, 0) + 1
+            else:
+                _vip_lead_streak[key] = 0
+    else:
+        # Ambiguous poll (no majority, or the whole cluster went flat). Don't
+        # let it build a challenger — reset every non-incumbent's streak.
+        for inst, _snap, _adv in vip_outcomes:
+            if inst.id != current_active_id:
+                _vip_lead_streak[str(inst.id)] = 0
 
-        if challenger is not None and challenger.id != current_active_id:
-            old_name = (
-                current_active_inst.name if current_active_inst else "unknown"
-            )
-            logger.warning(
-                "VIP transfer in site '%s': active node %s → %s "
-                "(streak=%d).",
-                site_name, old_name, challenger.name,
-                _vip_advance_streak.get(str(challenger.id), 0),
-            )
-            _vip_active_node[site_id] = challenger.id
-            state._spawn(pushover_service.notify_vip_transfer(
-                old_name=old_name,
-                new_name=challenger.name,
-                site_name=site_name,
-                site_id=site_id,
-            ))
+    if (
+        dominant_id is not None
+        and dominant_id != current_active_id
+        and _vip_lead_streak.get(str(dominant_id), 0) >= _VIP_TRANSFER_CONFIRM_POLLS
+    ):
+        challenger = next(
+            inst for inst, _, _ in vip_outcomes if inst.id == dominant_id
+        )
+        current_active_inst = next(
+            (inst for inst, _, _ in vip_outcomes if inst.id == current_active_id),
+            None,
+        )
+        old_name = (
+            current_active_inst.name if current_active_inst else "unknown"
+        )
+        logger.warning(
+            "VIP transfer in site '%s': active node %s → %s "
+            "(lead streak=%d, share=%.0f%%).",
+            site_name, old_name, challenger.name,
+            _vip_lead_streak.get(str(dominant_id), 0),
+            100 * deltas[dominant_id] / total_delta,
+        )
+        _vip_active_node[site_id] = challenger.id
+        state._spawn(pushover_service.notify_vip_transfer(
+            old_name=old_name,
+            new_name=challenger.name,
+            site_name=site_name,
+            site_id=site_id,
+        ))
 
     # Group stall — every VIP node has been flat for >= threshold polls
     # AND the cluster has at least one historical advance to anchor

@@ -26,9 +26,10 @@ from app.services.collector.state import (
     _stall_alerted,
     _stall_count,
     _vip_active_node,
-    _vip_advance_streak,
     _vip_group_stall_alerted,
     _vip_last_advance_seq,
+    _vip_lead_streak,
+    _vip_prev_count,
 )
 
 logger = logging.getLogger(__name__)
@@ -55,7 +56,7 @@ async def prune_inactive_state() -> None:
         _consec_failures, _cooldown_until, _last_failure_at,
         _prev_dns_queries_today, _prev_watermark_for_stall,
         _stall_count, _stall_alerted,
-        _vip_last_advance_seq, _vip_advance_streak,
+        _vip_last_advance_seq, _vip_prev_count, _vip_lead_streak,
     ):
         for key in list(state_dict):
             if key not in active_keys:
@@ -123,7 +124,8 @@ async def shutdown() -> None:
     _stall_count.clear()
     _stall_alerted.clear()
     _vip_last_advance_seq.clear()
-    _vip_advance_streak.clear()
+    _vip_prev_count.clear()
+    _vip_lead_streak.clear()
     _vip_active_node.clear()
     _vip_group_stall_alerted.clear()
     _site_poll_seq.clear()
