@@ -198,10 +198,9 @@ def test_check_stalled_increments_then_alerts(monkeypatch):
 
 
 async def test_vip_transfer_requires_5_confirming_polls(monkeypatch):
-    """A standby that briefly serves a few queries must NOT trigger a
-    transfer alert — only sustained advancement past the confirm
-    threshold counts. Replaces the dev.20-era 2-poll false-positive
-    bug."""
+    """A challenger that only briefly out-serves the incumbent must NOT
+    trigger a transfer — dominance has to hold past the confirm threshold.
+    Replaces the dev.20-era 2-poll false-positive bug."""
     spawned = []
     monkeypatch.setattr(collector.state, "_spawn", lambda coro: spawned.append(coro))
 
@@ -211,19 +210,21 @@ async def test_vip_transfer_requires_5_confirming_polls(monkeypatch):
 
     # Bootstrap: master is the active node.
     outcomes = [
-        (master, _snap(), True),    # master advances → seeds active
-        (replica, _snap(), False),
+        (master, _snap(count=1000), True),   # master advances → seeds active
+        (replica, _snap(count=500), False),
     ]
     await collector._check_vip_state(site_id, "site", outcomes, configured_vip_count=2)
     assert collector._vip_active_node[site_id] == master.id
 
-    # Now master goes idle, replica advances — but only 4 polls in a
-    # row, one short of the confirmation threshold.
+    # Now the replica carries all the traffic (master flat) — but only 4
+    # polls in a row, one short of the confirmation threshold.
     confirm = collector._VIP_TRANSFER_CONFIRM_POLLS
+    rc = 500
     for _ in range(confirm - 1):
+        rc += 100
         outcomes = [
-            (master, _snap(), False),
-            (replica, _snap(), True),
+            (master, _snap(count=1000), False),   # master idle
+            (replica, _snap(count=rc), True),     # replica dominates
         ]
         await collector._check_vip_state(site_id, "site", outcomes, configured_vip_count=2)
 
@@ -236,6 +237,9 @@ async def test_vip_transfer_requires_5_confirming_polls(monkeypatch):
 
 
 async def test_vip_transfer_fires_after_confirm_threshold(monkeypatch):
+    """A sustained real failover — the master goes flat while the replica
+    takes over all the query volume — must be reported once dominance holds
+    for the confirm window."""
     spawned: list = []
     monkeypatch.setattr(collector.state, "_spawn", lambda coro: spawned.append(coro))
 
@@ -246,15 +250,17 @@ async def test_vip_transfer_fires_after_confirm_threshold(monkeypatch):
     # Seed master as active.
     await collector._check_vip_state(
         site_id, "site",
-        [(master, _snap(), True), (replica, _snap(), False)],
+        [(master, _snap(count=1000), True), (replica, _snap(count=500), False)],
         configured_vip_count=2,
     )
 
     confirm = collector._VIP_TRANSFER_CONFIRM_POLLS
+    rc = 500
     for _ in range(confirm):
+        rc += 100
         outcomes = [
-            (master, _snap(), False),
-            (replica, _snap(), True),
+            (master, _snap(count=1000), False),   # master flat — VIP gone
+            (replica, _snap(count=rc), True),     # replica now serving all
         ]
         await collector._check_vip_state(site_id, "site", outcomes, configured_vip_count=2)
 
@@ -262,6 +268,58 @@ async def test_vip_transfer_fires_after_confirm_threshold(monkeypatch):
     assert len(spawned) >= 1
     for c in spawned:
         c.close()
+
+
+async def test_vip_no_flap_when_standby_carries_residual_traffic(monkeypatch):
+    """Regression: the VIP holder serves the bulk of the traffic while the
+    standby steadily answers a residual stream (its real IP is a client's
+    secondary resolver). The old streak-of-advances logic saw both nodes
+    advancing every poll and flapped the active label to the standby on any
+    single idle poll of the master. Volume-share dominance must keep the
+    active node pinned to the real VIP holder across such blips."""
+    spawned: list = []
+    monkeypatch.setattr(collector.state, "_spawn", lambda coro: spawned.append(coro))
+
+    site_id = uuid.uuid4()
+    master = _StubInstance(name="m", vip_role="master", site_id=site_id)
+    replica = _StubInstance(name="r", vip_role="replica", site_id=site_id)
+
+    # Seed master as active (bootstrap poll — no deltas yet).
+    await collector._check_vip_state(
+        site_id, "site",
+        [(master, _snap(count=1000), None), (replica, _snap(count=200), None)],
+        configured_vip_count=2,
+    )
+    assert collector._vip_active_node[site_id] == master.id
+
+    mc, rc = 1000, 200
+    for i in range(20):
+        if i % 4 == 3:
+            # Incumbent blip: master serves nothing this poll, replica keeps
+            # answering its residual trickle. This single poll must NOT count
+            # toward a confirmed transfer.
+            rc += 20
+            outcomes = [
+                (master, _snap(count=mc), False),
+                (replica, _snap(count=rc), True),
+            ]
+        else:
+            # Normal poll: master dominates (~83% share), replica trickles.
+            mc += 100
+            rc += 20
+            outcomes = [
+                (master, _snap(count=mc), True),
+                (replica, _snap(count=rc), True),
+            ]
+        await collector._check_vip_state(site_id, "site", outcomes, configured_vip_count=2)
+
+    # The active node never left the real VIP holder, and no phantom
+    # transfer alert was emitted.
+    assert collector._vip_active_node[site_id] == master.id
+    transfer_calls = list(spawned)
+    for c in transfer_calls:
+        c.close()
+    assert len(transfer_calls) == 0
 
 
 async def test_vip_group_stall_requires_every_node_observed_online(monkeypatch):

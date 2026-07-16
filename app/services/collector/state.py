@@ -75,14 +75,20 @@ _STALL_THRESHOLD_POLLS = 5
 #
 # `_vip_last_advance_seq[instance_key]` — site-poll sequence at which this
 #   instance last advanced its counter or watermark. Used by the per-site
-#   VIP check to identify the most-recently-active node.
+#   VIP group-stall check (has the *whole* cluster gone flat?).
 # `_vip_active_node[site_id]` — which instance the cluster is currently
 #   considered to be serving from. Initially seeded from the configured
 #   vip_master on first observation.
-# `_vip_advance_streak[instance_key]` — consecutive site-polls this VIP
-#   instance has advanced. A transfer alert requires a streak of >=
-#   `_VIP_TRANSFER_CONFIRM_POLLS` so a single hiccup doesn't bounce the
-#   active node back and forth.
+# `_vip_prev_count[instance_key]` — dns_queries_today seen at the previous
+#   VIP poll, so the check can compute each node's per-poll query *volume*
+#   (delta), the signal that actually distinguishes the VIP holder from a
+#   standby. Kept separate from `_prev_dns_queries_today` (which the
+#   per-instance stall detector overwrites before the VIP check runs).
+# `_vip_lead_streak[instance_key]` — consecutive site-polls this node has
+#   served the dominant share of the cluster's query volume. A transfer
+#   requires the challenger to lead for >= `_VIP_TRANSFER_CONFIRM_POLLS`
+#   in a row, so a single idle poll on the incumbent can't bounce the
+#   active label to a chattering standby.
 # `_vip_group_stall_alerted[site_id]` — set true after the cluster-stall
 #   alert has fired; cleared when any node advances again.
 # `_site_poll_seq[site_id]` — incrementing counter, one per completed
@@ -90,19 +96,25 @@ _STALL_THRESHOLD_POLLS = 5
 #   the logic doesn't depend on wall clock.
 _vip_last_advance_seq: dict[str, int] = {}
 _vip_active_node: dict[uuid.UUID, uuid.UUID | None] = {}
-_vip_advance_streak: dict[str, int] = {}
+_vip_prev_count: dict[str, int] = {}
+_vip_lead_streak: dict[str, int] = {}
 _vip_group_stall_alerted: dict[uuid.UUID, bool] = {}
 _site_poll_seq: dict[uuid.UUID, int] = {}
 
-# Polls of sustained advance required on a candidate before we declare the
-# active node has shifted. With a 60s poll interval, 5 polls = ~5 min —
+# Polls of sustained dominance required on a challenger before we declare
+# the active node has shifted. With a 60s poll interval, 5 polls = ~5 min —
 # loose enough that a longer-lived blip on the master (TLS handshake stall,
 # brief FTL wedge, gravity run) doesn't cause a phantom transfer to the
 # standby just because it happened to serve a few queries during the gap.
-# The candidate must be *processing traffic* (advancing query watermark)
-# for all 5 consecutive polls — a standby that briefly answers a query and
-# then goes quiet again won't trip the gate.
 _VIP_TRANSFER_CONFIRM_POLLS = 5
+
+# Share of the cluster's per-poll query volume a single node must carry to
+# count as "the node serving the VIP" that poll. The VIP holder answers all
+# VIP-directed traffic and so dominates; a standby only sees residual direct
+# queries (clients that point at its real IP as a secondary resolver, its own
+# OS lookups). A hair above 0.5 so a genuine ~50/50 split — ambiguous, and
+# not something we should flap on — confirms nobody rather than coin-flipping.
+_VIP_DOMINANCE_SHARE = 0.55
 
 # Fire-and-forget Pushover notification tasks. asyncio keeps only weak refs
 # to bare `create_task(...)` — stash each task here and log any exception so

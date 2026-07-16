@@ -8,6 +8,20 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.5.2] — 2026-07-14
+
+### Fixed
+
+- **Phantom VIP transfer flapping.** The per-site VIP detector (`collector/vip.py`) decided the active node from a *binary* "did this node's query counter advance at all this poll?" signal, gated by a streak of consecutive advancing polls. That assumed the standby sits idle while the master holds the VIP — but in deployments where a standby's real IP is configured as a client's secondary resolver (or it just answers its own OS lookups), the standby advances every poll too. Both nodes then carried permanent advance streaks, so a **single** idle poll on the real VIP holder (a TLS blip, a circuit-breaker skip, a quiet 60-second window) instantly handed the "active" label to the chattering standby, and it bounced back a poll later — producing a stream of `VIP transfer … pihole1 → pihole3` / `pihole3 → pihole1` alerts while keepalived never actually moved the VIP. Observed at the WTR site: `pihole1` steadily served ~5–10× the traffic of `pihole3` (which held the VIP the whole time), yet the two nodes' active label ping-ponged.
+
+  The active node is now determined by **query-volume dominance**: each poll the detector attributes per-node query deltas (`dns_queries_today`) and finds which node served the majority share (`_VIP_DOMINANCE_SHARE`, 55%) of the cluster's traffic. A transfer is confirmed only once a *different* node holds that majority for `_VIP_TRANSFER_CONFIRM_POLLS` (5) consecutive polls, so an incumbent blip momentarily hands the lead to a standby but the streak resets the instant the incumbent serves the majority again — it never reaches the gate. A genuine keepalived failover (master drops to ~0, standby takes over the traffic) still fires correctly. The group-stall detector (whole VIP dead) is unchanged.
+
+### Tests
+
+- New regression test `test_vip_no_flap_when_standby_carries_residual_traffic` reproduces the residual-standby-traffic + incumbent-blip case and asserts the active node never leaves the real VIP holder. The two existing transfer tests now drive real query volumes rather than the binary advance flag.
+
+---
+
 ## [2.5.1] — 2026-07-13
 
 ### Post-audit hardening sweep (2026-07-13 external review follow-ups)

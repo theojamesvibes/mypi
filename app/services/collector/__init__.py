@@ -98,9 +98,10 @@ from app.services.collector.state import (
     _stall_alerted,
     _stall_count,
     _vip_active_node,
-    _vip_advance_streak,
     _vip_group_stall_alerted,
     _vip_last_advance_seq,
+    _vip_lead_streak,
+    _vip_prev_count,
 )
 from app.services.collector.stats import (
     _check_stalled,

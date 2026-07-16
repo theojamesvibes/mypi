@@ -35,7 +35,8 @@ from app.services.collector.state import (
     _prev_watermark_for_stall,
     _stall_alerted,
     _stall_count,
-    _vip_advance_streak,
+    _vip_lead_streak,
+    _vip_prev_count,
 )
 from app.services.collector.vip import _check_vip_state
 
@@ -246,10 +247,12 @@ async def _poll_stats_for(
         _prev_dns_queries_today.pop(key, None)
         _stall_count.pop(key, None)
         _stall_alerted.pop(key, None)
-        # An offline VIP node also resets its advance streak so a brief
-        # outage on the master doesn't leave a stale streak that causes a
-        # phantom transfer the moment it reappears.
-        _vip_advance_streak.pop(key, None)
+        # An offline VIP node also resets its lead streak and query-count
+        # baseline, so a brief outage on the master doesn't leave stale
+        # state that causes a phantom transfer (or a spurious huge delta)
+        # the moment it reappears.
+        _vip_lead_streak.pop(key, None)
+        _vip_prev_count.pop(key, None)
 
     # Notify sync service if this is the master (enables auto-gravity detection).
     # Per-site as of Phase 4b — each site's master has its own blocklist-count
