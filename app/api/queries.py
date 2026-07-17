@@ -1,3 +1,10 @@
+"""Query-log API — the searchable, paginated table of individual DNS
+lookups, plus a per-client summary and a live Server-Sent-Events (SSE)
+feed that pings the browser whenever new queries arrive.
+
+Two router families are exposed: the global one (`/api/queries/...`) and
+the per-site one (`/api/sites/{slug}/queries/...`).
+"""
 from __future__ import annotations
 
 import asyncio
@@ -88,6 +95,9 @@ def _escape_like(s: str) -> str:
     return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+# Only these columns may be sorted on. Mapping the caller-supplied sort name to
+# a real column here (instead of trusting the raw input) keeps sorting safe —
+# anything not in this list falls back to a default column below.
 _SORT_COLUMNS = {
     "timestamp": QueryLog.timestamp,
     "domain": QueryLog.domain,
@@ -114,6 +124,9 @@ async def get_queries(
     _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Return one page of the DNS query log, newest first, with optional
+    filters (instance, domain, client, status, blocked/permitted) and
+    sorting."""
     if since is None:
         since = datetime.now(UTC) - timedelta(hours=hours)
 
@@ -123,6 +136,9 @@ async def get_queries(
         .where(QueryLog.timestamp >= since)
     )
 
+    # Build the query up incrementally — each filter is applied only when the
+    # caller supplied that parameter, so an omitted filter simply doesn't
+    # narrow the results.
     if instance_id:
         base_q = base_q.where(QueryLog.instance_id == instance_id)
     if domain:
@@ -140,6 +156,8 @@ async def get_queries(
     elif blocked is False:
         base_q = base_q.where(QueryLog.status.not_in(list(BLOCKED_STATUSES)))
 
+    # Pager needs two things: the total count of matching rows (for "page X of
+    # Y"), then just this page's slice, fetched via OFFSET/LIMIT.
     count_q = select(func.count()).select_from(base_q.subquery())
     total_result = await db.execute(count_q)
     total = total_result.scalar_one()
@@ -255,6 +273,7 @@ async def get_queries_for_site(
     _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Same as GET /api/queries, but scoped to a single site's instances."""
     if since is None:
         since = datetime.now(UTC) - timedelta(hours=hours)
 

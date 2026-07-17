@@ -81,6 +81,15 @@ async def _store_queries(instance: PiholeInstance, queries: list) -> int:
 
 
 async def _poll_queries_for(instance: PiholeInstance) -> None:
+    """Fetch new query-log rows for one instance since its watermark.
+
+    Pi-hole returns queries newest-first in pages of up to 500. We walk
+    backwards page by page (moving the `until` cutoff to the oldest row of
+    each full page) until we hit a partial page (the window is drained) or
+    the 10-page safety cap (a traffic burst too big for one tick — a later
+    backfill recovers it). Finally we advance the watermark to the newest
+    timestamp seen so the next poll starts from there.
+    """
     instance_key = str(instance.id)
     from_ts = _last_seen_ts.get(instance_key)
     logger.info("Polling queries for %s (from_ts=%s)", instance.name, from_ts)
@@ -193,6 +202,8 @@ async def backfill_queries_for(instance: PiholeInstance, hours: int = 24) -> Non
         logger.info("Backfill for %s — no existing data, fetching last %dh", instance.name, hours)
 
     # Build clock-aligned hourly windows from backfill_start to now.
+    # Slice the gap into one-hour windows so no single request can exceed the
+    # per-request row cap even on a very busy hour.
     current_hour_start = now.replace(minute=0, second=0, microsecond=0)
     windows: list[tuple[datetime, datetime]] = []
     w = backfill_start.replace(minute=0, second=0, microsecond=0)

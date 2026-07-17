@@ -22,6 +22,8 @@ router = APIRouter(prefix="/api/instances", tags=["instances"])
 
 
 def _build_status(inst: PiholeInstance, snapshots: dict) -> InstanceStatus:
+    """Merge an instance's config row with its latest stats snapshot into one
+    status object (zeros / 'unknown' when no snapshot exists yet)."""
     snap = snapshots.get(inst.id)
     return InstanceStatus(
         id=inst.id,

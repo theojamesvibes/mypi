@@ -8,6 +8,23 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.5.3] — 2026-07-17
+
+### Documentation
+
+- **Readability & comment sweep across the whole `app/` package.** A structured review pass judged the codebase for a non-specialist reader (an IT generalist, not a career programmer) and filled the gaps in explanatory comments and docstrings. No runtime behaviour changed — every edit is a comment or docstring except one pure rename (see below). Highlights:
+  - **VIP flapping algorithm (`collector/vip.py`)** now opens with a plain-English preamble defining what a VIP is, what "flapping" was, and the v2.5.2 fix (traffic *share* vs. did-it-serve), plus inline explanations of the dominance arithmetic and the three-part transfer-confirm gate.
+  - **Jargon defined once at first use:** `SID` (Pi-hole session token), `jti` (JWT id used for logout revocation), `slug` (URL-safe short name), and `watermark` (timestamp of the newest query already stored).
+  - **Database models** (`models/pihole.py`, `site.py`, `settings.py`, `user.py`) gained class docstrings describing what one row of each table represents in business terms.
+  - **Module and route docstrings** added across `main.py`, `auth.py`, `config.py`, `database.py`, the `api/` routers (notably the dense `count(case(...))` stats aggregation and the query-log pagination), the service layer, and the `schemas/` response models.
+  - Also corrected the README version badge, which had been left at 2.5.1 through the 2.5.2 release.
+
+### Changed
+
+- `auth.require_mutation` now names its dependency parameter `user` instead of `_` (it is returned, so the throwaway-underscore convention was misleading). Pure rename — no behaviour change; all call sites use `Depends(require_mutation)` and are unaffected.
+
+---
+
 ## [2.5.2] — 2026-07-14
 
 ### Fixed

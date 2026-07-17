@@ -84,10 +84,10 @@ class SyncState:
 # Per-site state — keyed by str(site_id). Accessor helpers create dict entries
 # on demand so each site starts fresh from hard-coded defaults the first time
 # it's touched, then overlays anything restored from site_settings.
-_state_by_site: dict[str, SyncState] = {}
-_lock_by_site: dict[str, asyncio.Lock] = {}
-_schedule_task_by_site: dict[str, asyncio.Task] = {}
-_last_blocklist_by_site: dict[str, int] = {}
+_state_by_site: dict[str, SyncState] = {}          # last sync outcome per site
+_lock_by_site: dict[str, asyncio.Lock] = {}        # prevents two syncs of the same site at once
+_schedule_task_by_site: dict[str, asyncio.Task] = {}  # the running interval-loop task per site
+_last_blocklist_by_site: dict[str, int] = {}       # master's last-seen blocklist size per site
 
 # Per-site schedule config: the JSON payload stored under
 # site_settings.sync_schedule, unpacked into a plain dict. Fields:
@@ -361,6 +361,8 @@ async def set_schedule(
 
 
 async def notify_blocklist_count(site_id: uuid.UUID, count: int) -> None:
+    """Called after each master poll. If auto-gravity is on and the master's
+    blocklist size changed since last time, kick off a sync automatically."""
     sid_key = str(site_id)
     cfg = _get_schedule_config(site_id)
     if not cfg["auto_gravity"]:
@@ -397,6 +399,14 @@ async def run_sync(
     run_gravity: bool = True,
     site_id: uuid.UUID | None = None,
 ) -> SyncState:
+    """Push the master Pi-hole's configuration out to all replicas for one site.
+
+    Order: (1) refresh the master's blocklists, (2) export its full config as a
+    ZIP, (3) validate the ZIP, (4) import it into every replica at once and
+    refresh their blocklists. A per-site lock ensures only one sync per site
+    runs at a time. Returns the final SyncState (success/error plus the
+    per-replica results).
+    """
     sid = await _resolve_site_id(site_id)
     sid_key = str(sid)
     site_name = await _lookup_site_name(sid)
@@ -492,6 +502,9 @@ async def run_sync(
             logger.info("Teleporter ZIP from master %s passed validation", master.name)
 
             # Step 3: Push to each replica concurrently, then run gravity on each.
+            # Handles one replica: tries the import; if it fails with a transient
+            # network hiccup (a dropped keepalive socket), it throws away the
+            # connection, reconnects, and tries exactly once more before giving up.
             async def _sync_replica(replica: PiholeInstance) -> InstanceSyncResult:
                 key = str(replica.id)
                 try:

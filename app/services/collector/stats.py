@@ -147,6 +147,7 @@ async def _poll_stats_for(
     `advanced` is True/False on a normal poll, None on the bootstrap poll
     or on midnight rollover.
     """
+    # 1. Poll Pi-hole and build the stats snapshot (offline snapshot on failure).
     key = str(instance.id)
     try:
         if not _breaker_allows(key, instance.name):
@@ -185,6 +186,7 @@ async def _poll_stats_for(
             status="offline",
         )
 
+    # 2. Persist the snapshot (and bump last_seen_at when online).
     async with AsyncSessionLocal() as db:
         db.add(snapshot)
         if snapshot.status == "online":
@@ -193,7 +195,15 @@ async def _poll_stats_for(
                 inst.last_seen_at = snapshot.collected_at
         await db.commit()
 
-    # Pushover alerts: retry-then-alert + transition-based + configurable repeat for sustained outages
+    # 3. Offline-alert bookkeeping.
+    # Pushover alerts: retry-then-alert + transition-based + configurable repeat for sustained outages.
+    # Offline-alert policy, in plain terms:
+    #   1. First poll ever for an instance → just record its status, never alert.
+    #   2. Goes offline → wait N polls first (a brief blip shouldn't page anyone).
+    #   3. Still offline after N polls → send an alert, then send at most
+    #      `max_count` more per outage (0 = alert every poll) to avoid spamming.
+    #   4. Comes back online → send ONE "recovered" alert, but only if we had
+    #      actually alerted about the outage.
     key = str(instance.id)
     prev = _prev_status.get(key)
     if prev is None:
@@ -234,6 +244,7 @@ async def _poll_stats_for(
             ))
     _prev_status[key] = snapshot.status
 
+    # 4. Stall / VIP advance signal.
     # Stall / VIP detection — only meaningful when the stats poll succeeded.
     # Compute the advance signal once and hand it to both the per-instance
     # stall path (skipped for VIP-grouped instances) and the per-site VIP
@@ -288,6 +299,9 @@ async def poll_stats_for_site(site_id: uuid.UUID) -> None:
         snapshot, advanced = res
         poll_outcomes.append((inst, snapshot, advanced))
 
+    # Count how many instances SHOULD be in the VIP cluster (per config), not
+    # how many answered — the group-stall check needs the full expected size to
+    # tell "all nodes flat" from "some nodes simply didn't respond this poll".
     configured_vip_count = sum(
         1 for inst in instances if inst.vip_role in ("master", "replica")
     )

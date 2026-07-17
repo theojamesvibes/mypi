@@ -1,3 +1,11 @@
+"""Authentication and authorization helpers.
+
+Covers three ways a caller can prove who they are — a login password
+(bcrypt-hashed), a browser session cookie or Bearer token (both JWTs),
+and an X-API-Key header (HMAC-hashed) for the iOS app / automation —
+plus brute-force lockout and read-only-key enforcement.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -163,6 +171,8 @@ def _jwt_algorithm() -> str:
 def create_access_token(subject: str, expire_minutes: int | None = None) -> str:
     minutes = expire_minutes if expire_minutes is not None else settings.access_token_expire_minutes
     expire = datetime.now(UTC) + timedelta(minutes=minutes)
+    # `jti` is a unique ID for this specific token. On logout we store the
+    # jti in the revoked-tokens table so the same cookie can't be reused.
     jti = str(uuid.uuid4())
     return jwt.encode(
         {"sub": subject, "exp": expire, "jti": jti},
@@ -217,6 +227,14 @@ async def get_current_user(
     x_api_key: str | None = Header(default=None),
     session_token: str | None = Cookie(default=None),
 ) -> User:
+    """Identify the caller, trying each auth method in priority order.
+
+    Checks, in turn: a Bearer JWT (Authorization header), then an API
+    key (X-API-Key header), then a session cookie. The first one that
+    resolves to an active, non-revoked user wins. Raises HTTP 401 if
+    none of them identify a valid user. Also records whether the caller
+    used a read-only API key (see `_readonly_flag`).
+    """
     user: User | None = None
     # Determined as we walk auth methods. We set `_readonly_flag` exactly
     # once at the end so a nested resolution from `get_current_user_optional`
@@ -328,7 +346,7 @@ def is_current_request_readonly() -> bool:
     return _readonly_flag.get()
 
 
-def require_mutation(_: User = Depends(get_current_user)) -> User:
+def require_mutation(user: User = Depends(get_current_user)) -> User:
     """Dependency: accept the call only if the principal can mutate state.
 
     Read-only API keys fail here with 403. Session cookies and bearer JWTs
@@ -340,4 +358,4 @@ def require_mutation(_: User = Depends(get_current_user)) -> User:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This API key is read-only and cannot perform mutations.",
         )
-    return _
+    return user

@@ -1,4 +1,8 @@
-
+"""Sync API — trigger a master → replica configuration/gravity sync,
+schedule it to run automatically, and report the last run's status.
+Exposes a legacy global router (defaults to the Main site) and a per-site
+router under `/api/sites/{slug}/sync/...`.
+"""
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
@@ -50,6 +54,7 @@ class SyncStatusResponse(BaseModel):
 
 
 def _state_to_response(state: sync_service.SyncState) -> SyncStatusResponse:
+    """Convert the sync service's internal state object into the API response shape."""
     return SyncStatusResponse(
         status=state.status,
         started_at=state.started_at.isoformat() if state.started_at else None,

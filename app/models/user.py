@@ -11,6 +11,11 @@ from app.database import Base
 
 
 class User(Base):
+    """A dashboard login account (username + hashed password).
+
+    Also tracks failed-login lockout state and owns any API keys the user has
+    issued for iOS / automation access.
+    """
     __tablename__ = "users"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -31,6 +36,12 @@ class User(Base):
 
 
 class ApiKey(Base):
+    """An X-API-Key credential for iOS / automation clients.
+
+    Only the hash of the key is stored (`key_hash`); the raw key is shown to
+    the user once at creation and never again. `is_read_only` blocks mutating
+    actions when set.
+    """
     __tablename__ = "api_keys"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

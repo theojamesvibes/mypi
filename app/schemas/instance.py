@@ -1,3 +1,8 @@
+"""Response shape for the /api/instances endpoints.
+
+Defines the JSON the dashboard and iOS app receive for each Pi-hole — it is
+not a database table.
+"""
 from __future__ import annotations
 
 import uuid

@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/domains", tags=["domains"])
 
+# Allow only letters, digits, dot, underscore, hyphen and '*' (wildcards) —
+# rejects anything that couldn't be a valid domain / list entry.
 _DOMAIN_RE = re.compile(r"^[a-zA-Z0-9._*-]+$")
 
 

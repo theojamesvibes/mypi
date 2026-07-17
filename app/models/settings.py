@@ -7,6 +7,12 @@ from app.database import Base
 
 
 class AppSetting(Base):
+    """Generic application-wide key/value settings store.
+
+    One row per setting (session timeout, version-check state, Pushover
+    config, …); `value` holds JSON text. Unlike SiteSetting these are global,
+    not per-site.
+    """
     __tablename__ = "app_settings"
 
     key: Mapped[str] = mapped_column(String(128), primary_key=True)

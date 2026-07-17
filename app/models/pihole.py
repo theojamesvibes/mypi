@@ -72,6 +72,15 @@ class EncryptedString(TypeDecorator):
 
 
 class PiholeInstance(Base):
+    """One monitored Pi-hole server (one row = one Pi-hole box).
+
+    Rows are created and kept in sync from `pihole_instances.yml` at startup;
+    the `version_*` / `update_available_*` / `last_seen_at` columns are filled
+    in later by the background stats poller. Note two distinct notions of
+    "primary": `is_master` marks the Pi-hole that owns the config we sync out
+    to the others (teleporter master), while `vip_role` records keepalived VIP
+    cluster membership — they are independent.
+    """
     __tablename__ = "pihole_instances"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -87,6 +96,8 @@ class PiholeInstance(Base):
     # NULL / "master" / "replica" — VIP cluster membership. See migration 0016.
     vip_role: Mapped[str | None] = mapped_column(String(16), nullable=True)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Opaque Pi-hole login token (X-FTL-SID). Persisted so we can reuse the
+    # existing session across container restarts instead of re-authenticating.
     session_sid: Mapped[str | None] = mapped_column(String(256), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -112,6 +123,12 @@ class PiholeInstance(Base):
 
 
 class StatsSnapshot(Base):
+    """A point-in-time copy of one Pi-hole's headline counters.
+
+    Taken every 60s by the background poller; powers the dashboard's history
+    graphs. Old rows are pruned by the nightly cleanup job after
+    DATA_RETENTION_DAYS.
+    """
     __tablename__ = "stats_snapshots"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -137,6 +154,13 @@ class StatsSnapshot(Base):
 
 
 class QueryLog(Base):
+    """One DNS lookup as seen by a Pi-hole — who asked, what domain, and
+    whether it was blocked, cached, or forwarded.
+
+    This is the high-volume table (one row per DNS query pulled from Pi-hole);
+    the four indexes below keep the dashboard's client/domain/time filters
+    fast. Pruned by the nightly cleanup job after DATA_RETENTION_DAYS.
+    """
     __tablename__ = "query_logs"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

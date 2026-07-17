@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 
 # Most recent query timestamp seen per instance (Unix float).
 # Used to fetch only queries newer than what we already have.
+# "watermark" = the timestamp of the newest query we've already stored;
+# next poll we ask Pi-hole only for queries newer than this.
 _last_seen_ts: dict[str, float] = {}
 
 # Previous poll status — used to detect online→offline transitions for alerts.

@@ -50,6 +50,7 @@ class PatchSiteRequest(BaseModel):
 
 
 async def _build_summary(db: AsyncSession, site: Site) -> SiteSummary:
+    """Assemble a site's summary, counting its total and active instances."""
     total = await db.execute(
         select(func.count(PiholeInstance.id)).where(PiholeInstance.site_id == site.id)
     )

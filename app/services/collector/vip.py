@@ -1,5 +1,20 @@
 """Per-site VIP cluster state machine.
 
+A "VIP" (virtual IP) is a single shared address that two Pi-holes take
+turns answering on: one is live ("master"), the other is a hot standby
+("replica"). If the master dies, the standby takes over the address —
+a "transfer". This module watches the pair and sends one alert when a
+real transfer happens, and another if BOTH die at once.
+
+The hard problem (fixed in v2.5.2): the standby is never fully idle —
+some clients point at its real IP directly — so naively "whoever served
+a query is the active one" made the alert bounce back and forth every
+minute ("flapping"). The fix: don't ask *did* a node serve a query, ask
+*what share* of the pair's total traffic did it serve. The live node
+serves the vast majority; a standby serves a trickle. Only when a
+different node carries the majority share for several polls in a row do
+we believe a real transfer happened.
+
 Tracks which node in a vip_master/vip_replica cluster is currently serving
 traffic, fires a transfer alert when the active node changes, and fires a
 group-stall alert when the whole cluster goes flat. State dicts live in
@@ -64,6 +79,7 @@ async def _check_vip_state(
     if not vip_outcomes:
         return
 
+    # seq = this site's poll number (1st poll, 2nd poll, …) — our clock.
     seq = _site_poll_seq.get(site_id, 0) + 1
     _site_poll_seq[site_id] = seq
 
@@ -80,6 +96,8 @@ async def _check_vip_state(
     #     flapped the active label on any single incumbent blip.
     any_advanced_this_poll = False
     ever_advanced = False
+    # deltas[node] = its query "delta" (the increase in its counter since the
+    # previous poll) = how much traffic that node actually served this poll.
     deltas: dict[uuid.UUID, int] = {}
     for inst, snap, advanced in vip_outcomes:
         key = str(inst.id)
@@ -87,6 +105,9 @@ async def _check_vip_state(
             _vip_last_advance_seq[key] = seq
             any_advanced_this_poll = True
         # advanced is None on bootstrap → don't touch stall bookkeeping yet.
+        # `ever_advanced` stays False until SOME node has advanced at least
+        # once since startup. Guards the group-stall alert so a brand-new
+        # install with no traffic yet isn't mistaken for a dead cluster.
         if key in _vip_last_advance_seq:
             ever_advanced = True
 
@@ -121,6 +142,10 @@ async def _check_vip_state(
     # on the incumbent momentarily hands the lead to a chattering standby, but
     # the streak resets the moment the incumbent serves the majority again, so
     # it never reaches the confirm gate — killing the phantom flapping.
+    # Compute each node's share of THIS poll's total new queries. Example:
+    # master served 480 new queries, standby served 20 → total 500, master's
+    # share = 480/500 = 96% >= 55%, so master is "dominant" this poll. If it
+    # were a near 50/50 split, nobody is dominant and we leave the label alone.
     total_delta = sum(deltas.values())
     dominant_id: uuid.UUID | None = None
     if total_delta > 0:
@@ -144,6 +169,10 @@ async def _check_vip_state(
             if inst.id != current_active_id:
                 _vip_lead_streak[str(inst.id)] = 0
 
+    # Declare a transfer only when ALL of: (a) some node is clearly dominant,
+    # (b) it is NOT the node we currently think is active, and (c) it has been
+    # dominant for at least 5 polls in a row (~5 minutes). Clause (c) is the
+    # anti-flapping gate — one lucky poll for the standby is not enough.
     if (
         dominant_id is not None
         and dominant_id != current_active_id

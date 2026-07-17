@@ -22,8 +22,11 @@ class PushoverSettingsRequest(BaseModel):
     alert_instance_offline: bool = True
     alert_high_block_rate: bool = False
     alert_on_vip_transfer: bool = False
+    # Fire the high-block-rate alert once an instance's blocked % exceeds this.
     block_rate_threshold_pct: float = 50.0
+    # How many consecutive offline detections before alerting (debounces flapping).
     offline_alert_max_count: int = 1
+    # How many extra reachability retries before declaring an instance offline.
     offline_alert_retries: int = 1
 
 

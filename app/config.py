@@ -1,3 +1,11 @@
+"""Application configuration.
+
+Two responsibilities: (1) the `Settings` class reads environment
+variables / .env for things like the database URL and secret keys;
+(2) the `load_site_configs` functions parse `pihole_instances.yml`
+into the sites and Pi-hole instances the app manages.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -18,7 +26,9 @@ SESSION_COOKIE_MAX_AGE = 60 * 60 * 8  # 8 hours
 # slug used when wrapping legacy flat `instances:` YAML is exempt.
 RESERVED_SLUGS = frozenset({"sites", "inactive", "admin", "main", "combined"})
 
+# Turn runs of anything that isn't a lowercase letter or digit into a hyphen.
 _SLUG_STRIP_RE = re.compile(r"[^a-z0-9]+")
+# Strip leading/trailing hyphens left behind after the substitution above.
 _SLUG_EDGE_RE = re.compile(r"(^-+)|(-+$)")
 
 
@@ -108,6 +118,9 @@ class Settings(BaseSettings):
 
 
 class PiholeInstanceConfig:
+    """One Pi-hole instance: its name, URL, admin password, chart color,
+    and VIP role."""
+
     def __init__(
         self,
         name: str,
@@ -150,8 +163,9 @@ class SiteConfig:
 
 
 def slugify(name: str) -> str:
-    """Derive a URL slug from a site name. Lowercase, hyphen-delimited,
-    alphanumeric. Returns empty string when nothing usable is left."""
+    """Derive a URL slug (a short, URL-safe name like `home-lab`) from a
+    site name. Lowercase, hyphen-delimited, alphanumeric. Returns empty
+    string when nothing usable is left."""
     slug = name.lower()
     slug = _SLUG_STRIP_RE.sub("-", slug)
     slug = _SLUG_EDGE_RE.sub("", slug)
@@ -166,6 +180,7 @@ def validate_slug(slug: str, source: str) -> None:
         raise ValueError(f"{source}: slug exceeds 64 characters")
     if slug in RESERVED_SLUGS:
         raise ValueError(f"{source}: slug '{slug}' is reserved")
+    # must look like "abc-def-123": lowercase groups joined by single hyphens
     if not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", slug):
         raise ValueError(
             f"{source}: slug '{slug}' must be lowercase alphanumerics "

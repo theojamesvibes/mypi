@@ -1,3 +1,10 @@
+"""Database connection setup.
+
+Creates the async SQLAlchemy engine and connection pool, and provides
+`get_db`, the dependency every request uses to borrow a database
+session and hand it back automatically when the request finishes.
+"""
+
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
@@ -26,5 +33,7 @@ class Base(DeclarativeBase):
 
 
 async def get_db() -> AsyncGenerator[AsyncSession]:
+    # Hand a database session to the request, then close it automatically
+    # when the request finishes (that's what the `async with` guarantees).
     async with AsyncSessionLocal() as session:
         yield session

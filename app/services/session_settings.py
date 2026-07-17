@@ -15,6 +15,9 @@ _SETTINGS_KEY = "session_timeout"
 _DEFAULT_TIMEOUT_MINUTES = 480   # 8 hours
 _NEVER_TIMEOUT_MINUTES = 5_256_000  # ~10 years
 
+# In-memory mirror of the persisted setting, read on every login to set the
+# JWT expiry. Kept in sync with the app_settings row by load_settings (startup)
+# and save_settings (on change).
 _timeout_minutes: int = _DEFAULT_TIMEOUT_MINUTES
 
 

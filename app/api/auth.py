@@ -1,3 +1,7 @@
+"""Authentication API — login/logout (JWT session cookie), the
+current-user endpoint, API-key management, password change, and the
+session-timeout setting.
+"""
 import logging
 from datetime import UTC, datetime
 
@@ -43,6 +47,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 @router.post("/login", response_model=TokenResponse)
 @limiter.limit("10/minute")
 async def login(request: Request, body: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)):
+    """Verify username/password and issue a JWT session cookie."""
     result = await db.execute(select(User).where(User.username == body.username, User.is_active.is_(True)))
     user = result.scalar_one_or_none()
     # Enforce lockout *before* the password check so a locked account
@@ -82,6 +87,8 @@ async def logout(
     authorization: str | None = Header(default=None),
     session_token: str | None = Cookie(default=None),
 ):
+    """Log out: revoke the token's JTI (so it can't be reused) and clear the
+    session cookie."""
     # `authorization` must come from the request Header, not from a Cookie of
     # the same name — an earlier version had `Cookie(...)` here, which meant
     # logging out via `Authorization: Bearer …` never actually revoked the
@@ -112,6 +119,8 @@ async def logout(
 
 @router.get("/me", response_model=UserResponse)
 async def me(current_user: User = Depends(get_current_user)):
+    """Return the currently authenticated user's profile."""
+    # Imported lazily to avoid a circular import with app.auth.
     from app.auth import is_current_request_readonly
 
     return UserResponse(
@@ -130,6 +139,8 @@ async def create_api_key(
     current_user: User = Depends(require_mutation),
     db: AsyncSession = Depends(get_db),
 ):
+    """Create a new API key for the current user. The raw key is returned
+    once here and never stored in plaintext — only its hash is kept."""
     raw_key, key_hash = generate_api_key()
     api_key = ApiKey(
         user_id=current_user.id,
@@ -160,6 +171,7 @@ async def list_api_keys(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """List the current user's active API keys (hashes only, never the raw key)."""
     result = await db.execute(
         select(ApiKey).where(ApiKey.user_id == current_user.id, ApiKey.is_active.is_(True))
     )
@@ -172,6 +184,7 @@ async def revoke_api_key(
     current_user: User = Depends(require_mutation),
     db: AsyncSession = Depends(get_db),
 ):
+    """Deactivate one of the current user's API keys so it can no longer authenticate."""
     result = await db.execute(
         select(ApiKey).where(ApiKey.id == key_id, ApiKey.user_id == current_user.id)
     )
@@ -200,6 +213,7 @@ async def change_password(
     current_user: User = Depends(require_mutation),
     db: AsyncSession = Depends(get_db),
 ):
+    """Change the current user's password after verifying the existing one."""
     if not verify_password(body.current_password, current_user.hashed_password):
         raise HTTPException(status_code=422, detail="Current password is incorrect.")
     if len(body.new_password) < 8:

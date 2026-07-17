@@ -1,3 +1,10 @@
+"""Statistics API — powers the dashboard's summary tiles, the
+queries-over-time chart, and the Top Domains/Clients tables.
+
+Two router families are exposed: the global one (`/api/stats/...`,
+aggregating across every site) and the per-site one
+(`/api/sites/{slug}/stats/...`, scoped to a single site's instances).
+"""
 from __future__ import annotations
 
 import uuid
@@ -50,6 +57,9 @@ BLOCKED_STATUSES = frozenset({
 
 async def _latest_snapshots_by_instance(db: AsyncSession) -> dict[uuid.UUID, StatsSnapshot]:
     """Return the most recent StatsSnapshot per instance in a single query."""
+    # Step 1: find the newest snapshot time for each instance. Step 2: join that
+    # back to the snapshots table to pull the whole newest row per instance — one
+    # DB round-trip instead of one query per instance.
     max_subq = (
         select(
             StatsSnapshot.instance_id,
@@ -116,6 +126,10 @@ async def _summary_body(
             return AggregatedSummary(totals=totals, instances=[])
         query_filters.append(QueryLog.instance_id.in_(inst_ids))
 
+    # Tally the whole query log in one pass. `count(case((condition, id)))`
+    # counts ONLY the rows matching that condition, so each line below is
+    # "how many of the queries in this window were blocked / forwarded / served
+    # from cache", plus a distinct count of the clients seen.
     agg_result = await db.execute(
         select(
             func.count(QueryLog.id).label("total"),
@@ -152,6 +166,8 @@ async def _summary_body(
 
     total = agg.total or 0
     blocked = agg.blocked or 0
+    # Percentage of queries blocked (guard against a no-traffic window: don't
+    # divide by zero).
     percent_blocked = round(blocked / total * 100, 1) if total > 0 else 0.0
 
     totals = SummaryStats(
@@ -203,6 +219,9 @@ async def get_summary(
     _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Dashboard summary totals across all sites for the chosen time window."""
+    # Pick the time window: an explicit `since` timestamp wins (assume UTC if it
+    # carries no timezone); otherwise look back `hours` from now.
     if since is not None:
         since_dt = since if since.tzinfo else since.replace(tzinfo=UTC)
     else:
@@ -243,6 +262,8 @@ async def get_history(
     _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # Pick the time window: an explicit `since` timestamp wins (assume UTC if it
+    # carries no timezone); otherwise look back `hours` from now.
     if since is not None:
         since_dt = since if since.tzinfo else since.replace(tzinfo=UTC)
     else:
@@ -324,6 +345,8 @@ async def get_top(
     _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # Pick the time window: an explicit `since` timestamp wins (assume UTC if it
+    # carries no timezone); otherwise look back `hours` from now.
     if since is not None:
         since_dt = since if since.tzinfo else since.replace(tzinfo=UTC)
     else:
@@ -397,6 +420,9 @@ async def _top_body(
         await db.execute(client_q),
     )
 
+    # The query returned counts grouped by domain AND status. Fold them into two
+    # running totals per domain — one for blocked hits, one for permitted hits —
+    # summing across the different status codes.
     permitted: dict[str, int] = {}
     blocked: dict[str, int] = {}
     for domain, status, cnt in domain_result.fetchall():
@@ -437,6 +463,8 @@ async def get_summary_for_site(
     _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # Pick the time window: an explicit `since` timestamp wins (assume UTC if it
+    # carries no timezone); otherwise look back `hours` from now.
     if since is not None:
         since_dt = since if since.tzinfo else since.replace(tzinfo=UTC)
     else:
@@ -454,6 +482,8 @@ async def get_history_for_site(
     _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # Pick the time window: an explicit `since` timestamp wins (assume UTC if it
+    # carries no timezone); otherwise look back `hours` from now.
     if since is not None:
         since_dt = since if since.tzinfo else since.replace(tzinfo=UTC)
     else:
@@ -473,6 +503,8 @@ async def get_top_for_site(
     _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # Pick the time window: an explicit `since` timestamp wins (assume UTC if it
+    # carries no timezone); otherwise look back `hours` from now.
     if since is not None:
         since_dt = since if since.tzinfo else since.replace(tzinfo=UTC)
     else:

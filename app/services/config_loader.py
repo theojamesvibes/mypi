@@ -1,4 +1,9 @@
-"""Sync site + Pi-hole instance config from YAML into the database."""
+"""Sync site + Pi-hole instance config from YAML into the database.
+
+Runs once at container startup (from the app lifespan): reads
+pihole_instances.yml and reconciles it into the DB. Changes to the YAML are
+therefore only picked up on restart.
+"""
 from __future__ import annotations
 
 import logging

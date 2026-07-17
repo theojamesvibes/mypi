@@ -32,6 +32,11 @@ def initialize(current_version: str) -> None:
 
 
 def _parse_version(v: str) -> tuple[int, ...]:
+    """Convert a dotted version string ("2.10.1") to a tuple of numbers
+    ((2, 10, 1)) so versions compare numerically — otherwise "2.10" would
+    sort before "2.9" as plain text. Unparseable input becomes (0,), i.e.
+    treated as the oldest possible, so we never falsely claim we're current.
+    """
     try:
         return tuple(int(x) for x in v.strip().split("."))
     except Exception:
@@ -39,6 +44,11 @@ def _parse_version(v: str) -> tuple[int, ...]:
 
 
 def get_status() -> dict:
+    """Report the running vs latest MyPi version for the settings page.
+
+    `up_to_date` is True/False once we've checked GitHub, or None when no
+    check has succeeded yet (so the UI can distinguish "unknown" from "behind").
+    """
     if _latest_version:
         up_to_date = _parse_version(_current_version) >= _parse_version(_latest_version)
     else:
@@ -54,6 +64,9 @@ def get_status() -> dict:
 
 
 async def load_settings() -> None:
+    """Restore the in-memory state (enabled flag, last-known latest version,
+    last check time) from the app_settings row on startup so it survives
+    container restarts."""
     global _enabled, _latest_version, _checked_at
     try:
         async with AsyncSessionLocal() as db:
@@ -76,6 +89,7 @@ async def load_settings() -> None:
 
 
 async def save_settings(enabled: bool) -> None:
+    """Turn the hourly version check on/off and persist the choice."""
     global _enabled
     _enabled = enabled
     await _persist()
@@ -83,6 +97,7 @@ async def save_settings(enabled: bool) -> None:
 
 
 async def _persist() -> None:
+    """Mirror the current in-memory state to the app_settings row (upsert)."""
     payload = json.dumps({
         "enabled": _enabled,
         "latest_version": _latest_version,

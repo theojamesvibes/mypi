@@ -1,3 +1,12 @@
+"""Application entry point for MyPi.
+
+Builds the FastAPI web application: wires up startup/shutdown (the
+`lifespan` function), security middleware and headers, the login /
+logout / change-password flows, the HTML dashboard pages, and mounts
+all the JSON API routers. This is the file that ties every other part
+of the app together.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -231,8 +240,17 @@ async def _soft_load(name: str, coro) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Startup and shutdown sequence for the whole app.
+
+    Everything BEFORE `yield` runs once when the server boots (load the
+    encryption key, create the admin user, load saved settings, start
+    the background scheduler). Everything AFTER `yield` runs once when
+    the server is shutting down (stop the scheduler, finish in-flight
+    work, close the database connection pool). FastAPI calls this for us.
+    """
     import asyncio as _asyncio
 
+    # ── Startup ────────────────────────────────────────────────────────────────
     logger.info("MyPi version %s starting up", APP_VERSION)
     await _ensure_encryption_key()
     version_check_service.initialize(APP_VERSION)
@@ -275,6 +293,7 @@ async def lifespan(app: FastAPI):
         poll_settings_service.get_interval_seconds(),
     )
     yield
+    # ── Shutdown ─────────────────────────────────────────────────────────────
     # Pause first so no new triggers fire, then give currently-executing
     # jobs ~2s to finish before shutting the scheduler down. Without the
     # grace, a poll mid-flight can race with the engine.dispose() below
@@ -542,6 +561,8 @@ async def logout_web(
         claims = _decode_token_claims(session_token)
         if claims and claims.get("jti"):
             from datetime import datetime
+            # Mark this token's unique ID (jti) as revoked so the same
+            # session cookie can't be reused after logout.
             jti = claims["jti"]
             exp = claims.get("exp")
             expires_at = (
@@ -560,6 +581,8 @@ async def logout_web(
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def dashboard(request: Request, current_user=Depends(get_current_user_optional)):
+    # All web pages below share this guard: bounce to /login if not signed
+    # in, or to /change-password if a password reset is still pending.
     if current_user is None:
         return RedirectResponse(url="/login", status_code=303)
     if current_user.password_change_required:

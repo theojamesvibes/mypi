@@ -62,6 +62,17 @@ AUTH_BACKOFF_SECONDS = settings.auth_backoff_seconds
 
 
 class PiholeClient:
+    """Talks to a single Pi-hole box over its v6 web API.
+
+    One of these is created per Pi-hole and kept open (see client_manager).
+    It logs in once, remembers the session token ("SID"), and automatically
+    logs back in if the token expires. All the get_/add_/remove_ methods below
+    are individual API calls (fetch stats, add a blocked domain, etc.).
+
+    SID = the session token Pi-hole hands back after login; it's sent on every
+    later request (in the X-FTL-SID header) to prove who we are.
+    """
+
     def __init__(self, url: str, password: str, timeout: float = 10.0):
         self.base_url = url.rstrip("/")
         self.password = password
@@ -228,6 +239,10 @@ class PiholeClient:
             if not ok:
                 raise ConnectionError(f"Authentication failed for {self.base_url}")
 
+    # Internal HTTP helpers (_get / _post / _delete / _get_bytes). Each one
+    # sends a request with the current session token; if Pi-hole replies 401
+    # (token expired), it logs in again once and retries the request. The
+    # `retry=False` on the second attempt prevents an infinite re-auth loop.
     async def _get(self, path: str, params: dict | None = None, retry: bool = True) -> Any:
         if self._client is None:
             raise RuntimeError("PiholeClient must be used as an async context manager")
@@ -423,6 +438,9 @@ class PiholeClient:
         version_root = data.get("version", data)  # handle both wrapped and flat responses
 
         def _parse_component(raw: dict) -> ComponentVersion:
+            # Pi-hole nests versions as {local:{version}, remote:{version}} on
+            # some builds and flat on others — try the nested dict first, and
+            # fall back to the top-level dict when the nesting isn't present.
             local = raw.get("local", raw) or {}
             remote = raw.get("remote", {}) or {}
             current = local.get("version") or local.get("tag") or ""
@@ -446,6 +464,8 @@ class PiholeClient:
         )
 
     async def get_summary(self) -> PiholeSummary:
+        """Fetch today's totals (queries, blocked, cached, etc.) and map
+        Pi-hole's raw JSON field names into our tidy PiholeSummary fields."""
         data = await self._get("/api/stats/summary")
         q = data.get("queries", {})
         return PiholeSummary(
@@ -489,6 +509,8 @@ class PiholeClient:
                     )
                 )
             except Exception:
+                # Skip any single malformed query row rather than failing the
+                # whole batch — one bad record shouldn't lose the other 499.
                 continue
 
         return queries

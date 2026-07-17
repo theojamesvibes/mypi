@@ -39,7 +39,10 @@ _PUSHOVER_SEND_URL = "https://api.pushover.net/1/messages.json"
 _PUSHOVER_VALIDATE_URL = "https://api.pushover.net/1/users/validate.json"
 _SETTINGS_KEY = "pushover_settings"
 
-# Module-level in-memory settings
+# Module-level in-memory settings. These are the legacy "Main site" config,
+# kept in memory for the single-site (site_id=None) code paths. Per-site alerts
+# instead read their credentials fresh from the DB via _resolve_site_config();
+# most notify_* helpers below branch on that split (in-memory Main vs. per-site).
 _app_token: str = ""
 _user_key: str = ""
 _enabled: bool = False

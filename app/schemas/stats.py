@@ -1,3 +1,8 @@
+"""Response shapes for the /api/stats endpoints.
+
+These define the JSON the dashboard and iOS app receive — they are not
+database tables.
+"""
 from __future__ import annotations
 
 import uuid
