@@ -30,7 +30,7 @@ coverage==7.15.1
 # Lint + type check. CI runs `ruff check .` and `mypy` (config in
 # pyproject.toml) as a separate lint job; run both locally before pushing.
 ruff==0.15.21
-mypy==2.2.0
+mypy==2.3.0
 
 # UI / browser tests — pytest-playwright drives a real Chromium against
 # the running FastAPI app. The browser binary itself is installed via
