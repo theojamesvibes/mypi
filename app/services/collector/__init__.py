@@ -39,6 +39,7 @@ NOT affect the implementation modules; patch the owning submodule instead
 """
 from app.services.collector import (
     instances,
+    lists,
     maintenance,
     queries,
     scheduling,
@@ -53,6 +54,7 @@ from app.services.collector.instances import (
     _get_site_name,
     get_active_site_ids,
 )
+from app.services.collector.lists import sync_all_lists
 from app.services.collector.maintenance import (
     cleanup_old_data,
     prune_inactive_state,

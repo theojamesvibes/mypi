@@ -2,7 +2,7 @@
 [![build](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/docker-publish.yml?style=flat-square)](https://github.com/theojamesvibes/mypi/actions)
 [![tests](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/test.yml?style=flat-square&label=tests)](https://github.com/theojamesvibes/mypi/actions/workflows/test.yml)
 [![ui-tests](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/ui-tests.yml?style=flat-square&label=ui-tests)](https://github.com/theojamesvibes/mypi/actions/workflows/ui-tests.yml)
-[![version](https://img.shields.io/badge/version-2.5.3-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
+[![version](https://img.shields.io/badge/version-2.6.0-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
 [![platform](https://img.shields.io/badge/platform-linux%2Famd64%20|%20linux%2Farm64-teal?style=flat-square)](https://github.com/theojamesvibes/mypi/pkgs/container/mypi)
 
 > **⚠️ Vibe Code Disclosure**
@@ -32,6 +32,7 @@ A self-hosted dashboard that consolidates up to 10 locally running [Pi-hole](htt
 - **Query type breakdown** — Doughnut chart (Forwarded / Cached / Blocked / Other)
 - **Per-system panel** — Each Pi-hole shown individually with its own stats and online/offline badge
 - **Top Permitted Domains, Top Blocked Domains, Top Clients** — Clickable rows open a drill-down modal with all matching queries for that domain or client
+- **Blocked by List** — ranks the window's blocks by the source blocklist that caught them; lists in a designated Pi-hole *security* group (for dedicated malware/phishing feeds like HaGeZi TIF or URLhaus) are flagged with a red "threat" badge, so security blocks stand out from ad/tracker noise. Configurable via `SECURITY_GROUP_NAME`.
 - **Clickable MyPi logo** in the sidebar — navigates to the dashboard from any other page; on the dashboard itself it refreshes the data in place without a full page reload
 - **Site name in page titles** — on multi-site deployments, per-slug pages show the current site name in both the browser tab title and the in-page heading (e.g. `Dashboard: WTR`)
 
@@ -241,6 +242,8 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 | `STATS_POLL_INTERVAL` | `60` | Seconds between stats polls |
 | `QUERIES_POLL_INTERVAL` | `10` | Seconds between query log polls |
 | `DATA_RETENTION_DAYS` | `30` | Days of history to retain |
+| `SECURITY_GROUP_NAME` | `security` | Pi-hole group whose adlists are treated as security/threat feeds in the "Blocked by list" breakdown (matched case-insensitively). Blank disables the threat flag. |
+| `LIST_SYNC_INTERVAL_MINUTES` | `15` | How often to mirror each instance's `/api/lists` into the `pihole_lists` table |
 | `SECURE_COOKIES` | `false` | Adds the `Secure` flag to session cookies and turns on HSTS. Enable when MyPi is behind a TLS-terminating reverse proxy. |
 | `VERIFY_PIHOLE_SSL` | `false` | Verify TLS certificates when connecting to Pi-hole instances. Leave `false` for self-signed certs on a trusted LAN. |
 | `ENABLE_API_DOCS` | `false` | Expose Swagger UI at `/docs`, ReDoc at `/redoc`, and the OpenAPI schema at `/openapi.json`. Default flipped to `false` in 1.8.0 — fail-closed posture. Set to `true` when you actively need the docs (local development, regenerating an iOS OpenAPI client, etc.). |
@@ -368,6 +371,7 @@ DELETE  /api/auth/api-key/{id}           # Revoke an API key
 GET     /api/stats/summary               # Aggregated + per-instance stats
 GET     /api/stats/history               # Over-time query data (?hours=24)
 GET     /api/stats/top                   # Top domains and clients (?hours=24&limit=10)
+GET     /api/stats/blocked-by-list       # Gravity blocks grouped by source adlist (?hours=24&limit=15)
 
 # Query log
 GET     /api/queries                     # Paginated, filterable, sortable query log

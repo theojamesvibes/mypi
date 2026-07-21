@@ -66,6 +66,7 @@ async def _store_queries(instance: PiholeInstance, queries: list) -> int:
                 status=q.status,
                 reply_type=q.reply_type,
                 reply_time_ms=q.reply_time_ms,
+                list_id=q.list_id,
             )
             for q in queries
             if not (q.pihole_id and q.pihole_id in existing_ids)

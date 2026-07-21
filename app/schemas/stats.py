@@ -52,3 +52,16 @@ class TopStatsResponse(BaseModel):
     top_blocked: list[TopDomain]
     top_clients: list[TopClient]
     instance_id: uuid.UUID | None = None
+
+
+class BlockedByListEntry(BaseModel):
+    list_id: int | None          # Pi-hole's adlist id; None = unattributed
+    name: str                    # human label (list address, or a fallback)
+    address: str | None = None   # full adlist URL when known
+    is_security: bool = False    # in the configured security/threat group
+    count: int
+
+
+class BlockedByListResponse(BaseModel):
+    lists: list[BlockedByListEntry]
+    instance_id: uuid.UUID | None = None

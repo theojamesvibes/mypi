@@ -185,6 +185,25 @@
     </div>
   </div>
 
+  <!-- Blocked by List — gravity blocks in the window, attributed to their
+       source adlist. Lists in the configured security group are flagged. -->
+  <div class="row g-3 mb-3">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header d-flex align-items-center">
+          <i class="bi bi-shield-shaded me-1"></i>Blocked by List
+          <span class="text-muted small ms-2 d-none d-sm-inline">which blocklist caught each blocked query</span>
+        </div>
+        <div class="card-body p-0">
+          <table class="table table-sm table-hover mb-0">
+            <thead class="table-light"><tr><th>List</th><th class="text-end">Blocks</th></tr></thead>
+            <tbody id="blocked-by-list"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 <!-- Drill-down modal -->

@@ -38,6 +38,10 @@ class PiholeQuery:
     status: str
     reply_type: str
     reply_time_ms: float
+    # Pi-hole v6 reports which list caught a blocked query: the adlist id for
+    # gravity blocks, else the domainlist id (NULL when the query wasn't blocked
+    # by a list). Lets the dashboard attribute blocks to a specific blocklist.
+    list_id: int | None = None
 
 
 
@@ -506,6 +510,7 @@ class PiholeClient:
                         status=str(item.get("status", "") or ""),
                         reply_type=reply.get("type", ""),
                         reply_time_ms=reply.get("time", 0.0),
+                        list_id=item.get("list_id"),
                     )
                 )
             except Exception:
@@ -514,6 +519,22 @@ class PiholeClient:
                 continue
 
         return queries
+
+    async def get_lists(self) -> list[dict[str, Any]]:
+        """Return the raw adlist/allowlist entries from GET /api/lists.
+
+        Each entry carries `id`, `address`, `type` ("block"/"allow"), `comment`,
+        `enabled`, and `groups` (a list of group ids). Used to attribute blocked
+        queries (by their `list_id`) to a named list and to flag which lists
+        belong to the configured security group.
+        """
+        data = await self._get("/api/lists")
+        return list(data.get("lists", []) or [])
+
+    async def get_groups(self) -> dict[int, str]:
+        """Return a {group_id: name} map from GET /api/groups."""
+        data = await self._get("/api/groups")
+        return {g["id"]: g.get("name", "") for g in (data.get("groups", []) or []) if "id" in g}
 
     async def get_domain_list_status(self, domain: str) -> dict[str, bool]:
         """Return {in_deny, in_allow} by checking both exact lists in parallel."""

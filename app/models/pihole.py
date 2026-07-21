@@ -177,6 +177,10 @@ class QueryLog(Base):
     status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     reply_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
     reply_time_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Pi-hole's id for the list that blocked this query (adlist for gravity,
+    # else domainlist); NULL when the query wasn't blocked by a list. Resolved
+    # to a list name via PiholeList for the "Blocked by list" breakdown.
+    list_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     instance: Mapped[PiholeInstance] = relationship("PiholeInstance", back_populates="query_logs")
 
@@ -185,4 +189,39 @@ class QueryLog(Base):
         Index("ix_querylog_domain", "domain"),
         Index("ix_querylog_client", "client_ip"),
         Index("ix_querylog_pihole_id", "instance_id", "pihole_query_id"),
+    )
+
+
+class PiholeList(Base):
+    """A Pi-hole adlist/allowlist, mirrored so the dashboard can resolve a
+    blocked query's `list_id` to a human name and know whether the list is a
+    security/threat feed.
+
+    Synced periodically from each instance's GET /api/lists. `is_security` is
+    computed at sync time from group membership (the configured
+    `SECURITY_GROUP_NAME`), so a block attributed to one of these lists can be
+    shown as a threat block rather than an ad/tracker block.
+    """
+    __tablename__ = "pihole_lists"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    instance_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("pihole_instances.id", ondelete="CASCADE"), nullable=False
+    )
+    # Pi-hole's own id for the list (matches QueryLog.list_id for gravity blocks).
+    pihole_list_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    list_type: Mapped[str] = mapped_column(String(16), nullable=False, default="block")
+    address: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    comment: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_security: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        # One row per (instance, Pi-hole list id, type): adlist and domainlist
+        # id-spaces overlap, so type is part of the key.
+        UniqueConstraint("instance_id", "pihole_list_id", "list_type", name="uq_piholelist_instance_listid_type"),
+        Index("ix_piholelist_instance", "instance_id"),
     )

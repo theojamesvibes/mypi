@@ -87,6 +87,15 @@ class Settings(BaseSettings):
     queries_poll_interval: int = 10
     data_retention_days: int = 30
 
+    # Adlists in this Pi-hole group are treated as security/threat feeds, so the
+    # "Blocked by list" breakdown can flag their blocks as threats rather than
+    # ads. Create the group in Pi-hole and assign malware/phishing feeds to it
+    # (e.g. HaGeZi TIF, URLhaus). Matched case-insensitively. Blank disables the
+    # security flag entirely (all lists shown, none marked as threats).
+    security_group_name: str = "security"
+    # How often to mirror each instance's /api/lists into pihole_lists.
+    list_sync_interval_minutes: int = 15
+
     # Per-instance circuit breaker — suspends polling for a wedged Pi-hole
     # after N consecutive failures, for M seconds, instead of hammering it at
     # the normal cadence.  Failures within the dedup window of the previous

@@ -8,6 +8,34 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.6.0] — 2026-07-21
+
+### Added
+
+- **"Blocked by list" dashboard breakdown.** A new card on the dashboard ranks
+  the window's gravity blocks by the source adlist that caught them, so you can
+  see *which* blocklist is doing the work — and, crucially, tell malware/phishing
+  blocks apart from ad/tracker noise. Lists in a designated **security group**
+  are flagged with a red "threat" badge.
+  - **Why a group, not per-list tagging:** common blocklists (HaGeZi Pro,
+    StevenBlack) are *combined* ad+malware lists, so a whole list can't be
+    cleanly labelled "security". Instead, create a Pi-hole group (default name
+    `security`) and assign dedicated threat feeds (e.g. HaGeZi TIF, URLhaus) to
+    it; a block attributed to any list in that group is shown as a threat.
+  - **New data:** `query_logs.list_id` captures Pi-hole v6's per-query `list_id`
+    (the adlist for gravity blocks); a new `pihole_lists` table mirrors each
+    instance's `/api/lists` (block-type adlists), with `is_security` computed
+    from group membership by a slow background sync job
+    (`list_sync_interval_minutes`, default 15). No backfill — the breakdown
+    fills forward as new queries are polled.
+  - **New endpoint:** `GET /api/stats/blocked-by-list` (and the per-site
+    `/api/sites/{slug}/stats/blocked-by-list`). Additive only — existing
+    responses are unchanged, so the iOS app is unaffected.
+  - **New setting:** `SECURITY_GROUP_NAME` (default `security`, matched
+    case-insensitively; blank disables the threat flag).
+
+---
+
 ## [2.5.3] — 2026-07-17
 
 ### Documentation

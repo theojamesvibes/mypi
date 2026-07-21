@@ -69,6 +69,7 @@ from app.services.collector import (
     prune_inactive_state,
     reschedule_all_queries_jobs,
     schedule_site,
+    sync_all_lists,
 )
 from app.services.collector import (
     shutdown as collector_shutdown,
@@ -277,6 +278,10 @@ async def lifespan(app: FastAPI):
         )
     scheduler.add_job(prune_inactive_state, "interval", minutes=5, id="prune_inactive_state")
     scheduler.add_job(cleanup_old_data, "cron", hour=3, minute=0, id="cleanup")
+    scheduler.add_job(
+        sync_all_lists, "interval",
+        minutes=settings.list_sync_interval_minutes, id="list_sync",
+    )
     scheduler.add_job(version_check_service.check_now, "interval", hours=1, id="version_check")
     scheduler.add_job(pihole_version_check_service.check_now, "interval", hours=1, id="pihole_version_check")
     scheduler.start()
@@ -287,6 +292,7 @@ async def lifespan(app: FastAPI):
     _track_task(pihole_version_check_service.check_now())
     _track_task(fetch_all_instance_versions())
     _track_task(backfill_all_instances())
+    _track_task(sync_all_lists())
     logger.info(
         "Scheduler started: %d site(s), stats=%ds, queries=%ds, prune=5min.",
         len(site_ids), settings.stats_poll_interval,

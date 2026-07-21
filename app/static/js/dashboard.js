@@ -189,10 +189,11 @@ async function loadDashboard() {
   const tp = since ? `since=${encodeURIComponent(since)}` : `hours=${hours}`;
 
   try {
-    const [summary, history, top] = await Promise.all([
+    const [summary, history, top, byList] = await Promise.all([
       apiFetch(window.siteApiUrl(`/stats/summary?${tp}`)),
       apiFetch(window.siteApiUrl(`/stats/history?${tp}&bucket_minutes=${bucketMinutes}`)),
       apiFetch(window.siteApiUrl(`/stats/top?${tp}&limit=10`)),
+      apiFetch(window.siteApiUrl(`/stats/blocked-by-list?${tp}&limit=15`)),
     ]);
 
     if (!summary) return;
@@ -261,9 +262,35 @@ async function loadDashboard() {
     renderTopTable('top-clients', top.top_clients, r => r.client, r => fmtNum(r.count),
       r => ({ label: `Client queries: ${r.client}`, client: r.client }));
 
+    // Blocked-by-list breakdown (security lists flagged)
+    renderBlockedByList(byList && byList.lists);
+
   } catch (err) {
     console.error('Dashboard load error:', err);
   }
+}
+
+// Ranked breakdown of gravity blocks by source adlist. Lists in the configured
+// security group get a "threat" badge so malware/phishing blocks stand out from
+// ad/tracker blocks.
+function renderBlockedByList(rows) {
+  const tbody = document.getElementById('blocked-by-list');
+  if (!tbody) return;
+  if (!rows || !rows.length) {
+    tbody.innerHTML = '<tr><td colspan="2" class="text-center text-muted py-2 small">No blocks in this window</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(r => {
+    const badge = r.is_security
+      ? ' <span class="badge bg-danger ms-1"><i class="bi bi-shield-fill-exclamation me-1"></i>threat</span>'
+      : '';
+    const title = escHtml(r.address || r.name);
+    return `
+    <tr>
+      <td class="text-truncate cell-w-200" title="${title}">${escHtml(r.name)}${badge}</td>
+      <td class="text-end">${fmtNum(r.count)}</td>
+    </tr>`;
+  }).join('');
 }
 
 function renderQueriesChart(buckets, bucketMinutes = 10, spanHours = 24) {

@@ -17,11 +17,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api._site_dep import resolve_site
 from app.auth import get_current_user
 from app.database import get_db
-from app.models.pihole import PiholeInstance, QueryLog, StatsSnapshot
+from app.models.pihole import PiholeInstance, PiholeList, QueryLog, StatsSnapshot
 from app.models.site import Site
 from app.models.user import User
 from app.schemas.stats import (
     AggregatedSummary,
+    BlockedByListEntry,
+    BlockedByListResponse,
     HistoryBucket,
     HistoryResponse,
     SummaryStats,
@@ -53,6 +55,101 @@ BLOCKED_STATUSES = frozenset({
     "EXTERNAL_BLOCKED_IP", "EXTERNAL_BLOCKED_NULL", "EXTERNAL_BLOCKED_NXDOMAIN",
     "GRAVITY_CNAME", "REGEX_CNAME", "BLACKLIST_CNAME",
 })
+
+# Only gravity blocks carry an adlist `list_id` that resolves via pihole_lists;
+# regex/denylist blocks point at the domainlist (not mirrored) and manual/
+# external blocks have no list. The "Blocked by list" breakdown is gravity-only.
+GRAVITY_STATUSES = frozenset({"GRAVITY", "GRAVITY_CNAME"})
+
+
+def _list_label(address: str | None) -> str:
+    """A compact, recognizable name for an adlist URL for the breakdown card."""
+    if not address:
+        return "Other / unclassified"
+    a = address.removeprefix("https://").removeprefix("http://").strip("/")
+    if not a:
+        return address
+    parts = a.split("/")
+    host, tail = parts[0], (parts[-1] if len(parts) > 1 else "")
+    if "github" in host and len(parts) >= 3:
+        # raw.githubusercontent.com/<user>/<repo>/.../<file> -> user/repo…/file
+        return f"{parts[1]}/{parts[2]}…/{tail}" if tail else f"{parts[1]}/{parts[2]}"
+    return f"{tail} ({host})" if tail else host
+
+
+async def _blocked_by_list_body(
+    db: AsyncSession,
+    since: datetime,
+    instance_id: uuid.UUID | None,
+    limit: int,
+    site_instance_ids: list[uuid.UUID] | None = None,
+) -> BlockedByListResponse:
+    # Gravity blocks in the window, attributed to their adlist. Aggregate by the
+    # list *address* (the numeric list_id is per-instance, so it can't be summed
+    # across instances) and OR the security flag. An unresolved list_id — adlist
+    # removed or not yet synced — falls into a single "Other" bucket via the
+    # outer join's NULL address.
+    q = (
+        select(
+            PiholeList.address.label("address"),
+            func.bool_or(PiholeList.is_security).label("is_security"),
+            func.count(QueryLog.id).label("cnt"),
+        )
+        .join(
+            PiholeList,
+            and_(
+                PiholeList.instance_id == QueryLog.instance_id,
+                PiholeList.pihole_list_id == QueryLog.list_id,
+                PiholeList.list_type == "block",
+            ),
+            isouter=True,
+        )
+        .where(
+            QueryLog.timestamp >= since,
+            QueryLog.status.in_(list(GRAVITY_STATUSES)),
+            QueryLog.list_id.is_not(None),
+        )
+        .group_by(PiholeList.address)
+        .order_by(func.count(QueryLog.id).desc())
+        .limit(limit)
+    )
+    if instance_id:
+        q = q.where(QueryLog.instance_id == instance_id)
+    if site_instance_ids is not None:
+        if not site_instance_ids:
+            return BlockedByListResponse(lists=[], instance_id=instance_id)
+        q = q.where(QueryLog.instance_id.in_(site_instance_ids))
+
+    rows = (await db.execute(q)).all()
+    return BlockedByListResponse(
+        lists=[
+            BlockedByListEntry(
+                list_id=None,
+                name=_list_label(r.address),
+                address=r.address,
+                is_security=bool(r.is_security),
+                count=r.cnt,
+            )
+            for r in rows
+        ],
+        instance_id=instance_id,
+    )
+
+
+@router.get("/blocked-by-list", response_model=BlockedByListResponse)
+async def get_blocked_by_list(
+    hours: int = Query(default=24, ge=1, le=720),
+    since: datetime | None = Query(default=None),
+    instance_id: uuid.UUID | None = Query(default=None),
+    limit: int = Query(default=15, ge=1, le=50),
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if since is not None:
+        since_dt = since if since.tzinfo else since.replace(tzinfo=UTC)
+    else:
+        since_dt = datetime.now(UTC) - timedelta(hours=hours)
+    return await _blocked_by_list_body(db, since_dt, instance_id, limit)
 
 
 async def _latest_snapshots_by_instance(db: AsyncSession) -> dict[uuid.UUID, StatsSnapshot]:
@@ -515,3 +612,21 @@ async def get_top_for_site(
         db, since_dt, instance_id, limit,
         site_instance_ids=scope, hide_self=hide_self,
     )
+
+
+@site_router.get("/blocked-by-list", response_model=BlockedByListResponse)
+async def get_blocked_by_list_for_site(
+    hours: int = Query(default=24, ge=1, le=720),
+    since: datetime | None = Query(default=None),
+    instance_id: uuid.UUID | None = Query(default=None),
+    limit: int = Query(default=15, ge=1, le=50),
+    site: Site = Depends(resolve_site),
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if since is not None:
+        since_dt = since if since.tzinfo else since.replace(tzinfo=UTC)
+    else:
+        since_dt = datetime.now(UTC) - timedelta(hours=hours)
+    scope = await _site_instance_ids(db, site.id)
+    return await _blocked_by_list_body(db, since_dt, instance_id, limit, site_instance_ids=scope)

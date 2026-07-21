@@ -300,6 +300,47 @@ async def test_get_queries_skips_unparseable_rows(respx_mock, client):
     assert queries[0].domain == "example.com"
 
 
+async def test_get_queries_captures_list_id(respx_mock, client):
+    """A gravity block carries its adlist id; other rows default to None."""
+    client._no_auth = True
+    respx_mock.get(f"{PIHOLE}/api/queries").respond(
+        200,
+        json={
+            "queries": [
+                {
+                    "id": "1", "time": 1700000000, "type": "A", "domain": "bad.example",
+                    "client": {"ip": "1.2.3.4", "name": "host"},
+                    "status": "GRAVITY", "reply": {"type": "NULL", "time": 0.1},
+                    "list_id": 8,
+                },
+                {
+                    "id": "2", "time": 1700000001, "type": "A", "domain": "ok.example",
+                    "client": {"ip": "1.2.3.4", "name": "host"},
+                    "status": "FORWARDED", "reply": {"type": "IP", "time": 5.0},
+                    # no list_id key
+                },
+            ],
+        },
+    )
+    queries = await client.get_queries()
+    by_domain = {q.domain: q.list_id for q in queries}
+    assert by_domain == {"bad.example": 8, "ok.example": None}
+
+
+async def test_get_lists_and_groups(respx_mock, client):
+    client._no_auth = True
+    respx_mock.get(f"{PIHOLE}/api/lists").respond(
+        200, json={"lists": [{"id": 8, "type": "block", "address": "tif", "groups": [7]}]}
+    )
+    respx_mock.get(f"{PIHOLE}/api/groups").respond(
+        200, json={"groups": [{"id": 0, "name": "Default"}, {"id": 7, "name": "security"}]}
+    )
+    lists = await client.get_lists()
+    groups = await client.get_groups()
+    assert lists[0]["id"] == 8 and lists[0]["groups"] == [7]
+    assert groups == {0: "Default", 7: "security"}
+
+
 async def test_get_version_info_strips_leading_v(respx_mock, client):
     """Pi-hole exposes versions as `v6.4.2`; downstream comparisons
     expect the bare `6.4.2`."""
