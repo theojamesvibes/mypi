@@ -164,3 +164,85 @@ async def test_block_endpoint_blocked_for_readonly_key(
         json={"domain": "ads.example"},
     )
     assert resp.status_code == 403
+
+
+# ── Per-site scoping ─────────────────────────────────────────────────────────
+
+
+async def test_get_domain_status_for_site_scopes_to_master(
+    authed_client, cluster, respx_mock,
+):
+    """The per-site status route resolves the site and reads its master."""
+    _, master, _ = cluster
+    respx_mock.post(f"{master.url}/api/auth").respond(200, json={"session": {"sid": "x"}})
+    respx_mock.get(f"{master.url}/api/domains/deny/exact").respond(200, json={"domains": []})
+    respx_mock.get(f"{master.url}/api/domains/allow/exact").respond(200, json={"domains": []})
+
+    resp = await authed_client.get("/api/sites/main/domains/status/example.com")
+    assert resp.status_code == 200
+    assert resp.json()["effective"] == "unmanaged"
+
+
+async def test_add_to_deny_for_site_returns_scope_note(
+    authed_client, cluster, respx_mock,
+):
+    """A site-scoped mutation reports the site it changed and (for a single-site
+    deployment) an empty other_sites reminder list."""
+    _, master, replica = cluster
+    for url in (master.url, replica.url):
+        respx_mock.post(f"{url}/api/auth").respond(200, json={"session": {"sid": "s"}})
+        respx_mock.delete(f"{url}/api/domains/allow/exact/ads.example").respond(204)
+        respx_mock.post(f"{url}/api/domains/deny/exact").respond(200)
+
+    resp = await authed_client.post(
+        "/api/sites/main/domains/deny", json={"domain": "ads.example"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["site_name"] == "Main"
+    assert body["other_sites"] == []
+    assert len(body["results"]) == 2
+
+
+# ── Which-list drill-down (live /api/search) ─────────────────────────────────
+
+
+async def test_domain_blocklists_unauth_returns_401(client):
+    resp = await client.get("/api/domains/blocklists/ads.example")
+    assert resp.status_code == 401
+
+
+async def test_domain_blocklists_returns_matching_adlist(
+    authed_client, cluster, respx_mock,
+):
+    """The drill-down resolves which adlist blocks a domain via the master's
+    live /api/search, naming the list from its address."""
+    _, master, _ = cluster
+    respx_mock.post(f"{master.url}/api/auth").respond(200, json={"session": {"sid": "x"}})
+    respx_mock.get(f"{master.url}/api/search/ads.example").respond(
+        200,
+        json={
+            "search": {
+                "gravity": [
+                    {
+                        "domain": "ads.example",
+                        "type": "block",
+                        "address": "https://lists.example/hosts.txt",
+                        "id": 1,
+                        "enabled": True,
+                    }
+                ],
+                "domains": [],
+            }
+        },
+    )
+
+    resp = await authed_client.get("/api/domains/blocklists/ads.example")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["domain"] == "ads.example"
+    assert len(body["lists"]) == 1
+    entry = body["lists"][0]
+    assert entry["kind"] == "gravity"
+    assert entry["address"] == "https://lists.example/hosts.txt"
+    assert "hosts.txt" in entry["name"]

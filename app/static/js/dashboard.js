@@ -13,6 +13,7 @@ const _topTableDrillData = {};
 
 // Delegated click handler for drill-row entries in top tables
 document.addEventListener('click', e => {
+  if (e.target.closest('.blocked-domain-drill')) return; // the list-icon has its own handler
   const tr = e.target.closest('tr.drill-row');
   if (!tr) return;
   const configs = _topTableDrillData[tr.dataset.tbl];
@@ -24,6 +25,16 @@ document.addEventListener('click', e => {
   const btn = e.target.closest('.domain-manage-btn');
   if (!btn) return;
   openDomainModal(btn.dataset.domain, btn.dataset.qstatus || '');
+});
+
+// Delegated click handler for "which list blocked this?" drill-downs —
+// clicking a blocked domain name (query log) or the list icon (top-blocked).
+document.addEventListener('click', e => {
+  const el = e.target.closest('.blocked-domain-drill');
+  if (!el) return;
+  e.preventDefault();
+  e.stopPropagation();
+  openDomainBlocklistCard(el.dataset.domain);
 });
 
 // Delegated click handlers for the remaining JS-generated buttons —
@@ -258,7 +269,7 @@ async function loadDashboard() {
     renderTopTable('top-permitted', top.top_permitted, r => r.domain, r => fmtNum(r.count),
       r => ({ label: `Permitted: ${r.domain}`, domain: r.domain }));
     renderTopTable('top-blocked', top.top_blocked, r => r.domain, r => fmtNum(r.count),
-      r => ({ label: `Blocked: ${r.domain}`, domain: r.domain, blocked: true }));
+      r => ({ label: `Blocked: ${r.domain}`, domain: r.domain, blocked: true }), r => r.domain);
     renderTopTable('top-clients', top.top_clients, r => r.client, r => fmtNum(r.count),
       r => ({ label: `Client queries: ${r.client}`, client: r.client }));
 
@@ -438,7 +449,7 @@ function renderInstancesTable(instances) {
   applyDataBg(tbody);
 }
 
-function renderTopTable(tbodyId, rows, labelFn, countFn, drillFn) {
+function renderTopTable(tbodyId, rows, labelFn, countFn, drillFn, domainFn) {
   const tbody = document.getElementById(tbodyId);
   if (!tbody) return;
   if (!rows || !rows.length) {
@@ -446,12 +457,20 @@ function renderTopTable(tbodyId, rows, labelFn, countFn, drillFn) {
     return;
   }
   if (drillFn) _topTableDrillData[tbodyId] = rows.map(r => drillFn(r));
-  tbody.innerHTML = rows.map((r, i) => `
+  tbody.innerHTML = rows.map((r, i) => {
+    const label = escHtml(labelFn(r));
+    // domainFn (top-blocked only): a list icon that opens the "which list blocked this?" card.
+    const listIcon = domainFn
+      ? `<a href="#" class="blocked-domain-drill text-muted flex-shrink-0" data-domain="${escHtml(domainFn(r))}" title="Which list blocked this?"><i class="bi bi-card-list"></i></a>`
+      : '';
+    return `
     <tr ${drillFn ? `class="drill-row" data-tbl="${tbodyId}" data-idx="${i}"` : ''}>
-      <td class="text-truncate cell-w-200" title="${escHtml(labelFn(r))}">${escHtml(labelFn(r))}</td>
+      <td class="cell-w-200"><div class="d-flex align-items-center gap-2">
+        <span class="text-truncate" title="${label}">${label}</span>${listIcon}
+      </div></td>
       <td class="text-end">${countFn(r)}</td>
-    </tr>
-  `).join('');
+    </tr>`;
+  }).join('');
 }
 
 // ─── Combined Information ────────────────────────────────────────────────────
@@ -524,7 +543,7 @@ async function loadCombined() {
 
     renderTopTable('top-permitted', top.top_permitted, r => r.domain, r => fmtNum(r.count));
     renderTopTable('top-blocked', top.top_blocked, r => r.domain, r => fmtNum(r.count),
-      r => ({ label: 'Blocked: ' + r.domain, domain: r.domain, blocked: true }));
+      r => ({ label: 'Blocked: ' + r.domain, domain: r.domain, blocked: true }), r => r.domain);
   } catch (err) {
     console.error('Combined load error:', err);
   }
@@ -726,7 +745,11 @@ async function loadQueries(page) {
           return `<tr>
             <td class="text-nowrap small">${fmtTime(q.timestamp)}</td>
             <td><span class="badge rounded-pill badge-instance">${escHtml(q.instance_name)}</span></td>
-            <td class="text-truncate cell-w-220" title="${d}">${d || '—'}</td>
+            <td class="text-truncate cell-w-220" title="${d}">${
+              d ? (isBlocked
+                ? `<a href="#" class="blocked-domain-drill text-decoration-none" data-domain="${d}" title="Which list blocked this?">${d}</a>`
+                : d)
+              : '—'}</td>
             <td><code class="small">${escHtml(q.query_type || '—')}</code></td>
             <td class="small">${escHtml(q.client_name || q.client_ip || '—')}</td>
             <td>${statusPill(q.status)}</td>
@@ -923,7 +946,7 @@ async function openDomainModal(domain, queryStatus) {
   bootstrap.Modal.getOrCreateInstance(modal).show();
 
   try {
-    const resp = await fetch(`/api/domains/status/${encodeURIComponent(domain)}`);
+    const resp = await fetch(window.siteApiUrl(`/domains/status/${encodeURIComponent(domain)}`));
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     renderDomainStatus(domain, queryStatus, await resp.json());
   } catch (err) {
@@ -988,17 +1011,17 @@ async function doDomainAction(action) {
   try {
     let resp;
     if (action === 'deny') {
-      resp = await fetch('/api/domains/deny', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ domain }) });
+      resp = await fetch(window.siteApiUrl('/domains/deny'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ domain }) });
     } else if (action === 'allow') {
-      resp = await fetch('/api/domains/allow', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ domain }) });
+      resp = await fetch(window.siteApiUrl('/domains/allow'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ domain }) });
     } else if (action === 'remove_deny') {
-      resp = await fetch(`/api/domains/deny/${encodeURIComponent(domain)}`, { method: 'DELETE' });
+      resp = await fetch(window.siteApiUrl(`/domains/deny/${encodeURIComponent(domain)}`), { method: 'DELETE' });
     } else if (action === 'remove_allow') {
-      resp = await fetch(`/api/domains/allow/${encodeURIComponent(domain)}`, { method: 'DELETE' });
+      resp = await fetch(window.siteApiUrl(`/domains/allow/${encodeURIComponent(domain)}`), { method: 'DELETE' });
     } else if (action === 'clear') {
       const [r1, r2] = await Promise.all([
-        fetch(`/api/domains/deny/${encodeURIComponent(domain)}`, { method: 'DELETE' }),
-        fetch(`/api/domains/allow/${encodeURIComponent(domain)}`, { method: 'DELETE' }),
+        fetch(window.siteApiUrl(`/domains/deny/${encodeURIComponent(domain)}`), { method: 'DELETE' }),
+        fetch(window.siteApiUrl(`/domains/allow/${encodeURIComponent(domain)}`), { method: 'DELETE' }),
       ]);
       resp = r1.ok ? r2 : r1;
     }
@@ -1023,6 +1046,16 @@ async function doDomainAction(action) {
       }
       html += '</ul>';
     }
+    // Multi-site reminder: a per-site change doesn't reach your other sites.
+    const others = data.other_sites || [];
+    if (others.length) {
+      const links = others.map(s =>
+        `<a href="/dashboard/${encodeURIComponent(s.slug)}" class="alert-link">${escHtml(s.name)}</a>`
+      ).join(', ');
+      html += `<div class="alert alert-info py-2 mt-2 mb-0 small">
+        <i class="bi bi-info-circle me-1"></i>This changed <strong>${escHtml(data.site_name || 'this site')}</strong> only.
+        To block it elsewhere, manage it on: ${links}.</div>`;
+    }
     body.innerHTML = html;
     footer.innerHTML = '<button class="btn btn-primary" data-bs-dismiss="modal">Done</button>';
 
@@ -1030,6 +1063,70 @@ async function doDomainAction(action) {
     body.innerHTML = `<div class="alert alert-danger mb-0">Error: ${escHtml(String(err))}</div>`;
     footer.innerHTML = '<button class="btn btn-secondary" data-bs-dismiss="modal">Close</button>';
   }
+}
+
+// ─── "Which list blocked this?" drill-down card ──────────────────────────────
+
+async function openDomainBlocklistCard(domain) {
+  const modal = document.getElementById('domainBlocklistModal');
+  if (!modal) return;
+
+  document.getElementById('domain-blocklist-title').textContent = domain;
+  const body = document.getElementById('domain-blocklist-body');
+  body.innerHTML =
+    '<div class="text-center py-3"><span class="spinner-border spinner-border-sm me-2"></span>Looking up blocklists…</div>';
+
+  bootstrap.Modal.getOrCreateInstance(modal).show();
+
+  const { since, hours } = getTimeParams();
+  const tp = since ? `since=${encodeURIComponent(since)}` : `hours=${hours}`;
+
+  try {
+    const resp = await fetch(window.siteApiUrl(`/domains/blocklists/${encodeURIComponent(domain)}?${tp}`));
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    renderDomainBlocklistCard(data);
+  } catch (err) {
+    body.innerHTML = `<div class="alert alert-danger mb-0">Failed to look up blocklists: ${escHtml(String(err))}</div>`;
+  }
+}
+
+function renderDomainBlocklistCard(data) {
+  const body = document.getElementById('domain-blocklist-body');
+  const lists = data.lists || [];
+
+  // Reliable in-window block count (from our own query logs).
+  const countLine = data.block_count
+    ? `<p class="small text-muted mb-2"><i class="bi bi-slash-circle me-1"></i>Blocked <strong>${fmtNum(data.block_count)}</strong> time${data.block_count !== 1 ? 's' : ''} in this window.</p>`
+    : '';
+
+  if (!lists.length) {
+    body.innerHTML = `${countLine}<div class="alert alert-secondary mb-0 py-2">
+      <i class="bi bi-shield me-1"></i>Not on any adlist or local deny rule right now.
+      ${data.block_count ? 'Earlier blocks may have come from a list since removed.' : ''}</div>`;
+    return;
+  }
+
+  const kindLabel = { 'gravity': 'Adlist', 'deny-exact': 'Deny (exact)', 'deny-regex': 'Deny (regex)' };
+  const rows = lists.map(l => {
+    const detail = l.address
+      ? `<div class="small text-muted text-truncate" title="${escHtml(l.address)}">${escHtml(l.address)}</div>`
+      : '';
+    const badges =
+      `<span class="badge bg-secondary-subtle text-secondary-emphasis">${escHtml(kindLabel[l.kind] || l.kind)}</span>` +
+      (l.is_security ? ' <span class="badge bg-danger-subtle text-danger-emphasis" title="Security / threat feed"><i class="bi bi-shield-fill-exclamation me-1"></i>Security</span>' : '') +
+      (l.enabled === false ? ' <span class="badge bg-warning-subtle text-warning-emphasis">Disabled</span>' : '');
+    return `<li class="list-group-item px-0">
+      <div class="d-flex justify-content-between align-items-start gap-2">
+        <div class="fw-semibold text-truncate" title="${escHtml(l.name)}">${escHtml(l.name)}</div>
+        <div class="text-nowrap flex-shrink-0">${badges}</div>
+      </div>
+      ${detail}
+    </li>`;
+  }).join('');
+
+  body.innerHTML = `${countLine}<p class="small text-muted mb-1">On ${lists.length} list${lists.length !== 1 ? 's' : ''}:</p>
+    <ul class="list-group list-group-flush">${rows}</ul>`;
 }
 
 // ─── Settings ────────────────────────────────────────────────────────────────

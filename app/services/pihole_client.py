@@ -536,6 +536,25 @@ class PiholeClient:
         data = await self._get("/api/groups")
         return {g["id"]: g.get("name", "") for g in (data.get("groups", []) or []) if "id" in g}
 
+    async def search_domain(self, domain: str, n: int = 20) -> dict[str, Any]:
+        """Look a domain up against gravity + the exact/regex domainlist via
+        GET /api/search/{domain}. This is the reliable way to answer "which
+        adlist blocked this?" — Pi-hole's per-query `list_id` does not attribute
+        gravity blocks to an adlist.
+
+        Returns the raw ``search`` object:
+          - ``gravity``: [{domain, type(block/allow), address, id, enabled,
+                           comment, number, groups, ...}] — matching adlists.
+          - ``domains``: [{domain, type(deny/allow), kind(exact/regex), ...}] —
+                          matching exact/regex domainlist entries.
+        """
+        from urllib.parse import quote
+        data = await self._get(
+            f"/api/search/{quote(domain, safe='')}",
+            params={"N": n, "partial": "false"},
+        )
+        return data.get("search", {}) or {}
+
     async def get_domain_list_status(self, domain: str) -> dict[str, bool]:
         """Return {in_deny, in_allow} by checking both exact lists in parallel."""
         # Explicit annotations: mypy can't infer the unpacked element types

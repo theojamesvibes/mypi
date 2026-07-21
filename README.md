@@ -2,7 +2,7 @@
 [![build](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/docker-publish.yml?style=flat-square)](https://github.com/theojamesvibes/mypi/actions)
 [![tests](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/test.yml?style=flat-square&label=tests)](https://github.com/theojamesvibes/mypi/actions/workflows/test.yml)
 [![ui-tests](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/ui-tests.yml?style=flat-square&label=ui-tests)](https://github.com/theojamesvibes/mypi/actions/workflows/ui-tests.yml)
-[![version](https://img.shields.io/badge/version-2.6.0-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
+[![version](https://img.shields.io/badge/version-2.7.0-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
 [![platform](https://img.shields.io/badge/platform-linux%2Famd64%20|%20linux%2Farm64-teal?style=flat-square)](https://github.com/theojamesvibes/mypi/pkgs/container/mypi)
 
 > **⚠️ Vibe Code Disclosure**
@@ -32,7 +32,8 @@ A self-hosted dashboard that consolidates up to 10 locally running [Pi-hole](htt
 - **Query type breakdown** — Doughnut chart (Forwarded / Cached / Blocked / Other)
 - **Per-system panel** — Each Pi-hole shown individually with its own stats and online/offline badge
 - **Top Permitted Domains, Top Blocked Domains, Top Clients** — Clickable rows open a drill-down modal with all matching queries for that domain or client
-- **Blocked by List** — ranks the window's blocks by the source blocklist that caught them; lists in a designated Pi-hole *security* group (for dedicated malware/phishing feeds like HaGeZi TIF or URLhaus) are flagged with a red "threat" badge, so security blocks stand out from ad/tracker noise. Configurable via `SECURITY_GROUP_NAME`.
+- **Blocked by List** — ranks the window's blocks by the source blocklist that caught them; lists in a designated Pi-hole *security* group (for dedicated malware/phishing feeds like HaGeZi TIF or URLhaus) are flagged with a red "threat" badge, so security blocks stand out from ad/tracker noise. Configurable via `SECURITY_GROUP_NAME`. Attribution is resolved live via Pi-hole's `/api/search` (Pi-hole's per-query `list_id` doesn't attribute gravity blocks), and cached per scope.
+- **Which-list drill-down** — click any blocked domain (in the query log or the Top Blocked table) to see exactly which adlist(s) block it: real list name, source URL, security flag, and how often it was blocked in the window.
 - **Clickable MyPi logo** in the sidebar — navigates to the dashboard from any other page; on the dashboard itself it refreshes the data in place without a full page reload
 - **Site name in page titles** — on multi-site deployments, per-slug pages show the current site name in both the browser tab title and the in-page heading (e.g. `Dashboard: WTR`)
 

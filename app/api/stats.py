@@ -7,6 +7,9 @@ aggregating across every site) and the per-site one
 """
 from __future__ import annotations
 
+import asyncio
+import logging
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -20,6 +23,7 @@ from app.database import get_db
 from app.models.pihole import PiholeInstance, PiholeList, QueryLog, StatsSnapshot
 from app.models.site import Site
 from app.models.user import User
+from app.services import client_manager
 from app.schemas.stats import (
     AggregatedSummary,
     BlockedByListEntry,
@@ -32,6 +36,8 @@ from app.schemas.stats import (
     TopStatsResponse,
 )
 from app.services.site_settings import get_json_setting, get_main_site_id
+
+logger = logging.getLogger(__name__)
 
 # Top Clients self-traffic filter setting key. JSON boolean. Default true.
 # Mirrors Pi-hole's own admin UI behaviour, which hides queries originating
@@ -77,6 +83,31 @@ def _list_label(address: str | None) -> str:
     return f"{tail} ({host})" if tail else host
 
 
+# How many of the busiest blocked domains to attribute for the "Blocked by list"
+# breakdown. Pi-hole's per-query list_id doesn't attribute gravity blocks, so we
+# live-search these on the master and sum their (reliable) block counts by adlist.
+# Bounded so we don't fan a search out over every distinct domain.
+_BBL_TOP_DOMAINS = 30
+# The dashboard re-fetches this every 60 s; cache the (expensive) attribution so a
+# left-open dashboard doesn't fire 30 master searches a minute per scope.
+_BBL_TTL_SECONDS = 300.0
+_bbl_cache: dict[str, tuple[float, "BlockedByListResponse"]] = {}
+
+
+async def _scope_master(
+    db: AsyncSession, site_instance_ids: list[uuid.UUID] | None
+) -> PiholeInstance | None:
+    """One active master to run adlist searches against. Site scope → that site's
+    master; global → any active master (gravity lists are near-identical across
+    a household, so one master is representative)."""
+    q = select(PiholeInstance).where(
+        PiholeInstance.is_master.is_(True), PiholeInstance.is_active.is_(True)
+    )
+    if site_instance_ids is not None:
+        q = q.where(PiholeInstance.id.in_(site_instance_ids))
+    return (await db.execute(q)).scalars().first()
+
+
 async def _blocked_by_list_body(
     db: AsyncSession,
     since: datetime,
@@ -84,56 +115,106 @@ async def _blocked_by_list_body(
     limit: int,
     site_instance_ids: list[uuid.UUID] | None = None,
 ) -> BlockedByListResponse:
-    # Gravity blocks in the window, attributed to their adlist. Aggregate by the
-    # list *address* (the numeric list_id is per-instance, so it can't be summed
-    # across instances) and OR the security flag. An unresolved list_id — adlist
-    # removed or not yet synced — falls into a single "Other" bucket via the
-    # outer join's NULL address.
-    q = (
-        select(
-            PiholeList.address.label("address"),
-            func.bool_or(PiholeList.is_security).label("is_security"),
-            func.count(QueryLog.id).label("cnt"),
-        )
-        .join(
-            PiholeList,
-            and_(
-                PiholeList.instance_id == QueryLog.instance_id,
-                PiholeList.pihole_list_id == QueryLog.list_id,
-                PiholeList.list_type == "block",
-            ),
-            isouter=True,
-        )
-        .where(
-            QueryLog.timestamp >= since,
-            QueryLog.status.in_(list(GRAVITY_STATUSES)),
-            QueryLog.list_id.is_not(None),
-        )
-        .group_by(PiholeList.address)
+    """Attribute the busiest blocked domains to the adlist(s) that carry them,
+    via the master's live /api/search, and sum their block counts by list.
+
+    Covers the top ``_BBL_TOP_DOMAINS`` domains (the bulk of blocked traffic);
+    a domain on no adlist (regex/deny/removed list) falls into "Other". Cached
+    per scope for ``_BBL_TTL_SECONDS`` to bound load on the master."""
+    scope_key = (
+        "global" if site_instance_ids is None
+        else "-".join(sorted(str(i) for i in site_instance_ids))
+    )
+    cache_key = f"{scope_key}:{instance_id}:{limit}:{int(since.timestamp()) // int(_BBL_TTL_SECONDS)}"
+    now = time.monotonic()
+    cached = _bbl_cache.get(cache_key)
+    if cached and now - cached[0] < _BBL_TTL_SECONDS:
+        return cached[1]
+
+    def _store(resp: BlockedByListResponse) -> BlockedByListResponse:
+        # Drop expired entries so the cache can't grow unbounded (the time-bucket
+        # in cache_key rotates every TTL, minting a fresh key each window).
+        for k in [k for k, (t, _) in _bbl_cache.items() if now - t >= _BBL_TTL_SECONDS]:
+            _bbl_cache.pop(k, None)
+        _bbl_cache[cache_key] = (now, resp)
+        return resp
+
+    # 1. Busiest blocked domains + their (reliable) block counts.
+    dq = (
+        select(QueryLog.domain, func.count(QueryLog.id).label("cnt"))
+        .where(QueryLog.timestamp >= since, QueryLog.status.in_(list(GRAVITY_STATUSES)))
+        .group_by(QueryLog.domain)
         .order_by(func.count(QueryLog.id).desc())
-        .limit(limit)
+        .limit(_BBL_TOP_DOMAINS)
     )
     if instance_id:
-        q = q.where(QueryLog.instance_id == instance_id)
+        dq = dq.where(QueryLog.instance_id == instance_id)
     if site_instance_ids is not None:
         if not site_instance_ids:
-            return BlockedByListResponse(lists=[], instance_id=instance_id)
-        q = q.where(QueryLog.instance_id.in_(site_instance_ids))
+            return _store(BlockedByListResponse(lists=[], instance_id=instance_id))
+        dq = dq.where(QueryLog.instance_id.in_(site_instance_ids))
 
-    rows = (await db.execute(q)).all()
-    return BlockedByListResponse(
-        lists=[
+    top = [(d, c) for d, c in (await db.execute(dq)).all() if d]
+    master = await _scope_master(db, site_instance_ids)
+    if not top or master is None:
+        return _store(BlockedByListResponse(lists=[], instance_id=instance_id))
+
+    # 2. Search each domain on the master (concurrently), attribute its block
+    #    count to the lowest-id block adlist that carries it (Pi-hole blocks on
+    #    first gravity match; using one list keeps the totals honest).
+    try:
+        client = await client_manager.get_client(master)
+        results = await asyncio.gather(
+            *[client.search_domain(d) for d, _ in top], return_exceptions=True
+        )
+    except Exception as exc:  # master unreachable — no attribution this cycle
+        logger.warning("Blocked-by-list attribution failed on %s: %s", master.name, exc)
+        return _store(BlockedByListResponse(lists=[], instance_id=instance_id))
+
+    counts: dict[str | None, int] = {}
+    addr_list_id: dict[str, int] = {}
+    for (domain, cnt), search in zip(top, results):
+        gravity = (
+            [] if isinstance(search, BaseException) or not search
+            else [g for g in (search.get("gravity") or []) if g.get("type") == "block"]
+        )
+        if not gravity:
+            counts[None] = counts.get(None, 0) + cnt  # unattributed → "Other"
+            continue
+        primary = min(gravity, key=lambda g: g.get("id") if g.get("id") is not None else 1 << 30)
+        addr = primary.get("address")
+        counts[addr] = counts.get(addr, 0) + cnt
+        if addr and primary.get("id") is not None:
+            addr_list_id[addr] = primary["id"]
+
+    # 3. Flag which attributed adlists are security feeds (from our mirror).
+    sec: dict[str, bool] = {}
+    if addr_list_id:
+        rows = (await db.execute(
+            select(PiholeList.pihole_list_id, PiholeList.is_security).where(
+                PiholeList.instance_id == master.id,
+                PiholeList.list_type == "block",
+                PiholeList.pihole_list_id.in_(list(addr_list_id.values())),
+            )
+        )).all()
+        id_sec = {pid: bool(is_sec) for pid, is_sec in rows}
+        sec = {addr: id_sec.get(lid, False) for addr, lid in addr_list_id.items()}
+
+    entries = sorted(
+        (
             BlockedByListEntry(
                 list_id=None,
-                name=_list_label(r.address),
-                address=r.address,
-                is_security=bool(r.is_security),
-                count=r.cnt,
+                name=_list_label(addr),
+                address=addr,
+                is_security=sec.get(addr, False) if addr else False,
+                count=cnt,
             )
-            for r in rows
-        ],
-        instance_id=instance_id,
-    )
+            for addr, cnt in counts.items()
+        ),
+        key=lambda e: e.count,
+        reverse=True,
+    )[:limit]
+    return _store(BlockedByListResponse(lists=entries, instance_id=instance_id))
 
 
 @router.get("/blocked-by-list", response_model=BlockedByListResponse)

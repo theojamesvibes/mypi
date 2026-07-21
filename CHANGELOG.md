@@ -8,6 +8,40 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.7.0] — 2026-07-21
+
+### Fixed
+
+- **Manage-domain shield button returned HTTP 500 on every click (multi-site).**
+  The domain-status endpoint resolved "the master" with `scalar_one_or_none()`
+  over `is_master AND is_active`; with a master per site that returns several
+  rows → `MultipleResultsFound` → unhandled 500. Domain management is now
+  **site-scoped** (`/api/sites/{slug}/domains/...`), and the retained global
+  routes aggregate the status read across all masters instead of crashing.
+
+### Added
+
+- **"Which list blocked this?" drill-down.** Click a blocked domain — in the
+  query log or the Top Blocked table (new list icon) — to see the adlist(s) that
+  block it: real list name, source URL, security-feed flag, and the in-window
+  block count. Attribution is resolved **live** via Pi-hole's `/api/search`,
+  because Pi-hole's per-query `list_id` does not attribute gravity blocks (it is
+  null/negative for them), so the previous `list_id` join could never resolve a
+  name.
+- **Per-site domain management.** Block/allow now applies to the site you're
+  viewing; the confirmation reminds you that other sites are unaffected and links
+  to them. The all-sites pages keep fleet-wide behavior.
+
+### Changed
+
+- **"Blocked by list" card now shows real list names and counts.** Reworked to
+  attribute the busiest blocked domains through the same live `/api/search`
+  instead of the broken per-query `list_id` join, so it no longer collapses into
+  a single "Other / unclassified" bucket. Results are cached per scope to bound
+  the number of searches sent to the master (the dashboard refreshes every 60 s).
+
+---
+
 ## [2.6.0] — 2026-07-21
 
 ### Added

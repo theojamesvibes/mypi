@@ -65,3 +65,21 @@ class BlockedByListEntry(BaseModel):
 class BlockedByListResponse(BaseModel):
     lists: list[BlockedByListEntry]
     instance_id: uuid.UUID | None = None
+
+
+class DomainBlocklistEntry(BaseModel):
+    """One list that matches a domain, from Pi-hole's live /api/search."""
+    name: str                    # display name — adlist URL label, or the pattern
+    address: str | None = None   # adlist URL (gravity); None for exact/regex entries
+    kind: str                    # "gravity" | "deny-exact" | "deny-regex"
+    enabled: bool = True
+    is_security: bool = False    # gravity adlist in the configured security group
+
+
+class DomainBlocklistsResponse(BaseModel):
+    """Which list(s) block a single domain — the drill-down card behind clicking
+    a blocked domain. Sourced from the master's live /api/search, since Pi-hole's
+    per-query list_id doesn't attribute gravity blocks."""
+    domain: str
+    block_count: int = 0         # times gravity-blocked in the window (context)
+    lists: list[DomainBlocklistEntry]
