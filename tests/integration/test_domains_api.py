@@ -246,3 +246,34 @@ async def test_domain_blocklists_returns_matching_adlist(
     assert entry["kind"] == "gravity"
     assert entry["address"] == "https://lists.example/hosts.txt"
     assert "hosts.txt" in entry["name"]
+
+
+async def test_domain_blocklists_prefers_list_comment_as_name(
+    authed_client, cluster, respx_mock,
+):
+    """When the adlist has a Pi-hole comment (the user's short name), use it as
+    the display name instead of the URL-derived label."""
+    _, master, _ = cluster
+    respx_mock.post(f"{master.url}/api/auth").respond(200, json={"session": {"sid": "x"}})
+    respx_mock.get(f"{master.url}/api/search/ads.example").respond(
+        200,
+        json={
+            "search": {
+                "gravity": [
+                    {
+                        "domain": "ads.example",
+                        "type": "block",
+                        "address": "https://lists.example/hosts.txt",
+                        "comment": "StevenBlack Hosts",
+                        "id": 1,
+                        "enabled": True,
+                    }
+                ],
+                "domains": [],
+            }
+        },
+    )
+
+    resp = await authed_client.get("/api/domains/blocklists/ads.example")
+    assert resp.status_code == 200
+    assert resp.json()["lists"][0]["name"] == "StevenBlack Hosts"

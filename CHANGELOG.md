@@ -8,6 +8,23 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.7.1] — 2026-07-21
+
+### Changed
+
+- **List names now come from the Pi-hole adlist *comment*** (the short name you
+  set in the list config) everywhere they're shown — the which-list drill-down,
+  the "Blocked by list" card, and the new "Blocked by adlist" line in the manage
+  modal — falling back to a URL-derived label when a list has no comment.
+- **Manage-domain modal now names the blocking adlist(s).** Opening the shield
+  modal fetches the live `/api/search` attribution alongside the deny/allow
+  status, so a gravity-blocked domain shows *which* list caught it (with a
+  security-feed badge), not just "blocked by an adlist".
+- **Which-list drill-down card is wider and no longer truncates list names** —
+  full names and source URLs wrap instead of being clipped.
+
+---
+
 ## [2.7.0] — 2026-07-21
 
 ### Fixed

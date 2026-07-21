@@ -173,6 +173,7 @@ async def _blocked_by_list_body(
 
     counts: dict[str | None, int] = {}
     addr_list_id: dict[str, int] = {}
+    addr_name: dict[str, str] = {}  # address → display name (Pi-hole comment, or URL label)
     for (_domain, cnt), search in zip(top, results, strict=True):
         gravity = (
             [] if isinstance(search, BaseException) or not search
@@ -184,6 +185,8 @@ async def _blocked_by_list_body(
         primary = min(gravity, key=lambda g: g.get("id") if g.get("id") is not None else 1 << 30)
         addr = primary.get("address")
         counts[addr] = counts.get(addr, 0) + cnt
+        if addr:
+            addr_name[addr] = (primary.get("comment") or "").strip() or _list_label(addr)
         if addr and primary.get("id") is not None:
             addr_list_id[addr] = primary["id"]
 
@@ -204,7 +207,7 @@ async def _blocked_by_list_body(
         (
             BlockedByListEntry(
                 list_id=None,
-                name=_list_label(addr),
+                name=(addr_name.get(addr) if addr is not None else None) or _list_label(addr),
                 address=addr,
                 is_security=sec.get(addr, False) if addr else False,
                 count=cnt,

@@ -946,16 +946,35 @@ async function openDomainModal(domain, queryStatus) {
   bootstrap.Modal.getOrCreateInstance(modal).show();
 
   try {
-    const resp = await fetch(window.siteApiUrl(`/domains/status/${encodeURIComponent(domain)}`));
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    renderDomainStatus(domain, queryStatus, await resp.json());
+    const { since, hours } = getTimeParams();
+    const tp = since ? `since=${encodeURIComponent(since)}` : `hours=${hours}`;
+    const [statusResp, listsResp] = await Promise.all([
+      fetch(window.siteApiUrl(`/domains/status/${encodeURIComponent(domain)}`)),
+      fetch(window.siteApiUrl(`/domains/blocklists/${encodeURIComponent(domain)}?${tp}`)),
+    ]);
+    if (!statusResp.ok) throw new Error(`HTTP ${statusResp.status}`);
+    const lists = listsResp.ok ? await listsResp.json() : { lists: [] };
+    renderDomainStatus(domain, queryStatus, await statusResp.json(), lists);
   } catch (err) {
     document.getElementById('domain-modal-body').innerHTML =
       `<div class="alert alert-danger mb-0">Failed to check status: ${escHtml(String(err))}</div>`;
   }
 }
 
-function renderDomainStatus(domain, queryStatus, status) {
+// The adlist(s) currently blocking this domain, for the management modal.
+function _blockedByListHtml(lists) {
+  const gravity = ((lists && lists.lists) || []).filter(l => l.kind === 'gravity');
+  if (!gravity.length) return '';
+  const rows = gravity.map(l =>
+    `<li class="mb-1"><i class="bi bi-card-list me-1 text-danger"></i>${escHtml(l.name)}` +
+    (l.is_security ? ' <span class="badge bg-danger-subtle text-danger-emphasis ms-1"><i class="bi bi-shield-fill-exclamation me-1"></i>Security</span>' : '') +
+    '</li>'
+  ).join('');
+  return `<div class="mt-2"><div class="small text-muted mb-1">Blocked by adlist:</div>
+    <ul class="list-unstyled small mb-0">${rows}</ul></div>`;
+}
+
+function renderDomainStatus(domain, queryStatus, status, lists) {
   const body = document.getElementById('domain-modal-body');
   const footer = document.getElementById('domain-modal-footer');
   const { in_deny, in_allow, effective } = status;
@@ -997,7 +1016,8 @@ function renderDomainStatus(domain, queryStatus, status) {
 
   body.innerHTML = `<div class="mb-3">${denyBadge}${allowBadge}</div>
     <p class="mb-2 small text-muted">Last query status: ${statusPill(queryStatus)}</p>
-    ${summaryHtml}`;
+    ${summaryHtml}
+    ${_blockedByListHtml(lists)}`;
   footer.innerHTML = footerHtml;
 }
 
@@ -1110,7 +1130,7 @@ function renderDomainBlocklistCard(data) {
   const kindLabel = { 'gravity': 'Adlist', 'deny-exact': 'Deny (exact)', 'deny-regex': 'Deny (regex)' };
   const rows = lists.map(l => {
     const detail = l.address
-      ? `<div class="small text-muted text-truncate" title="${escHtml(l.address)}">${escHtml(l.address)}</div>`
+      ? `<div class="small text-muted text-break">${escHtml(l.address)}</div>`
       : '';
     const badges =
       `<span class="badge bg-secondary-subtle text-secondary-emphasis">${escHtml(kindLabel[l.kind] || l.kind)}</span>` +
@@ -1118,7 +1138,7 @@ function renderDomainBlocklistCard(data) {
       (l.enabled === false ? ' <span class="badge bg-warning-subtle text-warning-emphasis">Disabled</span>' : '');
     return `<li class="list-group-item px-0">
       <div class="d-flex justify-content-between align-items-start gap-2">
-        <div class="fw-semibold text-truncate" title="${escHtml(l.name)}">${escHtml(l.name)}</div>
+        <div class="fw-semibold text-break">${escHtml(l.name)}</div>
         <div class="text-nowrap flex-shrink-0">${badges}</div>
       </div>
       ${detail}

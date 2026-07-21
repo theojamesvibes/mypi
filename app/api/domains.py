@@ -246,7 +246,9 @@ async def _blocklists_body(
 
     entries = [
         DomainBlocklistEntry(
-            name=_list_label(g.get("address")),
+            # Prefer the adlist's Pi-hole comment (the user's short name), fall
+            # back to a label derived from the source URL.
+            name=(g.get("comment") or "").strip() or _list_label(g.get("address")),
             address=g.get("address"),
             kind="gravity",
             enabled=bool(g.get("enabled", True)),
