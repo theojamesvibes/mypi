@@ -84,8 +84,10 @@ async def _scope_note(db: AsyncSession, site: Site) -> dict:
     Returns ``{"site_name": ..., "other_sites": [{"slug", "name"}, ...]}``.
     An empty ``other_sites`` (single-site deployment) means no reminder needed.
     """
+    # sort_order is in the SELECT list because Postgres requires ORDER BY columns
+    # to appear there under SELECT DISTINCT.
     q = (
-        select(Site.slug, Site.name)
+        select(Site.slug, Site.name, Site.sort_order)
         .join(PiholeInstance, PiholeInstance.site_id == Site.id)
         .where(
             Site.is_active.is_(True),
@@ -95,7 +97,7 @@ async def _scope_note(db: AsyncSession, site: Site) -> dict:
         .distinct()
         .order_by(Site.sort_order, Site.name)
     )
-    others = [{"slug": slug, "name": name} for slug, name in (await db.execute(q)).all()]
+    others = [{"slug": slug, "name": name} for slug, name, _ in (await db.execute(q)).all()]
     return {"site_name": site.name, "other_sites": others}
 
 

@@ -23,7 +23,6 @@ from app.database import get_db
 from app.models.pihole import PiholeInstance, PiholeList, QueryLog, StatsSnapshot
 from app.models.site import Site
 from app.models.user import User
-from app.services import client_manager
 from app.schemas.stats import (
     AggregatedSummary,
     BlockedByListEntry,
@@ -35,6 +34,7 @@ from app.schemas.stats import (
     TopDomain,
     TopStatsResponse,
 )
+from app.services import client_manager
 from app.services.site_settings import get_json_setting, get_main_site_id
 
 logger = logging.getLogger(__name__)
@@ -91,7 +91,7 @@ _BBL_TOP_DOMAINS = 30
 # The dashboard re-fetches this every 60 s; cache the (expensive) attribution so a
 # left-open dashboard doesn't fire 30 master searches a minute per scope.
 _BBL_TTL_SECONDS = 300.0
-_bbl_cache: dict[str, tuple[float, "BlockedByListResponse"]] = {}
+_bbl_cache: dict[str, tuple[float, BlockedByListResponse]] = {}
 
 
 async def _scope_master(
@@ -173,7 +173,7 @@ async def _blocked_by_list_body(
 
     counts: dict[str | None, int] = {}
     addr_list_id: dict[str, int] = {}
-    for (domain, cnt), search in zip(top, results):
+    for (_domain, cnt), search in zip(top, results, strict=True):
         gravity = (
             [] if isinstance(search, BaseException) or not search
             else [g for g in (search.get("gravity") or []) if g.get("type") == "block"]
