@@ -1,4 +1,4 @@
-fastapi==0.139.2
+fastapi==0.140.0
 # starlette is a transitive dep of fastapi (which only constrains it to
 # >=0.46.0 with no ceiling). Pin an explicit security floor so a resolve
 # can't land on a version exposed to CVE-2026-54283 (urlencoded form-size
