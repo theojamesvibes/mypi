@@ -18,3 +18,4 @@ venv/
 # Local Playwright suite output (uvicorn/emulator logs, trace bundles)
 playwright-*.log
 test-results/
+.aider*

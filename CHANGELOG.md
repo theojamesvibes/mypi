@@ -8,6 +8,40 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.7.2] — 2026-08-31
+
+### Security
+
+- **Dependency sweep (14 Dependabot PRs, batched):** fastapi 0.139.2 → 0.141.1,
+  starlette floor >=1.3.1 → >=1.6.0 (picks up the 1.5.1 `FileResponse` Range
+  hardening — inverted single-byte ranges rejected, 100-range cap), uvicorn
+  0.51.0 → 0.52.3, sqlalchemy 2.0.51 → 2.0.52, alembic 1.18.5 → 1.19.1,
+  pydantic-settings 2.14.2 → 2.15.0, cryptography 49.0.0 → 50.0.0,
+  testcontainers 4.14.2 → 4.15.0, coverage 7.15.2 → 7.15.4, ruff
+  0.15.22 → 0.16.3; GitHub Actions: checkout v7.0.0 → v7.0.1, setup-python
+  v6 → v7, docker/login-action v4.4.0 → v4.6.0, docker/setup-buildx-action
+  v4.2.0 → v4.3.0. (#92, #93, #96, #99, #100, #104, #106–#113)
+- **Rate-limited the live-search endpoints** (`/api/stats/blocked-by-list` and
+  `/api/domains/blocklists/{domain}`, global + per-site) at 30/minute. Both fan
+  requests out to the master Pi-hole's `/api/search` (blocked-by-list up to 30
+  concurrently on a cache miss, and an arbitrary `since` value mints a fresh
+  cache key per request), so an authenticated client could previously hammer
+  the master without bound. Post-2.6.0-review hardening; mutations were already
+  limited.
+
+### Fixed
+
+- **Adlist mirror: overlong Pi-hole comment aborted the whole sync.** Pi-hole
+  doesn't bound the adlist `comment` field, but our `pihole_lists.comment`
+  column is 512 chars — a longer comment raised on insert and killed that
+  instance's entire list sync. Now truncated like `address` already was.
+- **Adlist mirror: a DB write failure in one instance no longer escapes the
+  scheduler job.** The per-instance error isolation only covered the Pi-hole
+  API calls, not the database write — contradicting the collector's own
+  isolation rule. DB errors are now caught and logged per instance too.
+
+---
+
 ## [2.7.1] — 2026-07-21
 
 ### Changed

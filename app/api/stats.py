@@ -13,13 +13,14 @@ import time
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import ColumnElement, and_, case, distinct, func, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api._site_dep import resolve_site
 from app.auth import get_current_user
 from app.database import get_db
+from app.limiter import limiter
 from app.models.pihole import PiholeInstance, PiholeList, QueryLog, StatsSnapshot
 from app.models.site import Site
 from app.models.user import User
@@ -221,7 +222,9 @@ async def _blocked_by_list_body(
 
 
 @router.get("/blocked-by-list", response_model=BlockedByListResponse)
+@limiter.limit("30/minute")
 async def get_blocked_by_list(
+    request: Request,
     hours: int = Query(default=24, ge=1, le=720),
     since: datetime | None = Query(default=None),
     instance_id: uuid.UUID | None = Query(default=None),
@@ -699,7 +702,9 @@ async def get_top_for_site(
 
 
 @site_router.get("/blocked-by-list", response_model=BlockedByListResponse)
+@limiter.limit("30/minute")
 async def get_blocked_by_list_for_site(
+    request: Request,
     hours: int = Query(default=24, ge=1, le=720),
     since: datetime | None = Query(default=None),
     instance_id: uuid.UUID | None = Query(default=None),

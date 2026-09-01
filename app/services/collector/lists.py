@@ -49,6 +49,28 @@ async def _sync_lists_for(instance: PiholeInstance) -> int:
 
     block_lists = [row for row in lists if row.get("type") == "block"]
     seen_ids: list[int] = []
+    try:
+        await _store_lists(instance, block_lists, security_gids, seen_ids)
+    except Exception as exc:
+        logger.warning(
+            "List sync DB write failed for %s: %s: %s", instance.name, type(exc).__name__, exc
+        )
+        return 0
+
+    logger.info(
+        "Synced %d block adlists for %s (%d security)",
+        len(seen_ids), instance.name,
+        sum(1 for r in block_lists if security_gids & set(r.get("groups") or [])),
+    )
+    return len(seen_ids)
+
+
+async def _store_lists(
+    instance: PiholeInstance,
+    block_lists: list[dict],
+    security_gids: set[int],
+    seen_ids: list[int],
+) -> None:
     async with AsyncSessionLocal() as db:
         for row in block_lists:
             lid = row.get("id")
@@ -61,8 +83,10 @@ async def _sync_lists_for(instance: PiholeInstance) -> int:
                 "instance_id": instance.id,
                 "pihole_list_id": lid,
                 "list_type": "block",
+                # Truncate to the column widths — Pi-hole doesn't bound either
+                # field, and an overlong value would abort the whole sync.
                 "address": (row.get("address") or "")[:512],
-                "comment": (row.get("comment") or None),
+                "comment": (row.get("comment") or "")[:512] or None,
                 "enabled": bool(row.get("enabled", True)),
                 "is_security": is_security,
                 "updated_at": func.now(),
@@ -92,13 +116,6 @@ async def _sync_lists_for(instance: PiholeInstance) -> int:
             prune = prune.where(PiholeList.pihole_list_id.notin_(seen_ids))
         await db.execute(prune)
         await db.commit()
-
-    logger.info(
-        "Synced %d block adlists for %s (%d security)",
-        len(seen_ids), instance.name,
-        sum(1 for r in block_lists if security_gids & set(r.get("groups") or [])),
-    )
-    return len(seen_ids)
 
 
 async def sync_all_lists() -> None:

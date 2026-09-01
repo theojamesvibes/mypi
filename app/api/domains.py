@@ -349,7 +349,9 @@ async def remove_from_allow(
 
 
 @router.get("/blocklists/{domain:path}", response_model=DomainBlocklistsResponse)
+@limiter.limit("30/minute")
 async def get_domain_blocklists(
+    request: Request,
     domain: str,
     hours: int = Query(default=24, ge=1, le=720),
     since: datetime | None = Query(default=None),
@@ -429,7 +431,9 @@ async def remove_from_allow_for_site(
 
 
 @site_router.get("/blocklists/{domain:path}", response_model=DomainBlocklistsResponse)
+@limiter.limit("30/minute")
 async def get_domain_blocklists_for_site(
+    request: Request,
     domain: str,
     hours: int = Query(default=24, ge=1, le=720),
     since: datetime | None = Query(default=None),

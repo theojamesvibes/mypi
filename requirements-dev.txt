@@ -7,7 +7,7 @@ pytest-asyncio==1.4.0
 # so tests run against the same DB engine as prod. psycopg2-binary is
 # only used by alembic / Base.metadata.create_all in the test bootstrap;
 # runtime still uses asyncpg.
-testcontainers==4.14.2
+testcontainers==4.15.0
 # psycopg v3 has prebuilt wheels for Python 3.13/3.14 — psycopg2-binary
 # does not, and pulling in pg_config to build from source is brittle.
 # 3.2.10 was the first to ship cp314 wheels; 3.3.4 is the current
@@ -25,11 +25,11 @@ respx==0.23.1
 # ~84%. The remainder lives mostly in lifespan startup hooks and error
 # branches in pushover/pihole_client that aren't worth hand-rolling.
 pytest-cov==7.1.0
-coverage==7.15.2
+coverage==7.15.4
 
 # Lint + type check. CI runs `ruff check .` and `mypy` (config in
 # pyproject.toml) as a separate lint job; run both locally before pushing.
-ruff==0.15.22
+ruff==0.16.3
 mypy==2.3.0
 
 # UI / browser tests — pytest-playwright drives a real Chromium against
