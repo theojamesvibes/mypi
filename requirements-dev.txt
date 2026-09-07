@@ -12,7 +12,7 @@ testcontainers==4.15.0
 # does not, and pulling in pg_config to build from source is brittle.
 # 3.2.10 was the first to ship cp314 wheels; 3.3.4 is the current
 # release.
-psycopg[binary]==3.3.4
+psycopg[binary]==3.3.5
 
 # Mocks httpx outbound calls so the Pi-hole client tests don't need a
 # real Pi-hole. Patches httpx.AsyncClient globally inside the
