@@ -37,4 +37,4 @@ mypy==2.3.0
 # `playwright install --with-deps chromium` (handled by the ui-tests
 # workflow, not pip). Excluded from the default `pytest` run via the
 # `playwright` marker; CI invokes them separately under tests/playwright.
-pytest-playwright==0.8.0
+pytest-playwright==0.9.0
