@@ -52,7 +52,7 @@ jobs:
       # runner. The build is pip-wheel-only (no source compiles), so the
       # emulated leg stays fast.
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4.2.0
+        uses: docker/setup-qemu-action@v4.3.0
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4.3.0
