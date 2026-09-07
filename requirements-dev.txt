@@ -25,7 +25,7 @@ respx==0.23.1
 # ~84%. The remainder lives mostly in lifespan startup hooks and error
 # branches in pushover/pihole_client that aren't worth hand-rolling.
 pytest-cov==7.1.0
-coverage==7.15.4
+coverage==7.16.0
 
 # Lint + type check. CI runs `ruff check .` and `mypy` (config in
 # pyproject.toml) as a separate lint job; run both locally before pushing.
