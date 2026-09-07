@@ -7,7 +7,7 @@ fastapi==0.141.1
 # pick up the 1.5.1 FileResponse Range hardening (inverted single-byte
 # ranges rejected, 100-range cap).
 starlette>=1.6.0
-uvicorn[standard]==0.52.3
+uvicorn[standard]==0.52.4
 sqlalchemy[asyncio]==2.0.52
 asyncpg==0.31.0
 alembic==1.19.1
