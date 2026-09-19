@@ -7,12 +7,12 @@ fastapi==0.141.1
 # pick up the 1.5.1 FileResponse Range hardening (inverted single-byte
 # ranges rejected, 100-range cap).
 starlette>=1.6.0
-uvicorn[standard]==0.52.3
+uvicorn[standard]==0.52.4
 sqlalchemy[asyncio]==2.0.52
 asyncpg==0.31.0
-alembic==1.19.1
+alembic==1.19.2
 httpx==0.28.1
-pydantic==2.13.4
+pydantic==2.13.5
 pydantic-settings==2.15.0
 pyyaml==6.0.3
 # PyJWT replaced python-jose in 2.5.1 — we only ever use HMAC-family
@@ -24,5 +24,5 @@ bcrypt==5.0.0
 python-multipart==0.0.32
 jinja2==3.1.6
 apscheduler==3.11.3
-cryptography==50.0.0
+cryptography==50.0.1
 slowapi==0.1.10

@@ -8,6 +8,20 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.8.1] — 2026-09-19
+
+### Changed
+
+- **Dependency sweep (10 Dependabot PRs, batched):** all patch-level except
+  pytest-playwright. Runtime: uvicorn 0.52.3 → 0.52.4, alembic 1.19.1 → 1.19.2,
+  pydantic 2.13.4 → 2.13.5, cryptography 50.0.0 → 50.0.1. Dev/test: psycopg
+  3.3.4 → 3.3.5, coverage 7.15.4 → 7.16.0, ruff 0.16.3 → 0.16.7, mypy
+  2.3.0 → 2.3.1, pytest-playwright 0.8.0 → 0.9.0; GitHub Actions:
+  docker/setup-qemu-action v4.2.0 → v4.3.0. No application code changed — this
+  keeps the published image on current upstream fixes. (#114–#118, #120–#124)
+
+---
+
 ## [2.8.0] — 2026-09-19
 
 ### Added
