@@ -276,6 +276,24 @@ def _get_schedule_config(site_id: uuid.UUID) -> dict:
     })
 
 
+# The run_sync keyword arguments a schedule config carries, with the same
+# defaults _get_schedule_config seeds. Read with .get() on purpose: this
+# runs from the collector's auto-sync path and from the interval loop, and
+# a schedule dict that predates a new option must not KeyError there and
+# take automatic syncing down with it.
+_SYNC_OPT_DEFAULTS: dict[str, object] = {
+    "import_config": True,
+    "import_gravity": True,
+    "import_dhcp_leases": False,
+    "run_gravity": True,
+    "config_exclusions": [],
+}
+
+
+def _sync_opts(cfg: dict) -> dict:
+    return {k: cfg.get(k, default) for k, default in _SYNC_OPT_DEFAULTS.items()}
+
+
 async def get_state(site_id: uuid.UUID | None = None) -> SyncState:
     """Return the most-recent sync state for a site (Main if site_id omitted)."""
     sid = await _resolve_site_id(site_id)
@@ -444,14 +462,7 @@ async def _scheduled_loop(site_id: uuid.UUID, site_name: str, minutes: int) -> N
                 continue
             logger.info("Scheduled sync triggered for site '%s' (every %d min)", site_name, minutes)
             cfg = _get_schedule_config(site_id)
-            opts = {
-                k: cfg[k]
-                for k in (
-                    "import_config", "import_gravity", "import_dhcp_leases",
-                    "run_gravity", "config_exclusions",
-                )
-            }
-            await run_sync(site_id=site_id, **opts)
+            await run_sync(site_id=site_id, **_sync_opts(cfg))
         except Exception:
             logger.exception(
                 "Scheduled sync iteration failed for site '%s'; will retry in %d min.",
@@ -513,14 +524,7 @@ async def notify_blocklist_count(site_id: uuid.UUID, count: int) -> None:
         _last_blocklist_by_site[sid_key] = count
         lock = _get_lock(site_id)
         if not lock.locked():
-            opts = {
-                k: cfg[k]
-                for k in (
-                    "import_config", "import_gravity", "import_dhcp_leases",
-                    "run_gravity", "config_exclusions",
-                )
-            }
-            _spawn(run_sync(site_id=site_id, **opts))
+            _spawn(run_sync(site_id=site_id, **_sync_opts(cfg)))
     else:
         _last_blocklist_by_site[sid_key] = count
 
@@ -568,7 +572,7 @@ async def run_sync(
     # API client omit the field, and silently syncing with no exclusions
     # would overwrite exactly the keys the user pinned in the UI.
     exclusions = (
-        normalise_exclusions(_get_schedule_config(sid)["config_exclusions"])
+        normalise_exclusions(_get_schedule_config(sid).get("config_exclusions"))
         if config_exclusions is None
         else normalise_exclusions(config_exclusions)
     )
