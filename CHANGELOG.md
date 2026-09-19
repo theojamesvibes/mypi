@@ -8,6 +8,43 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.8.0] — 2026-09-19
+
+### Added
+
+- **Per-key sync exclusions — keep a replica's own local DNS through a config
+  sync.** A teleporter import with *Configuration settings* ticked replaces the
+  whole of a replica's `pihole.toml`, so anything host-specific on that Pi — its
+  local DNS records, its CNAMEs, its upstreams, its DHCP range — was silently
+  replaced by the master's copy. Until now the only way to protect them was to
+  untick *Configuration settings* entirely, which also stopped every other
+  setting syncing. Settings → Pi-hole Sync now has a **"Keep each replica's own
+  copy of:"** list under that checkbox, with presets for local DNS records
+  (`dns.hosts`), local CNAME records (`dns.cnameRecords`), upstream DNS servers
+  (`dns.upstreams`), conditional forwarding (`dns.revServers`), interface and
+  listening mode, and DHCP server settings — plus a free-text field for any
+  other dotted `pihole.toml` key.
+
+  Pi-hole's teleporter API is all-or-nothing on config, so MyPi brackets the
+  import: it snapshots the pinned keys off each replica via `GET /api/config`
+  *before* importing, then writes them back with `PATCH /api/config`, which
+  only touches the keys it is given. A read-back then verifies the values
+  actually stuck. If the snapshot can't be read, that replica's import is
+  skipped rather than run blind — the import is the point of no return, and a
+  key we failed to capture would be gone for good. If FTL rejects the batch
+  write (one read-only or `FTLCONF_`-forced item is enough), the restore falls
+  back to one key at a time so a single bad key can't cost the rest. Each
+  replica's sync-result row reports how many keys it kept.
+
+  Stored per site in `app_settings` alongside the rest of the sync schedule,
+  and exposed as `config_exclusions` on `POST /api/sync` and
+  `PUT /api/sync/schedule` (and their `/api/sites/{slug}/...` variants).
+  Omitting the field means "use the site's saved list", so an older client or
+  the iOS app can't silently unpin a replica's keys; an explicit `[]` clears
+  them.
+
+---
+
 ## [2.7.2] — 2026-08-31
 
 ### Security

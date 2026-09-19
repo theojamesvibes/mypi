@@ -11,9 +11,11 @@ concurrently without contention.
 from __future__ import annotations
 
 import asyncio
+import copy
 import io
 import json
 import logging
+import re
 import ssl
 import uuid
 import zipfile
@@ -57,6 +59,119 @@ def _ftl_series(version: str | None) -> str | None:
     return f"{parts[0]}.{parts[1]}"
 
 
+# ── Per-key config exclusions ────────────────────────────────────────────────
+#
+# A teleporter import with config=True replaces a replica's entire
+# pihole.toml, so anything host-specific on that replica — its local DNS
+# records, its upstreams, its DHCP range — is silently replaced by the
+# master's copy. Pi-hole's teleporter API has no notion of a partial config
+# import, so we bracket the import instead: snapshot the excluded keys off
+# the replica first, then PATCH them back through /api/config, which does
+# have proper partial-update semantics.
+#
+# Keys are dotted paths into the config tree, e.g. "dns.hosts" (local DNS
+# records), "dns.cnameRecords", "dns.upstreams", or a whole section like
+# "dhcp".
+
+# Upper bound on how many keys one site may pin. Well past any real use;
+# it exists so a malformed client payload can't make every sync walk a
+# thousand-entry list against every replica.
+MAX_CONFIG_EXCLUSIONS = 50
+
+# Dotted path of TOML bare keys — what Pi-hole's config tree actually uses.
+_EXCLUSION_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$")
+
+# Seconds to let FTL settle after a teleporter import before PATCHing the
+# preserved keys back. FTL restarts itself on config import; the same 5 s
+# the gravity step already waits is enough for it to be serving again, and
+# the client re-authenticates by itself if the SID did not survive.
+_CONFIG_RESTORE_SETTLE_SECONDS = 5
+
+
+def normalise_exclusions(raw: object) -> list[str]:
+    """Clean a caller-supplied exclusion list into canonical dotted key paths.
+
+    Order-preserving and de-duplicated. Malformed entries are dropped with a
+    warning rather than rejected outright: a typo in one key should not cost
+    the user the other keys they asked to keep.
+    """
+    if not isinstance(raw, list | tuple):
+        return []
+    out: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        key = item.strip().strip(".")
+        if not key or not _EXCLUSION_KEY_RE.match(key):
+            logger.warning("Ignoring malformed config exclusion key %r", item)
+            continue
+        if key not in out:
+            out.append(key)
+    if len(out) > MAX_CONFIG_EXCLUSIONS:
+        logger.warning(
+            "Config exclusion list truncated from %d to %d keys.",
+            len(out), MAX_CONFIG_EXCLUSIONS,
+        )
+        out = out[:MAX_CONFIG_EXCLUSIONS]
+    return out
+
+
+def _pluck(tree: dict, path: str) -> tuple[bool, object]:
+    """Walk a dotted path into a config tree. Returns (found, value)."""
+    node: object = tree
+    for part in path.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return False, None
+        node = node[part]
+    return True, node
+
+
+def _nest(path: str, value: object) -> dict:
+    """Inverse of _pluck: "dns.hosts" + v -> {"dns": {"hosts": v}}."""
+    parts = path.split(".")
+    out: dict = {parts[-1]: value}
+    for part in reversed(parts[:-1]):
+        out = {part: out}
+    return out
+
+
+def _merge_into(dst: dict, src: dict) -> dict:
+    """Deep-merge src into dst so sibling keys under one section coexist."""
+    for key, value in src.items():
+        if isinstance(value, dict) and isinstance(dst.get(key), dict):
+            _merge_into(dst[key], value)
+        else:
+            dst[key] = value
+    return dst
+
+
+def build_preserve_payload(cfg: dict, paths: list[str]) -> tuple[dict, list[str]]:
+    """Pick `paths` out of a replica's config tree into a PATCH-shaped partial.
+
+    Returns the partial plus the paths actually found, so the caller can
+    report what it is really keeping. A path missing from the tree (a typo,
+    or a key this Pi-hole version doesn't have) is skipped with a warning —
+    there is nothing to preserve, and failing the whole sync over it would
+    be worse than syncing the rest.
+    """
+    payload: dict = {}
+    found: list[str] = []
+    for path in paths:
+        ok, value = _pluck(cfg, path)
+        if not ok:
+            logger.warning(
+                "Config exclusion '%s' is not present in this replica's config - skipping.",
+                path,
+            )
+            continue
+        # Deep-copy: overlapping paths (say "dhcp" and "dhcp.active") would
+        # otherwise have _merge_into write back into the replica's own parsed
+        # config tree, and the payload is meant to be an independent snapshot.
+        _merge_into(payload, _nest(path, copy.deepcopy(value)))
+        found.append(path)
+    return payload, found
+
+
 @dataclass
 class InstanceSyncResult:
     name: str
@@ -65,6 +180,11 @@ class InstanceSyncResult:
     # None / "master" / "replica" — surfaced so the sync-result UI can pill
     # the row alongside the per-replica status icon.
     vip_role: str | None = None
+    # Config keys this replica kept as its own through the import (see
+    # `config_exclusions`). Reported so the UI can show that a replica's
+    # local DNS really did survive, rather than leaving the user to check
+    # each Pi by hand.
+    preserved_keys: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -97,6 +217,7 @@ _last_blocklist_by_site: dict[str, int] = {}       # master's last-seen blocklis
 #   import_gravity:   bool
 #   import_dhcp_leases: bool
 #   run_gravity:      bool
+#   config_exclusions: list[str]  (dotted pihole.toml keys replicas keep)
 _schedule_by_site: dict[str, dict] = {}
 
 # Fire-and-forget background tasks. asyncio keeps only weak refs to bare
@@ -151,6 +272,7 @@ def _get_schedule_config(site_id: uuid.UUID) -> dict:
         "import_gravity": True,
         "import_dhcp_leases": False,
         "run_gravity": True,
+        "config_exclusions": [],
     })
 
 
@@ -185,6 +307,7 @@ async def _persist_schedule(site_id: uuid.UUID) -> None:
         "import_gravity": cfg["import_gravity"],
         "import_dhcp_leases": cfg["import_dhcp_leases"],
         "run_gravity": cfg["run_gravity"],
+        "config_exclusions": cfg["config_exclusions"],
     }))
     logger.info("Sync schedule persisted for site %s.", site_id)
 
@@ -200,7 +323,10 @@ async def _persist_sync_state(site_id: uuid.UUID, state: SyncState) -> None:
             "master_vip_role": state.master_vip_role,
             "error": state.error,
             "results": [
-                {"name": r.name, "status": r.status, "error": r.error, "vip_role": r.vip_role}
+                {
+                    "name": r.name, "status": r.status, "error": r.error,
+                    "vip_role": r.vip_role, "preserved_keys": r.preserved_keys,
+                }
                 for r in state.results
             ],
         }
@@ -253,6 +379,7 @@ async def _load_site_schedule(site_id: uuid.UUID, site_name: str) -> None:
             cfg["import_gravity"] = data.get("import_gravity", True)
             cfg["import_dhcp_leases"] = data.get("import_dhcp_leases", False)
             cfg["run_gravity"] = data.get("run_gravity", True)
+            cfg["config_exclusions"] = normalise_exclusions(data.get("config_exclusions"))
             logger.warning(
                 "STARTUP: loaded sync schedule for site '%s' — interval=%d min, auto_gravity=%s",
                 site_name, cfg["interval_minutes"], cfg["auto_gravity"],
@@ -276,6 +403,7 @@ async def _load_site_schedule(site_id: uuid.UUID, site_name: str) -> None:
                     InstanceSyncResult(
                         name=r["name"], status=r["status"], error=r.get("error"),
                         vip_role=r.get("vip_role"),
+                        preserved_keys=r.get("preserved_keys") or [],
                     )
                     for r in data.get("results", [])
                 ],
@@ -316,7 +444,13 @@ async def _scheduled_loop(site_id: uuid.UUID, site_name: str, minutes: int) -> N
                 continue
             logger.info("Scheduled sync triggered for site '%s' (every %d min)", site_name, minutes)
             cfg = _get_schedule_config(site_id)
-            opts = {k: cfg[k] for k in ("import_config", "import_gravity", "import_dhcp_leases", "run_gravity")}
+            opts = {
+                k: cfg[k]
+                for k in (
+                    "import_config", "import_gravity", "import_dhcp_leases",
+                    "run_gravity", "config_exclusions",
+                )
+            }
             await run_sync(site_id=site_id, **opts)
         except Exception:
             logger.exception(
@@ -333,6 +467,7 @@ async def set_schedule(
     import_dhcp_leases: bool,
     run_gravity: bool,
     site_id: uuid.UUID | None = None,
+    config_exclusions: list[str] | None = None,
 ) -> None:
     sid = await _resolve_site_id(site_id)
     sid_key = str(sid)
@@ -343,6 +478,7 @@ async def set_schedule(
     cfg["import_gravity"] = import_gravity
     cfg["import_dhcp_leases"] = import_dhcp_leases
     cfg["run_gravity"] = run_gravity
+    cfg["config_exclusions"] = normalise_exclusions(config_exclusions)
 
     existing = _schedule_task_by_site.get(sid_key)
     if existing and not existing.done():
@@ -377,7 +513,13 @@ async def notify_blocklist_count(site_id: uuid.UUID, count: int) -> None:
         _last_blocklist_by_site[sid_key] = count
         lock = _get_lock(site_id)
         if not lock.locked():
-            opts = {k: cfg[k] for k in ("import_config", "import_gravity", "import_dhcp_leases", "run_gravity")}
+            opts = {
+                k: cfg[k]
+                for k in (
+                    "import_config", "import_gravity", "import_dhcp_leases",
+                    "run_gravity", "config_exclusions",
+                )
+            }
             _spawn(run_sync(site_id=site_id, **opts))
     else:
         _last_blocklist_by_site[sid_key] = count
@@ -398,6 +540,7 @@ async def run_sync(
     import_dhcp_leases: bool = False,
     run_gravity: bool = True,
     site_id: uuid.UUID | None = None,
+    config_exclusions: list[str] | None = None,
 ) -> SyncState:
     """Push the master Pi-hole's configuration out to all replicas for one site.
 
@@ -406,11 +549,31 @@ async def run_sync(
     refresh their blocklists. A per-site lock ensures only one sync per site
     runs at a time. Returns the final SyncState (success/error plus the
     per-replica results).
+
+    `config_exclusions` names dotted `pihole.toml` keys each replica keeps as
+    its own — typically its local DNS records. Because the teleporter import
+    is all-or-nothing on config, those keys are snapshotted off the replica
+    beforehand and PATCHed back afterwards; see the module's "Per-key config
+    exclusions" note. Ignored unless `import_config` is set, since nothing
+    overwrites them otherwise. Defaults to the site's saved list when None,
+    so a caller that doesn't know about exclusions cannot accidentally drop
+    a replica's pinned keys.
     """
     sid = await _resolve_site_id(site_id)
     sid_key = str(sid)
     site_name = await _lookup_site_name(sid)
     lock = _get_lock(sid)
+
+    # None means "whatever this site has saved" — the iOS app and any older
+    # API client omit the field, and silently syncing with no exclusions
+    # would overwrite exactly the keys the user pinned in the UI.
+    exclusions = (
+        normalise_exclusions(_get_schedule_config(sid)["config_exclusions"])
+        if config_exclusions is None
+        else normalise_exclusions(config_exclusions)
+    )
+    if not import_config:
+        exclusions = []
 
     if lock.locked():
         raise RuntimeError(f"A sync is already in progress for site '{site_name}'.")
@@ -441,9 +604,11 @@ async def run_sync(
                 raise ValueError(f"No replica instances to sync to in site '{site_name}'.")
 
             logger.info(
-                "Sync started: site=%s master=%s, replicas=%s, config=%s, gravity=%s, dhcp=%s, run_gravity=%s",
+                "Sync started: site=%s master=%s, replicas=%s, config=%s, gravity=%s, "
+                "dhcp=%s, run_gravity=%s, keep_local=%s",
                 site_name, master.name, [r.name for r in replicas],
                 import_config, import_gravity, import_dhcp_leases, run_gravity,
+                ", ".join(exclusions) or "nothing",
             )
 
             # Pre-flight: warn on FTL minor-series drift between master and
@@ -507,7 +672,33 @@ async def run_sync(
             # connection, reconnects, and tries exactly once more before giving up.
             async def _sync_replica(replica: PiholeInstance) -> InstanceSyncResult:
                 key = str(replica.id)
+                preserve_payload: dict = {}
+                preserved: list[str] = []
                 try:
+                    # Snapshot the keep-local keys *before* the import runs.
+                    # The import is the point of no return — a replica whose
+                    # local DNS we failed to capture would lose it with no way
+                    # back — so a failure here skips that replica's import
+                    # entirely rather than pressing on and hoping.
+                    if exclusions:
+                        try:
+                            replica_client = await get_client(replica)
+                            cfg_before = await replica_client.get_config()
+                            await save_sid(replica.id, replica_client.sid)
+                            preserve_payload, preserved = build_preserve_payload(
+                                cfg_before, exclusions,
+                            )
+                        except Exception as exc:
+                            raise RuntimeError(
+                                f"Could not read config from {replica.name} to preserve "
+                                f"{', '.join(exclusions)} — skipping this replica's import "
+                                f"rather than overwriting keys we cannot restore: {exc}"
+                            ) from exc
+                        logger.info(
+                            "Preserving %d config key(s) across the import on %s: %s",
+                            len(preserved), replica.name, ", ".join(preserved) or "none",
+                        )
+
                     try:
                         replica_client = await get_client(replica)
                         await replica_client.post_teleporter(
@@ -534,6 +725,9 @@ async def run_sync(
                         await save_sid(replica.id, replica_client.sid)
                     logger.info("Teleporter import to %s succeeded", replica.name)
 
+                    if preserve_payload:
+                        await _restore_preserved_config(replica, preserve_payload, preserved)
+
                     if import_gravity:
                         await asyncio.sleep(5)
                         try:
@@ -547,6 +741,7 @@ async def run_sync(
                     logger.info("Sync to %s succeeded", replica.name)
                     return InstanceSyncResult(
                         name=replica.name, status="success", vip_role=replica.vip_role,
+                        preserved_keys=preserved,
                     )
                 except Exception as exc:
                     logger.warning("Sync to %s failed: %s", replica.name, exc)
@@ -601,6 +796,83 @@ async def run_sync(
         # replicas after the teleporter import.
         _spawn(_refresh_versions_post_sync())
         return current_state
+
+
+async def _restore_preserved_config(
+    replica: PiholeInstance, payload: dict, paths: list[str],
+) -> None:
+    """Re-apply a replica's own values for the excluded keys after an import.
+
+    The teleporter import has just replaced the whole of `pihole.toml`, so
+    for a few seconds this replica is serving the master's copy of these
+    keys. PATCH /api/config puts its own values back, touching nothing else.
+
+    One PATCH carries every preserved key. If FTL rejects the batch — a
+    single read-only or `FTLCONF_`-forced item is enough — we fall back to
+    patching key by key so one bad key cannot cost the user the rest. A
+    read-back then proves the values actually stuck; if they did not, this
+    raises, because silently reporting success on a replica whose local DNS
+    was just overwritten is the one outcome worse than a failed sync.
+    """
+    await asyncio.sleep(_CONFIG_RESTORE_SETTLE_SECONDS)
+
+    try:
+        client = await get_client(replica)
+        await client.patch_config(payload)
+        await save_sid(replica.id, client.sid)
+    except Exception as exc:
+        logger.warning(
+            "Batch config restore on %s failed (%s) — retrying key by key.",
+            replica.name, exc,
+        )
+        failed: list[str] = []
+        for path in paths:
+            ok, value = _pluck(payload, path)
+            if not ok:
+                continue
+            try:
+                client = await get_client(replica)
+                await client.patch_config(_nest(path, value))
+                await save_sid(replica.id, client.sid)
+            except Exception as key_exc:
+                logger.error(
+                    "Could not restore config key '%s' on %s: %s",
+                    path, replica.name, key_exc,
+                )
+                failed.append(path)
+        if failed:
+            raise RuntimeError(
+                "Keys marked keep-local were overwritten by the import and could "
+                f"not be restored on {replica.name}: {', '.join(failed)}"
+            ) from exc
+
+    # Read-back verification, in the same spirit as the DB settings writes:
+    # a PATCH that returns 200 is not proof FTL kept the value.
+    try:
+        client = await get_client(replica)
+        cfg_after = await client.get_config()
+        await save_sid(replica.id, client.sid)
+    except Exception as exc:
+        logger.warning(
+            "Could not read back preserved config from %s to verify it: %s",
+            replica.name, exc,
+        )
+        return
+
+    drifted: list[str] = []
+    for path in paths:
+        want_ok, want = _pluck(payload, path)
+        got_ok, got = _pluck(cfg_after, path)
+        if want_ok and (not got_ok or got != want):
+            drifted.append(path)
+    if drifted:
+        raise RuntimeError(
+            f"Config restore on {replica.name} did not stick for: {', '.join(drifted)}"
+        )
+    logger.info(
+        "Verified %d preserved config key(s) survived the import on %s.",
+        len(paths), replica.name,
+    )
 
 
 def _validate_teleporter_zip(data: bytes) -> None:

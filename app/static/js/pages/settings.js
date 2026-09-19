@@ -18,6 +18,7 @@
   wire('stale-remove-all-btn',     'click', deleteAllStale);
   wire('sync-schedule-save-btn',   'click', saveSchedule);
   wire('sync-btn',                 'click', triggerSync);
+  wire('sync-config',              'change', updateKeepLocalState);
   wire('poll-interval-save-btn',   'click', savePollInterval);
   wire('display-save-btn',         'click', saveDisplaySettings);
   wire('session-timeout-save-btn', 'click', saveSessionTimeout);

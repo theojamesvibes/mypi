@@ -124,6 +124,52 @@
                 <input class="form-check-input" type="checkbox" id="sync-config" checked>
                 <label class="form-check-label small" for="sync-config">Configuration settings</label>
               </div>
+
+              <!-- Per-key exclusions. A config import replaces the whole of a
+                   replica's pihole.toml, so anything host-specific (its local
+                   DNS records, its upstreams, its DHCP range) is replaced by
+                   the master's copy unless it is pinned here. -->
+              <div id="sync-keep-local" class="ms-4 mb-2 border-start ps-2">
+                <p class="text-muted fs-70 mb-1">
+                  Keep each replica&rsquo;s own copy of:
+                </p>
+                <div class="form-check mb-0">
+                  <input class="form-check-input" type="checkbox" id="keep-dns-hosts"
+                         data-config-key="dns.hosts">
+                  <label class="form-check-label fs-70" for="keep-dns-hosts">Local DNS records</label>
+                </div>
+                <div class="form-check mb-0">
+                  <input class="form-check-input" type="checkbox" id="keep-dns-cnames"
+                         data-config-key="dns.cnameRecords">
+                  <label class="form-check-label fs-70" for="keep-dns-cnames">Local CNAME records</label>
+                </div>
+                <div class="form-check mb-0">
+                  <input class="form-check-input" type="checkbox" id="keep-dns-upstreams"
+                         data-config-key="dns.upstreams">
+                  <label class="form-check-label fs-70" for="keep-dns-upstreams">Upstream DNS servers</label>
+                </div>
+                <div class="form-check mb-0">
+                  <input class="form-check-input" type="checkbox" id="keep-dns-revservers"
+                         data-config-key="dns.revServers">
+                  <label class="form-check-label fs-70" for="keep-dns-revservers">Conditional forwarding</label>
+                </div>
+                <div class="form-check mb-0">
+                  <input class="form-check-input" type="checkbox" id="keep-dns-interface"
+                         data-config-key="dns.interface,dns.listeningMode">
+                  <label class="form-check-label fs-70" for="keep-dns-interface">Interface &amp; listening mode</label>
+                </div>
+                <div class="form-check mb-1">
+                  <input class="form-check-input" type="checkbox" id="keep-dhcp"
+                         data-config-key="dhcp">
+                  <label class="form-check-label fs-70" for="keep-dhcp">DHCP server settings</label>
+                </div>
+                <input type="text" id="sync-keep-extra"
+                       class="form-control form-control-sm fs-70"
+                       placeholder="other pihole.toml keys, comma-separated">
+                <span class="text-muted d-block fs-70 mt-1">
+                  Snapshotted from each replica before the import and written back after.
+                </span>
+              </div>
               <div class="form-check mb-1">
                 <input class="form-check-input" type="checkbox" id="sync-gravity" checked>
                 <label class="form-check-label small" for="sync-gravity">Gravity (adlists, blocklists, domains &amp; clients)</label>

@@ -355,6 +355,9 @@ async def reset_emulator():
     _sync_state["gravity_runs"] = 0
     _sync_state["teleporter_imports"] = 0
     _sync_state["last_imported_size"] = 0
+    _sync_state["config_patches"] = 0
+    global _config
+    _config = _deep_copy(_DEFAULT_CONFIG)
     return {"reset": True}
 
 
@@ -373,7 +376,55 @@ _sync_state: dict[str, Any] = {
     "gravity_runs": 0,
     "teleporter_imports": 0,
     "last_imported_size": 0,
+    "config_patches": 0,
 }
+
+# Stateful pihole.toml stand-in, so tests can prove MyPi's keep-local
+# exclusions really work: a teleporter import stamps the "master's" values
+# over these (exactly as FTL would), and a PATCH puts the replica's own
+# values back. Only the handful of keys the sync path pins are modelled.
+_DEFAULT_CONFIG: dict[str, Any] = {
+    "dns": {
+        "hosts": [f"10.0.0.1 {INSTANCE_NAME}.local"],
+        "cnameRecords": [],
+        "upstreams": ["1.1.1.1", "1.0.0.1"],
+        "interface": "eth0",
+        "listeningMode": "LOCAL",
+    },
+    "dhcp": {"active": False, "start": "", "end": ""},
+    "misc": {"nice": -10},
+}
+
+# What a teleporter import overwrites — i.e. the "master's" config. Distinct
+# from every emulator's own defaults so a test can tell the two apart.
+_IMPORTED_CONFIG: dict[str, Any] = {
+    "dns": {
+        "hosts": ["10.9.9.9 master-only.local"],
+        "cnameRecords": ["alias.master.local,master-only.local"],
+        "upstreams": ["9.9.9.9"],
+        "interface": "eth1",
+        "listeningMode": "ALL",
+    },
+    "dhcp": {"active": True, "start": "10.9.9.100", "end": "10.9.9.200"},
+    "misc": {"nice": -5},
+}
+
+
+def _deep_copy(tree: dict[str, Any]) -> dict[str, Any]:
+    import copy
+    return copy.deepcopy(tree)
+
+
+def _deep_merge(dst: dict[str, Any], src: dict[str, Any]) -> dict[str, Any]:
+    for key, value in src.items():
+        if isinstance(value, dict) and isinstance(dst.get(key), dict):
+            _deep_merge(dst[key], value)
+        else:
+            dst[key] = value
+    return dst
+
+
+_config: dict[str, Any] = _deep_copy(_DEFAULT_CONFIG)
 
 
 def _make_minimal_zip() -> bytes:
@@ -421,7 +472,33 @@ async def import_teleporter(request: Request, x_ftl_sid: str | None = Header(def
     body = await request.body()
     _sync_state["teleporter_imports"] += 1
     _sync_state["last_imported_size"] = len(body)
+    # Real FTL replaces the whole of pihole.toml on a config import. Model
+    # that: every key this emulator knows about takes the master's value.
+    _deep_merge(_config, _deep_copy(_IMPORTED_CONFIG))
     return {"processed": {"success": True, "errors": []}}
+
+
+@app.get("/api/config")
+async def get_config(x_ftl_sid: str | None = Header(default=None)):
+    _check_sid(x_ftl_sid)
+    return {"config": _deep_copy(_config), "took": 0.001}
+
+
+@app.patch("/api/config")
+async def patch_config(request: Request, x_ftl_sid: str | None = Header(default=None)):
+    """Partial config update — the endpoint Pi-hole's settings page uses.
+
+    Merges the supplied subtree and leaves everything else alone, which is
+    the property MyPi's keep-local exclusions depend on.
+    """
+    _check_sid(x_ftl_sid)
+    body = await request.json()
+    partial = body.get("config") if isinstance(body, dict) else None
+    if not isinstance(partial, dict):
+        raise HTTPException(status_code=400, detail="body must be {'config': {...}}")
+    _sync_state["config_patches"] += 1
+    _deep_merge(_config, partial)
+    return {"config": _deep_copy(_config), "took": 0.001}
 
 
 @app.post("/api/action/gravity")

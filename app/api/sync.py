@@ -4,9 +4,11 @@ Exposes a legacy global router (defaults to the Main site) and a per-site
 router under `/api/sites/{slug}/sync/...`.
 """
 import logging
+import uuid
+from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.api._site_dep import resolve_site
 from app.auth import get_current_user, require_mutation
@@ -20,11 +22,32 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/sync", tags=["sync"])
 
 
+# Dotted `pihole.toml` keys a replica keeps as its own through a config
+# import, e.g. ["dns.hosts", "dns.cnameRecords"] to stop a sync replacing a
+# replica's local DNS records with the master's. Omitting the field (None)
+# means "use whatever this site has saved" — an older client that has never
+# heard of exclusions must not silently clear them.
+# The length cap lives on the list itself, not the nullable union: Pydantic
+# v2 refuses to apply a constraint to a nullable schema.
+ConfigExclusions = Annotated[
+    list[str], Field(max_length=sync_service.MAX_CONFIG_EXCLUSIONS),
+]
+
+CONFIG_EXCLUSIONS_FIELD = Field(
+    default=None,
+    description=(
+        "Dotted pihole.toml keys each replica keeps as its own through a "
+        "config import (e.g. 'dns.hosts'). Omit to use the site's saved list."
+    ),
+)
+
+
 class SyncRequest(BaseModel):
     import_config: bool = True
     import_gravity: bool = True
     import_dhcp_leases: bool = False
     run_gravity: bool = True
+    config_exclusions: ConfigExclusions | None = CONFIG_EXCLUSIONS_FIELD
 
 
 class ScheduleRequest(BaseModel):
@@ -34,6 +57,9 @@ class ScheduleRequest(BaseModel):
     import_gravity: bool = True
     import_dhcp_leases: bool = False
     run_gravity: bool = True
+    # Unlike SyncRequest this is a stored setting, so an empty list is a
+    # meaningful value: "keep nothing local". None still means "leave as-is".
+    config_exclusions: ConfigExclusions | None = CONFIG_EXCLUSIONS_FIELD
 
 
 class InstanceResult(BaseModel):
@@ -41,6 +67,7 @@ class InstanceResult(BaseModel):
     status: str
     error: str | None = None
     vip_role: str | None = None
+    preserved_keys: list[str] = []
 
 
 class SyncStatusResponse(BaseModel):
@@ -53,6 +80,21 @@ class SyncStatusResponse(BaseModel):
     error: str | None = None
 
 
+async def _resolved_exclusions(
+    req: ScheduleRequest, site_id: uuid.UUID | None = None,
+) -> list[str]:
+    """The exclusion list a schedule PUT should store.
+
+    `set_schedule` rewrites the whole schedule row, so a client that omits
+    `config_exclusions` would otherwise wipe the site's keep-local keys. Fall
+    back to the saved list in that case; an explicit `[]` still clears them.
+    """
+    if req.config_exclusions is not None:
+        return req.config_exclusions
+    schedule = await sync_service.get_schedule(site_id=site_id)
+    return list(schedule.get("config_exclusions") or [])
+
+
 def _state_to_response(state: sync_service.SyncState) -> SyncStatusResponse:
     """Convert the sync service's internal state object into the API response shape."""
     return SyncStatusResponse(
@@ -62,7 +104,10 @@ def _state_to_response(state: sync_service.SyncState) -> SyncStatusResponse:
         master=state.master,
         master_vip_role=state.master_vip_role,
         results=[
-            InstanceResult(name=r.name, status=r.status, error=r.error, vip_role=r.vip_role)
+            InstanceResult(
+                name=r.name, status=r.status, error=r.error, vip_role=r.vip_role,
+                preserved_keys=r.preserved_keys,
+            )
             for r in state.results
         ],
         error=state.error,
@@ -89,6 +134,7 @@ async def set_schedule(req: ScheduleRequest, user: User = Depends(require_mutati
             import_gravity=req.import_gravity,
             import_dhcp_leases=req.import_dhcp_leases,
             run_gravity=req.run_gravity,
+            config_exclusions=await _resolved_exclusions(req),
         )
     except Exception as exc:
         logger.exception("Failed to persist sync schedule: %s", exc)
@@ -119,6 +165,7 @@ async def trigger_sync(
         import_gravity=req.import_gravity,
         import_dhcp_leases=req.import_dhcp_leases,
         run_gravity=req.run_gravity,
+        config_exclusions=req.config_exclusions,
     )
 
     return SyncStatusResponse(status="running")
@@ -163,6 +210,7 @@ async def set_schedule_for_site(
             import_dhcp_leases=req.import_dhcp_leases,
             run_gravity=req.run_gravity,
             site_id=site.id,
+            config_exclusions=await _resolved_exclusions(req, site_id=site.id),
         )
     except Exception as exc:
         logger.exception("Failed to persist sync schedule for site %s: %s", site.slug, exc)
@@ -197,5 +245,6 @@ async def trigger_sync_for_site(
         import_dhcp_leases=req.import_dhcp_leases,
         run_gravity=req.run_gravity,
         site_id=site.id,
+        config_exclusions=req.config_exclusions,
     )
     return SyncStatusResponse(status="running")

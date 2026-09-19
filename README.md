@@ -2,7 +2,7 @@
 [![build](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/docker-publish.yml?style=flat-square)](https://github.com/theojamesvibes/mypi/actions)
 [![tests](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/test.yml?style=flat-square&label=tests)](https://github.com/theojamesvibes/mypi/actions/workflows/test.yml)
 [![ui-tests](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/ui-tests.yml?style=flat-square&label=ui-tests)](https://github.com/theojamesvibes/mypi/actions/workflows/ui-tests.yml)
-[![version](https://img.shields.io/badge/version-2.7.2-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
+[![version](https://img.shields.io/badge/version-2.8.0-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
 [![platform](https://img.shields.io/badge/platform-linux%2Famd64%20|%20linux%2Farm64-teal?style=flat-square)](https://github.com/theojamesvibes/mypi/pkgs/container/mypi)
 
 > **⚠️ Vibe Code Disclosure**
@@ -66,6 +66,7 @@ Pi-hole v6's query API does **not** record which adlist caught a gravity block �
 ### Pi-hole Sync
 - Push full configuration from a designated **master** Pi-hole to all replicas via the Pi-hole v6 teleporter API
 - Sync order: master runs gravity first (fetches fresh blocklists) → exports teleporter zip → replicas import → replicas run gravity
+- **Per-key exclusions** — pin settings each replica keeps as its own (local DNS records, CNAMEs, upstreams, DHCP range …) so a config sync can't replace them with the master's
 - Selectable import options: configuration settings, gravity (adlists/blocklists/domains/clients), DHCP leases
 - Configurable automatic sync interval: 15 min / 30 min / 1 hr / 6 hr / 24 hr, or manual-only
 - **Auto-sync on gravity change** — detects when the master's blocklist count changes and triggers an immediate sync
@@ -88,7 +89,7 @@ Pi-hole v6's query API does **not** record which adlist caught a gravity block �
 - Instance list showing all active Pi-hole instances with online/offline badge, master indicator, and clickable URL links (open Pi-hole web UI in new tab)
 - **Orphaned instance cleanup** — when an instance is renamed or removed from `pihole_instances.yml`, the old record is detected and shown with an option to permanently remove it along with all associated stats and query log data, individually or in bulk
 - **Software versions** — Pi-hole (core), FTL, and web interface versions shown as columns in the instances table; fetched on each stats poll and persisted to the database so they survive restarts; color-coded green (up to date) or red (update available)
-- Sync panel: import options, schedule configuration, live sync result with per-replica status
+- Sync panel: import options, per-key keep-local exclusions, schedule configuration, live sync result with per-replica status
 - Session Timeout panel: configure how long the web UI session stays active
 - Pushover panel: credentials, master enable toggle, per-alert toggles, thresholds
 - **Version Check panel** — shows running vs latest version, last check time; version badge in topbar turns green/red; checks GitHub once per hour (can be disabled)
@@ -342,10 +343,35 @@ MyPi can push the full Pi-hole configuration from a master instance to all repli
 
 **Configure in Settings → Pi-hole Sync:**
 - Choose what to include: configuration, gravity, DHCP leases
+- Pin per-replica settings to keep (see below)
 - Set an automatic interval or leave as manual-only
 - Enable auto-sync on gravity change to react immediately when the master's blocklist is updated
 
-The sync schedule and last sync result are stored in the database and survive container restarts. The dashboard displays the last sync time; it turns red if more than 24 hours have elapsed since the last successful sync.
+### Keeping a replica's own settings (per-key exclusions)
+
+A config import replaces the **whole** of a replica's `pihole.toml`, so anything host-specific on that Pi — its local DNS records, CNAMEs, upstreams, DHCP range — takes the master's copy unless you pin it. Settings → Pi-hole Sync has a **"Keep each replica's own copy of:"** list under *Configuration settings*:
+
+| Preset | `pihole.toml` key |
+|---|---|
+| Local DNS records | `dns.hosts` |
+| Local CNAME records | `dns.cnameRecords` |
+| Upstream DNS servers | `dns.upstreams` |
+| Conditional forwarding | `dns.revServers` |
+| Interface & listening mode | `dns.interface`, `dns.listeningMode` |
+| DHCP server settings | `dhcp` |
+
+Any other dotted key can be added in the free-text field (comma-separated); a whole section like `dhcp` pins everything under it.
+
+Pi-hole's teleporter API is all-or-nothing on config, so MyPi brackets the import rather than filtering the archive: it snapshots the pinned keys off each replica with `GET /api/config`, imports, writes them back with `PATCH /api/config` (which touches only the keys it is given), then reads back to verify they stuck. Consequences worth knowing:
+
+- Those keys are the master's for the few seconds between the import and the write-back, and FTL restarts once more to apply it.
+- If a replica's config can't be read beforehand, **that replica's import is skipped** — the import is the point of no return, and a key MyPi failed to capture would be gone for good. The replica is reported as an error; the others still sync.
+- If FTL rejects the batch write (one read-only or `FTLCONF_`-forced item is enough), MyPi retries key by key so a single bad key can't cost the rest.
+- Each replica's row in the sync result shows how many keys it kept.
+
+Pinning nothing leaves the old behaviour exactly as it was. Unticking *Configuration settings* altogether is still the way to sync gravity only — it leaves every replica's `pihole.toml` untouched, but then no config setting propagates either.
+
+The sync schedule (including the pinned keys) and last sync result are stored in the database and survive container restarts. The dashboard displays the last sync time; it turns red if more than 24 hours have elapsed since the last successful sync.
 
 Before broadcasting, MyPi validates the master's exported ZIP (CRC, non-empty members, size floor) so a corrupt export can't fan out to every replica, and it warns in the logs if a replica's Pi-hole FTL **minor version** differs from the master's (the teleporter archive is FTL-versioned, so cross-series imports can be rejected).
 
@@ -401,10 +427,13 @@ GET     /api/instances/stale             # Orphaned instances (removed from YAML
 DELETE  /api/instances/{id}              # Permanently delete an orphaned instance and its data
 
 # Sync
-GET     /api/sync/status                 # Last sync state (idle / running / success / error)
-POST    /api/sync                        # Trigger a sync (runs in background)
-GET     /api/sync/schedule               # Get sync schedule settings
-PUT     /api/sync/schedule               # Update sync schedule settings
+GET     /api/sync/status                 # Last sync state (idle / running / success / error);
+                                         #  each replica row carries preserved_keys
+POST    /api/sync                        # Trigger a sync (runs in background). Body may set
+                                         #  config_exclusions to override the saved keep-local keys
+GET     /api/sync/schedule               # Get sync schedule settings, incl. config_exclusions
+PUT     /api/sync/schedule               # Update sync schedule settings. Omit config_exclusions
+                                         #  to keep the saved list; send [] to clear it
 
 # Notifications
 GET     /api/notifications/settings      # Get Pushover settings (credentials masked)

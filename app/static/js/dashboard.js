@@ -1560,6 +1560,63 @@ function renderSyncBadge(status) {
 
 let _syncPollInterval = null;
 
+// Set once /sync/schedule has populated the keep-local controls. Until
+// then the checkboxes are all unticked, and sending that state would read
+// as "pin nothing" — so an early Sync Now omits the field instead and lets
+// the server fall back to the site's saved keys.
+let _syncScheduleLoaded = false;
+
+// ── Keep-local config keys ───────────────────────────────────────────────
+// A config import replaces a replica's whole pihole.toml, so these dotted
+// keys are pinned: snapshotted off each replica first and written back
+// after. The preset checkboxes carry their keys in data-config-key (a
+// couple cover more than one key); anything else goes in the free-text box.
+
+function keepLocalPresets() {
+  return [...document.querySelectorAll('#sync-keep-local [data-config-key]')];
+}
+
+function splitKeys(raw) {
+  return (raw || '').split(',').map(k => k.trim()).filter(Boolean);
+}
+
+/** Collected keep-local keys, presets first, de-duplicated. */
+function readKeepLocal() {
+  const keys = [];
+  const add = k => { if (k && !keys.includes(k)) keys.push(k); };
+  for (const el of keepLocalPresets()) {
+    if (el.checked) splitKeys(el.dataset.configKey).forEach(add);
+  }
+  splitKeys(document.getElementById('sync-keep-extra')?.value).forEach(add);
+  return keys;
+}
+
+/** Inverse of readKeepLocal: tick the presets a saved list covers, and put
+ *  whatever the presets don't account for back in the free-text box. */
+function applyKeepLocal(keys) {
+  const remaining = [...(keys || [])];
+  for (const el of keepLocalPresets()) {
+    const own = splitKeys(el.dataset.configKey);
+    const covered = own.length > 0 && own.every(k => remaining.includes(k));
+    el.checked = covered;
+    if (covered) {
+      for (const k of own) remaining.splice(remaining.indexOf(k), 1);
+    }
+  }
+  const extra = document.getElementById('sync-keep-extra');
+  if (extra) extra.value = remaining.join(', ');
+}
+
+/** Pinning keys only means anything when config itself is being synced. */
+function updateKeepLocalState() {
+  const on = document.getElementById('sync-config')?.checked ?? true;
+  const box = document.getElementById('sync-keep-local');
+  if (box) box.classList.toggle('opacity-50', !on);
+  for (const el of keepLocalPresets()) el.disabled = !on;
+  const extra = document.getElementById('sync-keep-extra');
+  if (extra) extra.disabled = !on;
+}
+
 async function loadSyncStatus() {
   const data = await apiFetch(window.siteApiUrl('/sync/status'));
   if (!data) return;
@@ -1579,6 +1636,9 @@ async function loadSyncSchedule() {
   if (grav) grav.checked = data.import_gravity;
   const dhcp = document.getElementById('sync-dhcp');
   if (dhcp) dhcp.checked = data.import_dhcp_leases;
+  applyKeepLocal(data.config_exclusions);
+  updateKeepLocalState();
+  _syncScheduleLoaded = true;
 }
 
 async function saveSchedule() {
@@ -1589,6 +1649,7 @@ async function saveSchedule() {
     import_gravity: document.getElementById('sync-gravity')?.checked ?? true,
     import_dhcp_leases: document.getElementById('sync-dhcp')?.checked ?? false,
     run_gravity: true,
+    config_exclusions: readKeepLocal(),
   };
   const res = await fetch(window.siteApiUrl('/sync/schedule'), {
     method: 'PUT',
@@ -1657,7 +1718,11 @@ function renderSyncStatus(data) {
       ? '<i class="bi bi-check-circle text-success me-1"></i>'
       : '<i class="bi bi-x-circle text-danger me-1"></i>';
     const err = r.error ? ` — <span class="text-danger">${escHtml(r.error)}</span>` : '';
-    return `<div>${icon}<strong>${escHtml(r.name)}</strong>${vipPill(r.vip_role)}${err}</div>`;
+    const kept = (r.preserved_keys || []).length
+      ? ` <span class="text-muted fs-70" title="Kept as this replica's own: ${escHtml((r.preserved_keys || []).join(', '))}">`
+        + `<i class="bi bi-pin-angle me-1"></i>kept ${r.preserved_keys.length}</span>`
+      : '';
+    return `<div>${icon}<strong>${escHtml(r.name)}</strong>${vipPill(r.vip_role)}${kept}${err}</div>`;
   }).join('');
 
   result.innerHTML = `${masterRow}${rows}<div class="text-muted mt-1">Completed: ${finished}</div>`;
@@ -1673,6 +1738,7 @@ async function triggerSync() {
     import_dhcp_leases: document.getElementById('sync-dhcp')?.checked ?? false,
     run_gravity: true,
   };
+  if (_syncScheduleLoaded) body.config_exclusions = readKeepLocal();
 
   try {
     const res = await fetch(window.siteApiUrl('/sync'), {

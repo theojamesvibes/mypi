@@ -53,6 +53,88 @@ async def test_sync_schedule_round_trip(authed_client, site):
     assert body["auto_gravity"] is True
 
 
+async def test_sync_schedule_round_trips_config_exclusions(authed_client, site):
+    """The keep-local keys are a stored setting like any other and must
+    survive the PUT → GET round trip, normalised."""
+    put = await authed_client.put("/api/sync/schedule", json={
+        "interval_minutes": 60,
+        "auto_gravity": False,
+        "import_config": True,
+        "import_gravity": True,
+        "import_dhcp_leases": False,
+        "run_gravity": True,
+        "config_exclusions": ["  dns.hosts ", "dns.upstreams", "dns.hosts", "bad key"],
+    })
+    assert put.status_code == 200
+
+    got = await authed_client.get("/api/sync/schedule")
+    assert got.json()["config_exclusions"] == ["dns.hosts", "dns.upstreams"]
+
+
+async def test_schedule_put_without_exclusions_keeps_the_saved_ones(
+    authed_client, site,
+):
+    """A client that predates this field — the iOS app, a script — sends a
+    schedule with no config_exclusions. That must not silently unpin the
+    keys the user set in the web UI."""
+    base = {
+        "interval_minutes": 60,
+        "auto_gravity": False,
+        "import_config": True,
+        "import_gravity": True,
+        "import_dhcp_leases": False,
+        "run_gravity": True,
+    }
+    await authed_client.put("/api/sync/schedule", json={
+        **base, "config_exclusions": ["dns.hosts"],
+    })
+
+    await authed_client.put("/api/sync/schedule", json={**base, "interval_minutes": 30})
+
+    got = await authed_client.get("/api/sync/schedule")
+    assert got.json()["interval_minutes"] == 30
+    assert got.json()["config_exclusions"] == ["dns.hosts"]
+
+
+async def test_schedule_put_with_empty_list_clears_the_exclusions(
+    authed_client, site,
+):
+    """An explicit [] is a real choice — "keep nothing local" — and must
+    be distinguishable from omitting the field."""
+    base = {
+        "interval_minutes": 60,
+        "auto_gravity": False,
+        "import_config": True,
+        "import_gravity": True,
+        "import_dhcp_leases": False,
+        "run_gravity": True,
+    }
+    await authed_client.put("/api/sync/schedule", json={
+        **base, "config_exclusions": ["dns.hosts"],
+    })
+    await authed_client.put("/api/sync/schedule", json={**base, "config_exclusions": []})
+
+    got = await authed_client.get("/api/sync/schedule")
+    assert got.json()["config_exclusions"] == []
+
+
+async def test_schedule_put_rejects_an_absurd_exclusion_list(authed_client, site):
+    from app.services import sync_service
+
+    resp = await authed_client.put("/api/sync/schedule", json={
+        "interval_minutes": 0,
+        "auto_gravity": False,
+        "import_config": True,
+        "import_gravity": True,
+        "import_dhcp_leases": False,
+        "run_gravity": True,
+        "config_exclusions": [
+            f"dns.k{i}" for i in range(sync_service.MAX_CONFIG_EXCLUSIONS + 1)
+        ],
+    })
+    assert resp.status_code == 422
+
+
 async def test_sync_status_unauthenticated_returns_401(client):
     resp = await client.get("/api/sync/status")
     assert resp.status_code == 401
@@ -111,10 +193,12 @@ async def test_sync_trigger_starts_background_sync(authed_client, site, monkeypa
     assert resp.json()["status"] == "running"
 
     # ASGITransport awaits background tasks before returning the response,
-    # so the stub has already run.
+    # so the stub has already run. config_exclusions is None because the
+    # body omitted it — run_sync then falls back to the site's saved list.
     assert calls == [{
         "import_config": True, "import_gravity": False,
         "import_dhcp_leases": True, "run_gravity": False,
+        "config_exclusions": None,
     }]
 
 

@@ -298,6 +298,30 @@ class PiholeClient:
         resp.raise_for_status()
         return resp.json() if resp.content else None
 
+    async def _patch(self, path: str, json_data: dict | None = None, retry: bool = True) -> Any:
+        if self._client is None:
+            raise RuntimeError("PiholeClient must be used as an async context manager")
+        await self._ensure_authed()
+        url = f"{self.base_url}{path}"
+        sid_used = self._sid
+        resp = await self._client.patch(url, headers=self._headers_for(sid_used), json=json_data)
+        if resp.status_code == 401 and retry:
+            ok = await self._reauthenticate(sid_used)
+            if ok:
+                return await self._patch(path, json_data=json_data, retry=False)
+            raise ConnectionError(f"Re-authentication failed for {self.base_url}")
+        if resp.status_code >= 400:
+            # FTL explains what it rejected (read-only item, value out of
+            # range, item forced by an FTLCONF_ env var). Log it so a failed
+            # config restore is diagnosable without SSHing to the box.
+            body = (resp.text or "").strip()
+            logger.error(
+                "PATCH %s on %s rejected: HTTP %d - Pi-hole said: %s",
+                path, self.base_url, resp.status_code, body[:500] or "<empty body>",
+            )
+        resp.raise_for_status()
+        return resp.json() if resp.content else None
+
     async def _get_bytes(self, path: str, retry: bool = True) -> bytes:
         if self._client is None:
             raise RuntimeError("PiholeClient must be used as an async context manager")
@@ -395,6 +419,46 @@ class PiholeClient:
                 logger.info(
                     "Teleporter import to %s: connection reset after import "
                     "(FTL restarted — this is normal, import succeeded).",
+                    self.base_url,
+                )
+            else:
+                raise
+
+    async def get_config(self) -> dict[str, Any]:
+        """Return this instance's full `pihole.toml` config tree.
+
+        Pi-hole wraps the tree in a top-level "config" key; callers want the
+        tree itself. The sync service uses this to snapshot the settings a
+        replica is allowed to keep before a teleporter import overwrites them.
+        """
+        data = await self._get("/api/config")
+        cfg = data.get("config") if isinstance(data, dict) else None
+        if not isinstance(cfg, dict):
+            raise RuntimeError(
+                f"Unexpected /api/config response from {self.base_url}: "
+                "no 'config' object in the body"
+            )
+        return cfg
+
+    async def patch_config(self, partial: dict[str, Any]) -> None:
+        """Apply a partial config tree, leaving every unmentioned key alone.
+
+        This is the endpoint Pi-hole's own settings page saves through, and
+        its PATCH semantics are what make per-key sync exclusions possible:
+        the teleporter API can only replace `pihole.toml` wholesale, but this
+        touches nothing but the keys we send. FTL may restart to apply the
+        change, dropping the response mid-flight exactly as a teleporter
+        import does.
+        """
+        if not partial:
+            return
+        try:
+            await self._patch("/api/config", {"config": partial})
+        except httpx.RemoteProtocolError as exc:
+            if "incomplete chunked read" in str(exc).lower():
+                logger.info(
+                    "Config PATCH on %s: connection reset after apply "
+                    "(FTL restarted - this is normal, the change landed).",
                     self.base_url,
                 )
             else:
