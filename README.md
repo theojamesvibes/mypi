@@ -2,7 +2,7 @@
 [![build](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/docker-publish.yml?style=flat-square)](https://github.com/theojamesvibes/mypi/actions)
 [![tests](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/test.yml?style=flat-square&label=tests)](https://github.com/theojamesvibes/mypi/actions/workflows/test.yml)
 [![ui-tests](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/ui-tests.yml?style=flat-square&label=ui-tests)](https://github.com/theojamesvibes/mypi/actions/workflows/ui-tests.yml)
-[![version](https://img.shields.io/badge/version-2.8.1-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
+[![version](https://img.shields.io/badge/version-2.8.2-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
 [![platform](https://img.shields.io/badge/platform-linux%2Famd64%20|%20linux%2Farm64-teal?style=flat-square)](https://github.com/theojamesvibes/mypi/pkgs/container/mypi)
 
 > **⚠️ Vibe Code Disclosure**
@@ -366,6 +366,9 @@ Pi-hole's teleporter API is all-or-nothing on config, so MyPi brackets the impor
 
 - Those keys are the master's for the few seconds between the import and the write-back, and FTL restarts once more to apply it.
 - If a replica's config can't be read beforehand, **that replica's import is skipped** — the import is the point of no return, and a key MyPi failed to capture would be gone for good. The replica is reported as an error; the others still sync.
+- If the replica is unreachable when the write-back fires — FTL still restarting from the import — MyPi retries for about a minute before giving up.
+- The snapshot is saved to the database **before** the import and cleared only once the read-back verifies. If a write-back fails outright, the next sync restores the saved values wherever the replica is still serving the master's copy (a key you have since edited by hand is left alone), instead of mistaking the master's values for the replica's own.
+- Only the keys you pin are kept. A replica whose resolver listens on a different port (say unbound on `127.0.0.1#5335` against the master's `#5353`) needs **Upstream DNS servers** pinned — *Local DNS records* alone does not cover it.
 - If FTL rejects the batch write (one read-only or `FTLCONF_`-forced item is enough), MyPi retries key by key so a single bad key can't cost the rest.
 - Each replica's row in the sync result shows how many keys it kept.
 

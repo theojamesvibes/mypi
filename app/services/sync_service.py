@@ -31,7 +31,12 @@ from app.models.pihole import PiholeInstance
 from app.models.site import Site
 from app.services import pushover as pushover_service
 from app.services.client_manager import close_client, get_client, save_sid
-from app.services.site_settings import get_main_site_id, get_setting, set_setting
+from app.services.site_settings import (
+    clear_setting,
+    get_main_site_id,
+    get_setting,
+    set_setting,
+)
 
 # Transient socket failures that the collector already self-heals by evicting
 # the persistent client.  Sync's _sync_replica uses the same class list to
@@ -86,6 +91,19 @@ _EXCLUSION_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$")
 # the gravity step already waits is enough for it to be serving again, and
 # the client re-authenticates by itself if the SID did not survive.
 _CONFIG_RESTORE_SETTLE_SECONDS = 5
+
+# Waits between further restore attempts when the replica is unreachable.
+# The settle above is a guess at how long FTL's restart takes; on a busy Pi
+# (or one hit by two imports back to back) it is still down at 5 s, and a
+# single refused connection used to cost the replica its pinned keys. About
+# a minute in total — far longer than any FTL restart seen in practice.
+_CONFIG_RESTORE_RETRY_DELAYS: tuple[float, ...] = (5, 10, 15, 30)
+
+# site_settings key holding one replica's pre-import snapshot of its pinned
+# keys. Written before the import and cleared only once the restore has been
+# verified, so a restore that fails outright is finished by the next sync
+# instead of that sync snapshotting the master's values as the replica's own.
+_PENDING_RESTORE_KEY = "sync_pending_restore:{}"
 
 
 def normalise_exclusions(raw: object) -> list[str]:
@@ -169,6 +187,55 @@ def build_preserve_payload(cfg: dict, paths: list[str]) -> tuple[dict, list[str]
         # config tree, and the payload is meant to be an independent snapshot.
         _merge_into(payload, _nest(path, copy.deepcopy(value)))
         found.append(path)
+    return payload, found
+
+
+def recover_pending_restore(
+    payload: dict,
+    found: list[str],
+    pending: dict,
+    master_cfg: dict | None,
+    exclusions: list[str],
+    replica_name: str,
+) -> tuple[dict, list[str]]:
+    """Fold an unfinished restore from an earlier sync into this one's snapshot.
+
+    `pending` is the replica's own values as snapshotted before an import
+    whose restore never verified. Right now the replica may be serving the
+    master's copy of those keys, so the live snapshot in `payload` cannot be
+    trusted for them. A key is taken from `pending` only when the replica's
+    live value equals the master's — the signature of an import that was
+    never undone. Anything else means the restore did land, or the user has
+    since edited the key by hand, and the live value stands. If the master's
+    config could not be read there is no way to tell, and the saved value
+    wins: it is known to be the replica's own, the live one is not.
+    """
+    saved = pending.get("payload")
+    paths = pending.get("paths")
+    if not isinstance(saved, dict) or not isinstance(paths, list):
+        return payload, found
+    found = list(found)
+    for path in paths:
+        if path not in exclusions:
+            continue  # the user has since un-pinned this key
+        saved_ok, saved_value = _pluck(saved, path)
+        if not saved_ok:
+            continue
+        live_ok, live_value = _pluck(payload, path)
+        if live_ok and live_value == saved_value:
+            continue
+        if master_cfg is not None and live_ok:
+            master_ok, master_value = _pluck(master_cfg, path)
+            if not master_ok or live_value != master_value:
+                continue
+        logger.warning(
+            "Recovering '%s' on %s from the snapshot saved before an earlier "
+            "import whose restore did not complete.",
+            path, replica_name,
+        )
+        _merge_into(payload, _nest(path, copy.deepcopy(saved_value)))
+        if path not in found:
+            found.append(path)
     return payload, found
 
 
@@ -314,6 +381,44 @@ async def _db_upsert_site(site_id: uuid.UUID, key: str, value: str) -> None:
         # set_setting does upsert + fresh-session read-back verification.
         await set_setting(db, site_id, key, value)
     logger.info("DB upsert verified: site=%s key='%s'", site_id, key)
+
+
+async def _load_pending_restore(replica: PiholeInstance) -> dict | None:
+    """Return the snapshot left behind by a restore that never verified."""
+    async with AsyncSessionLocal() as db:
+        raw = await get_setting(db, replica.site_id, _PENDING_RESTORE_KEY.format(replica.id))
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning("Ignoring unparseable pending config restore for %s.", replica.name)
+        return None
+    return data if isinstance(data, dict) else None
+
+
+async def _save_pending_restore(
+    replica: PiholeInstance, payload: dict, paths: list[str],
+) -> None:
+    await _db_upsert_site(
+        replica.site_id,
+        _PENDING_RESTORE_KEY.format(replica.id),
+        json.dumps({
+            "payload": payload,
+            "paths": paths,
+            "saved_at": datetime.now(UTC).isoformat(),
+        }),
+    )
+
+
+async def _clear_pending_restore(replica: PiholeInstance) -> None:
+    try:
+        async with AsyncSessionLocal() as db:
+            await clear_setting(db, replica.site_id, _PENDING_RESTORE_KEY.format(replica.id))
+    except Exception as exc:
+        # Harmless if it lingers: the next sync only acts on it for keys
+        # where the replica is still serving the master's value.
+        logger.warning("Could not clear pending config restore for %s: %s", replica.name, exc)
 
 
 async def _persist_schedule(site_id: uuid.UUID) -> None:
@@ -674,6 +779,26 @@ async def run_sync(
             # Handles one replica: tries the import; if it fails with a transient
             # network hiccup (a dropped keepalive socket), it throws away the
             # connection, reconnects, and tries exactly once more before giving up.
+            # The master's config tree, read at most once per sync and only
+            # when some replica has an unfinished restore to reconcile.
+            master_cfg_memo: list[dict | None] = []
+            master_cfg_lock = asyncio.Lock()
+
+            async def _master_config() -> dict | None:
+                async with master_cfg_lock:
+                    if not master_cfg_memo:
+                        try:
+                            client = await get_client(master)
+                            master_cfg_memo.append(await client.get_config())
+                            await save_sid(master.id, client.sid)
+                        except Exception as exc:
+                            logger.warning(
+                                "Could not read config from master %s to reconcile a "
+                                "pending restore: %s", master.name, exc,
+                            )
+                            master_cfg_memo.append(None)
+                    return master_cfg_memo[0]
+
             async def _sync_replica(replica: PiholeInstance) -> InstanceSyncResult:
                 key = str(replica.id)
                 preserve_payload: dict = {}
@@ -698,6 +823,31 @@ async def run_sync(
                                 f"{', '.join(exclusions)} — skipping this replica's import "
                                 f"rather than overwriting keys we cannot restore: {exc}"
                             ) from exc
+
+                        # An earlier sync may have imported and then failed to
+                        # put this replica's keys back, in which case what we
+                        # just snapshotted is the master's copy. Persist the
+                        # snapshot before importing so the same cannot happen
+                        # to this run. Both are a safety net over the DB: if
+                        # the DB is unavailable the sync still proceeds exactly
+                        # as it did before the net existed.
+                        try:
+                            pending = await _load_pending_restore(replica)
+                            if pending:
+                                preserve_payload, preserved = recover_pending_restore(
+                                    preserve_payload, preserved, pending,
+                                    await _master_config(), exclusions, replica.name,
+                                )
+                            if preserve_payload:
+                                await _save_pending_restore(
+                                    replica, preserve_payload, preserved,
+                                )
+                        except Exception as exc:
+                            logger.warning(
+                                "Could not persist the config snapshot for %s (%s) — "
+                                "continuing; a failed restore will not be recoverable "
+                                "by the next sync.", replica.name, exc,
+                            )
                         logger.info(
                             "Preserving %d config key(s) across the import on %s: %s",
                             len(preserved), replica.name, ", ".join(preserved) or "none",
@@ -729,8 +879,10 @@ async def run_sync(
                         await save_sid(replica.id, replica_client.sid)
                     logger.info("Teleporter import to %s succeeded", replica.name)
 
-                    if preserve_payload:
-                        await _restore_preserved_config(replica, preserve_payload, preserved)
+                    if preserve_payload and await _restore_preserved_config(
+                        replica, preserve_payload, preserved,
+                    ):
+                        await _clear_pending_restore(replica)
 
                     if import_gravity:
                         await asyncio.sleep(5)
@@ -780,6 +932,14 @@ async def run_sync(
                 results=results,
             )
 
+        # Step 1 re-ran gravity on the master, which routinely shifts its
+        # blocklist count by a few domains. Left alone, the next stats poll
+        # reads that as a change and auto-gravity fires a second full sync
+        # within the minute — a second import landing on replicas whose FTL
+        # is still restarting from this one. Drop the watermark so that poll
+        # re-baselines instead; this sync already pushed the fresh lists.
+        _last_blocklist_by_site.pop(sid_key, None)
+
         current_state = _state_by_site[sid_key]
         _spawn(_persist_sync_state(sid, current_state))
         if current_state.status == "error":
@@ -802,9 +962,38 @@ async def run_sync(
         return current_state
 
 
+async def _patch_config_with_retry(replica: PiholeInstance, partial: dict) -> None:
+    """PATCH a partial config onto a replica, waiting out an FTL restart.
+
+    Only connection-level failures are retried: they mean FTL is still
+    coming back up after the import, and the PATCH has not been judged yet.
+    An HTTP error is FTL's answer and is raised at once, so the caller can
+    fall back to key-by-key. The cached client is evicted between attempts —
+    its keepalive socket died with the old FTL process.
+    """
+    delays = iter(_CONFIG_RESTORE_RETRY_DELAYS)
+    while True:
+        try:
+            client = await get_client(replica)
+            await client.patch_config(partial)
+            await save_sid(replica.id, client.sid)
+            return
+        except _TRANSIENT_SYNC_ERRORS as exc:
+            delay = next(delays, None)
+            if delay is None:
+                raise
+            logger.warning(
+                "Config restore on %s could not connect (%s: %s) — FTL is probably "
+                "still restarting; retrying in %ss.",
+                replica.name, type(exc).__name__, exc, delay,
+            )
+            await close_client(str(replica.id))
+            await asyncio.sleep(delay)
+
+
 async def _restore_preserved_config(
     replica: PiholeInstance, payload: dict, paths: list[str],
-) -> None:
+) -> bool:
     """Re-apply a replica's own values for the excluded keys after an import.
 
     The teleporter import has just replaced the whole of `pihole.toml`, so
@@ -817,13 +1006,24 @@ async def _restore_preserved_config(
     read-back then proves the values actually stuck; if they did not, this
     raises, because silently reporting success on a replica whose local DNS
     was just overwritten is the one outcome worse than a failed sync.
+
+    Returns True only when the read-back proved the values stuck; the caller
+    keeps the persisted snapshot around otherwise.
     """
     await asyncio.sleep(_CONFIG_RESTORE_SETTLE_SECONDS)
 
     try:
-        client = await get_client(replica)
-        await client.patch_config(payload)
-        await save_sid(replica.id, client.sid)
+        await _patch_config_with_retry(replica, payload)
+    except _TRANSIENT_SYNC_ERRORS as exc:
+        # Unreachable for the whole retry window. Key-by-key would only sit
+        # through the same window once per key; the persisted snapshot lets
+        # the next sync finish the job instead.
+        raise RuntimeError(
+            "Keys marked keep-local were overwritten by the import and could "
+            f"not be restored on {replica.name} ({', '.join(paths)}): the replica "
+            f"stayed unreachable after the import ({exc}). Its own values are "
+            "saved and the next sync will put them back."
+        ) from exc
     except Exception as exc:
         logger.warning(
             "Batch config restore on %s failed (%s) — retrying key by key.",
@@ -835,9 +1035,7 @@ async def _restore_preserved_config(
             if not ok:
                 continue
             try:
-                client = await get_client(replica)
-                await client.patch_config(_nest(path, value))
-                await save_sid(replica.id, client.sid)
+                await _patch_config_with_retry(replica, _nest(path, value))
             except Exception as key_exc:
                 logger.error(
                     "Could not restore config key '%s' on %s: %s",
@@ -861,7 +1059,7 @@ async def _restore_preserved_config(
             "Could not read back preserved config from %s to verify it: %s",
             replica.name, exc,
         )
-        return
+        return False
 
     drifted: list[str] = []
     for path in paths:
@@ -877,6 +1075,7 @@ async def _restore_preserved_config(
         "Verified %d preserved config key(s) survived the import on %s.",
         len(paths), replica.name,
     )
+    return True
 
 
 def _validate_teleporter_zip(data: bytes) -> None:

@@ -410,6 +410,52 @@ async def test_notify_blocklist_count_change_triggers_auto_sync(cluster):
     assert triggered[0]["site_id"] == master.site_id
 
 
+async def test_sync_does_not_retrigger_itself_through_auto_gravity(cluster, respx_mock):
+    """run_sync re-runs gravity on the master, which shifts its blocklist
+    count. The next poll must re-baseline rather than read that as a change
+    and fire a second full sync a minute after the first."""
+    from app.services import sync_service
+
+    master, _ = cluster
+    sync_service._schedule_by_site[str(master.site_id)] = {
+        "interval_minutes": 0, "auto_gravity": True,
+        "import_config": True, "import_gravity": True,
+        "import_dhcp_leases": False, "run_gravity": True,
+    }
+    respx_mock.post(f"{MASTER_URL}/api/auth").respond(
+        200, json={"session": {"sid": "master-sid"}}
+    )
+    respx_mock.post(f"{MASTER_URL}/api/action/gravity").respond(200)
+    respx_mock.get(f"{MASTER_URL}/api/teleporter").respond(
+        200, content=_valid_teleporter_zip()
+    )
+    respx_mock.post(f"{REPLICA_URL}/api/auth").respond(
+        200, json={"session": {"sid": "replica-sid"}}
+    )
+    respx_mock.post(f"{REPLICA_URL}/api/teleporter").respond(200)
+
+    await sync_service.notify_blocklist_count(master.site_id, count=1000)
+    await sync_service.run_sync(site_id=master.site_id, import_gravity=False)
+
+    triggered = []
+
+    async def _record(**kwargs):
+        triggered.append(kwargs)
+
+    original = sync_service.run_sync
+    sync_service.run_sync = _record  # type: ignore[assignment]
+    try:
+        # The count the sync's own gravity run produced.
+        await sync_service.notify_blocklist_count(master.site_id, count=1012)
+        import asyncio
+        await asyncio.sleep(0.05)
+    finally:
+        sync_service.run_sync = original
+
+    assert triggered == []
+    assert sync_service._last_blocklist_by_site[str(master.site_id)] == 1012
+
+
 async def test_notify_blocklist_count_no_auto_sync_when_disabled(cluster):
     """With auto_gravity=False, even a count change must not trigger
     a sync — the blocklist watermark is still updated for next time."""

@@ -62,6 +62,7 @@ def _no_settle_delay(monkeypatch):
     time in a test."""
     from app.services import sync_service
     monkeypatch.setattr(sync_service, "_CONFIG_RESTORE_SETTLE_SECONDS", 0)
+    monkeypatch.setattr(sync_service, "_CONFIG_RESTORE_RETRY_DELAYS", (0, 0, 0))
     yield
 
 
@@ -426,3 +427,118 @@ async def test_rejected_batch_patch_falls_back_to_one_key_at_a_time(
     assert seen[1] == {"dns": {"hosts": REPLICA_CONFIG["dns"]["hosts"]}}
     assert seen[2] == {"dns": {"upstreams": REPLICA_CONFIG["dns"]["upstreams"]}}
     assert state.status == "success"
+
+
+# ── FTL still restarting when the restore fires ──────────────────────────────
+
+
+async def test_restore_waits_out_an_ftl_restart(cluster, respx_mock, replica_config):
+    """Seen live: the PATCH fired 5 s after the import, FTL was still
+    restarting, the connection was refused, and the replica lost its local
+    DNS. A refused connection must be retried, not treated as final."""
+    from app.services import sync_service
+
+    master, replica = cluster
+    _mock_master(respx_mock)
+    respx_mock.post(f"{REPLICA_URL}/api/auth").respond(
+        200, json={"session": {"sid": "replica-sid"}}
+    )
+
+    attempts = 0
+
+    def _patch(request):
+        nonlocal attempts
+        attempts += 1
+        if attempts <= 2:
+            raise httpx.ConnectError("All connection attempts failed")
+        return replica_config.patch(request)
+
+    respx_mock.patch(f"{REPLICA_URL}/api/config").mock(side_effect=_patch)
+
+    state = await sync_service.run_sync(
+        site_id=master.site_id, import_gravity=False, config_exclusions=["dns.hosts"],
+    )
+
+    assert attempts == 3
+    assert state.status == "success"
+    assert replica_config.tree["dns"]["hosts"] == REPLICA_CONFIG["dns"]["hosts"]
+    # Verified, so nothing is left for a later sync to finish.
+    assert await sync_service._load_pending_restore(replica) is None
+
+
+async def test_next_sync_finishes_a_restore_that_never_connected(
+    cluster, respx_mock, replica_config,
+):
+    """If the replica stays down for the whole retry window its keys are
+    overwritten — but the snapshot was persisted before the import, so the
+    next sync must restore the replica's own values rather than snapshot
+    the master's copy and "preserve" that for ever after."""
+    from app.services import sync_service
+
+    master, replica = cluster
+    _mock_master(respx_mock)
+    respx_mock.get(f"{MASTER_URL}/api/config").respond(200, json={"config": MASTER_CONFIG})
+    respx_mock.post(f"{REPLICA_URL}/api/auth").respond(
+        200, json={"session": {"sid": "replica-sid"}}
+    )
+
+    ftl_down = True
+
+    def _patch(request):
+        if ftl_down:
+            raise httpx.ConnectError("All connection attempts failed")
+        return replica_config.patch(request)
+
+    respx_mock.patch(f"{REPLICA_URL}/api/config").mock(side_effect=_patch)
+
+    first = await sync_service.run_sync(
+        site_id=master.site_id, import_gravity=False, config_exclusions=["dns.hosts"],
+    )
+    assert first.status == "error"
+    assert "next sync" in first.results[0].error
+    assert replica_config.tree["dns"]["hosts"] == MASTER_CONFIG["dns"]["hosts"]
+    pending = await sync_service._load_pending_restore(replica)
+    assert pending["payload"] == {"dns": {"hosts": REPLICA_CONFIG["dns"]["hosts"]}}
+
+    ftl_down = False
+    second = await sync_service.run_sync(
+        site_id=master.site_id, import_gravity=False, config_exclusions=["dns.hosts"],
+    )
+
+    assert second.status == "success"
+    assert replica_config.tree["dns"]["hosts"] == REPLICA_CONFIG["dns"]["hosts"]
+    assert await sync_service._load_pending_restore(replica) is None
+
+
+def test_pending_restore_does_not_override_a_hand_edit():
+    """A saved snapshot only wins where the replica is still serving the
+    master's value. If the live value is neither the master's nor the saved
+    one, someone fixed or changed it by hand since — leave it alone."""
+    from app.services.sync_service import recover_pending_restore
+
+    pending = {
+        "payload": {"dns": {"hosts": ["10.0.0.5 nas.lan"], "upstreams": ["127.0.0.1#5335"]}},
+        "paths": ["dns.hosts", "dns.upstreams"],
+    }
+    live = {"dns": {"hosts": ["10.0.0.6 edited.lan"], "upstreams": ["127.0.0.1#5353"]}}
+    master_cfg = {"dns": {"hosts": ["10.9.9.9 master-only.lan"], "upstreams": ["127.0.0.1#5353"]}}
+
+    payload, found = recover_pending_restore(
+        live, ["dns.hosts", "dns.upstreams"], pending, master_cfg,
+        ["dns.hosts", "dns.upstreams"], "replica",
+    )
+
+    assert payload["dns"]["hosts"] == ["10.0.0.6 edited.lan"]      # hand edit kept
+    assert payload["dns"]["upstreams"] == ["127.0.0.1#5335"]       # clobbered → recovered
+    assert found == ["dns.hosts", "dns.upstreams"]
+
+
+def test_pending_restore_ignores_keys_no_longer_pinned():
+    from app.services.sync_service import recover_pending_restore
+
+    pending = {"payload": {"dns": {"upstreams": ["127.0.0.1#5335"]}}, "paths": ["dns.upstreams"]}
+
+    payload, found = recover_pending_restore({}, [], pending, None, ["dns.hosts"], "replica")
+
+    assert payload == {}
+    assert found == []

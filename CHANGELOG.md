@@ -8,6 +8,49 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.8.2] — 2026-09-20
+
+### Fixed
+
+- **Keep-local keys lost when FTL was still restarting after the import.**
+  The write-back fired once, a fixed 5 s after the teleporter import. Twice in
+  production (`pihole2`, 2026-09-19 16:48Z and 2026-09-20 02:50Z) FTL was still
+  down at that moment, the PATCH got "All connection attempts failed", the
+  key-by-key fallback failed in the same millisecond, and the sync reported
+  "Keys marked keep-local were overwritten by the import and could not be
+  restored". Connection-level failures are now retried for about a minute
+  (5 + 10 + 15 + 30 s, evicting the dead keepalive client between attempts).
+  HTTP rejections are still raised at once so the key-by-key fallback keeps
+  its meaning; an unreachable replica no longer falls through to it, which
+  would only repeat the same wait once per key.
+- **A failed write-back became permanent on the next sync.** The pre-import
+  snapshot lived only in memory, so after a failure the following sync
+  snapshotted whatever the replica then held — the master's copy — and
+  faithfully "preserved" that from then on. The snapshot is now persisted to
+  `site_settings` (`sync_pending_restore:<instance id>`) before the import and
+  cleared only after the read-back verifies. A later sync that finds one
+  restores the saved value for every still-pinned key where the replica's live
+  value equals the master's (the signature of an import that was never
+  undone); a key whose live value matches neither is treated as a hand edit
+  and left alone.
+- **Every scheduled sync triggered a second sync a minute later.** `run_sync`
+  re-runs gravity on the master, which shifts its blocklist count by a few
+  domains; with auto-gravity on, the next stats poll read that as a change and
+  fired another full sync (36 times in 30 h across both sites). That second
+  import landing on a replica still restarting from the first is what set up
+  the 16:48Z failure above. The blocklist watermark is now dropped when a sync
+  finishes, so the next poll re-baselines instead of re-triggering.
+
+### Notes
+
+- The report that prompted this — `mnpihole2`'s unbound upstream flipping from
+  `127.0.0.1#5335` to the master's `#5353` — was not a code defect: that value
+  lives in `dns.upstreams`, and only `dns.hosts` was pinned for the site. Tick
+  **Upstream DNS servers** under *Keep each replica's own copy of*. README now
+  says so explicitly.
+
+---
+
 ## [2.8.1] — 2026-09-19
 
 ### Changed
