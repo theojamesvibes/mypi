@@ -8,6 +8,35 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.8.4] — 2026-09-20
+
+### Changed
+
+- **One explicit "Save sync settings" button for the whole sync card, with
+  an unsaved-changes warning.** The only save control was "Save schedule",
+  tucked under the *Automatic sync* column, so it did not read as the thing
+  that stores the *What to sync* / keep-local ticks — but it was. Seen on
+  MNAve: "Upstream DNS servers" was ticked and Sync Now pressed; that run
+  used the unsaved tick (`keep_local=dns.upstreams`, preserved and verified).
+  The page was then reloaded, which silently reverted the card to the stored
+  `dns.hosts`; "Save schedule" stored that, and the next sync ran
+  `keep_local=dns.hosts` and replaced `mnpihole2`'s upstreams with the
+  master's. The button now sits beside Sync Now, turns amber alongside an
+  "Unsaved changes" note whenever the card differs from what the server
+  holds, and Sync Now offers to save first instead of running from settings
+  that would not survive a reload or apply to scheduled runs.
+- **Save stays disabled until the stored sync settings have loaded.** A
+  click before the loader finished would have written the form's defaults
+  (no keep-local keys, schedule off) over the real settings.
+
+### Note
+
+- Keep-local preserves whatever value is **on the replica when the sync
+  starts**. If an earlier sync already overwrote it, set the replica's value
+  again in Pi-hole first, then save the tick and sync.
+
+---
+
 ## [2.8.3] — 2026-09-20
 
 ### Fixed

@@ -2,7 +2,7 @@
 [![build](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/docker-publish.yml?style=flat-square)](https://github.com/theojamesvibes/mypi/actions)
 [![tests](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/test.yml?style=flat-square&label=tests)](https://github.com/theojamesvibes/mypi/actions/workflows/test.yml)
 [![ui-tests](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/ui-tests.yml?style=flat-square&label=ui-tests)](https://github.com/theojamesvibes/mypi/actions/workflows/ui-tests.yml)
-[![version](https://img.shields.io/badge/version-2.8.3-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
+[![version](https://img.shields.io/badge/version-2.8.4-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
 [![platform](https://img.shields.io/badge/platform-linux%2Famd64%20|%20linux%2Farm64-teal?style=flat-square)](https://github.com/theojamesvibes/mypi/pkgs/container/mypi)
 
 > **⚠️ Vibe Code Disclosure**
@@ -361,6 +361,8 @@ A config import replaces the **whole** of a replica's `pihole.toml`, so anything
 | DHCP server settings | `dhcp` |
 
 Any other dotted key can be added in the free-text field (comma-separated); a whole section like `dhcp` pins everything under it.
+
+Ticks are stored only when you press **Save sync settings** (beside *Sync Now*); the card shows "Unsaved changes" until then, and *Sync Now* offers to save first. A pinned key keeps whatever value is **on the replica when the sync starts** — if an earlier sync already replaced it, put the replica's own value back in Pi-hole before syncing.
 
 Pi-hole's teleporter API is all-or-nothing on config, so MyPi brackets the import rather than filtering the archive: it snapshots the pinned keys off each replica with `GET /api/config`, imports, writes them back with `PATCH /api/config` (which touches only the keys it is given), then reads back to verify they stuck. Consequences worth knowing:
 

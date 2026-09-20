@@ -84,6 +84,45 @@ def test_sync_schedule_save_persists(
     expect(page.locator("#sync-auto-gravity")).to_be_checked()
 
 
+def test_keep_local_keys_flag_unsaved_then_persist(
+    authed_page: Page, base_url: str, with_main_site,
+):
+    """Ticking a keep-local key is only a local edit until Save: the card
+    says so, and after Save the tick survives a reload. Regression for
+    2.8.4 — a ticked "Upstream DNS servers" was used by one Sync Now, lost
+    on the next reload, and the following sync overwrote the replica."""
+    page = authed_page
+    with page.expect_response(
+        lambda r: "/sync/schedule" in r.url and r.request.method == "GET",
+        timeout=10_000,
+    ):
+        page.goto(f"{base_url}/settings")
+
+    # The GET response landing is not the loader finishing: it still has to
+    # write the values into the form and take its saved-state baseline. A
+    # tick made in that gap is wiped and never reads as unsaved. The save
+    # button is enabled as the loader's last step.
+    expect(page.locator("#sync-schedule-save-btn")).to_be_enabled(timeout=10_000)
+
+    unsaved = page.locator("#sync-unsaved")
+    expect(unsaved).to_be_hidden(timeout=10_000)
+
+    page.check("#keep-dns-upstreams")
+    expect(unsaved).to_be_visible(timeout=10_000)
+
+    with page.expect_response(
+        lambda r: "/sync/schedule" in r.url and r.request.method == "PUT",
+        timeout=10_000,
+    ) as put_info:
+        page.locator("#sync-schedule-save-btn").click()
+    assert put_info.value.ok, f"sync settings save failed: {put_info.value.status}"
+    expect(unsaved).to_be_hidden(timeout=10_000)
+
+    page.reload()
+    expect(page.locator("#keep-dns-upstreams")).to_be_checked(timeout=10_000)
+    expect(page.locator("#sync-unsaved")).to_be_hidden()
+
+
 # ── Session timeout (stored in app_settings, no Main site needed) ─────────
 
 

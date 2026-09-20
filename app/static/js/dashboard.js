@@ -1639,10 +1639,16 @@ async function loadSyncSchedule() {
   applyKeepLocal(data.config_exclusions);
   updateKeepLocalState();
   _syncScheduleLoaded = true;
+  markSyncFormSaved();
+  // Disabled in the markup until now: saving before the stored settings
+  // have loaded would write the form's defaults over them.
+  const saveBtn = document.getElementById('sync-schedule-save-btn');
+  if (saveBtn) saveBtn.disabled = false;
 }
 
-async function saveSchedule() {
-  const body = {
+/** Everything the sync card stores, as the PUT /sync/schedule body. */
+function readSyncForm() {
+  return {
     interval_minutes: parseInt(document.getElementById('sync-interval')?.value || '0'),
     auto_gravity: document.getElementById('sync-auto-gravity')?.checked ?? false,
     import_config: document.getElementById('sync-config')?.checked ?? true,
@@ -1651,31 +1657,64 @@ async function saveSchedule() {
     run_gravity: true,
     config_exclusions: readKeepLocal(),
   };
+}
+
+// The sync card as the server last confirmed it. Ticking a box changes
+// nothing server-side until Save, and a reload silently reverts it — so the
+// card shows when it has drifted from this.
+let _syncSavedForm = null;
+
+function markSyncFormSaved() {
+  _syncSavedForm = JSON.stringify(readSyncForm());
+  updateSyncDirty();
+}
+
+function syncFormDirty() {
+  return _syncSavedForm !== null && JSON.stringify(readSyncForm()) !== _syncSavedForm;
+}
+
+function updateSyncDirty() {
+  const dirty = syncFormDirty();
+  document.getElementById('sync-unsaved')?.classList.toggle('d-none', !dirty);
+  const btn = document.getElementById('sync-schedule-save-btn');
+  // Leave the button alone while it is flashing Saved / Save failed.
+  if (btn && !btn.classList.contains('btn-success') && !btn.classList.contains('btn-danger')) {
+    btn.classList.toggle('btn-warning', dirty);
+    btn.classList.toggle('btn-outline-secondary', !dirty);
+  }
+}
+
+/** Returns true once the server has stored the card. */
+async function saveSchedule() {
+  const body = readSyncForm();
   const res = await fetch(window.siteApiUrl('/sync/schedule'), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
     body: JSON.stringify(body),
   });
-  if (res.status === 401) { window.location.href = '/login'; return; }
+  if (res.status === 401) { window.location.href = '/login'; return false; }
   const btn = document.getElementById('sync-schedule-save-btn');
+  const flash = (html, cls, ms) => {
+    if (!btn) return;
+    const orig = btn.innerHTML;
+    btn.classList.remove('btn-outline-secondary', 'btn-warning');
+    btn.classList.add(cls);
+    btn.innerHTML = html;
+    setTimeout(() => { btn.innerHTML = orig; btn.classList.remove(cls); updateSyncDirty(); }, ms);
+  };
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    if (btn) {
-      const orig = btn.innerHTML;
-      btn.innerHTML = '<i class="bi bi-x me-1"></i>Save failed';
-      btn.classList.replace('btn-outline-secondary', 'btn-danger');
-      setTimeout(() => { btn.innerHTML = orig; btn.classList.replace('btn-danger', 'btn-outline-secondary'); }, 4000);
-    }
-    alert(`Schedule save failed: ${err.detail || res.statusText}`);
-    return;
+    flash('<i class="bi bi-x me-1"></i>Save failed', 'btn-danger', 4000);
+    alert(`Sync settings save failed: ${err.detail || res.statusText}`);
+    return false;
   }
-  if (btn) {
-    const orig = btn.innerHTML;
-    btn.innerHTML = '<i class="bi bi-check me-1"></i>Saved';
-    btn.classList.replace('btn-outline-secondary', 'btn-success');
-    setTimeout(() => { btn.innerHTML = orig; btn.classList.replace('btn-success', 'btn-outline-secondary'); }, 2000);
-  }
+  // Re-baseline from what was sent, not from the form: an edit made while
+  // the PUT was in flight is still unsaved.
+  _syncSavedForm = JSON.stringify(body);
+  flash('<i class="bi bi-check me-1"></i>Saved', 'btn-success', 2000);
+  updateSyncDirty();
+  return true;
 }
 
 function renderSyncStatus(data) {
@@ -1730,6 +1769,13 @@ function renderSyncStatus(data) {
 
 async function triggerSync() {
   const btn = document.getElementById('sync-btn');
+  // A sync run from unsaved ticks used to work once and then quietly revert
+  // on the next reload or scheduled run. Store them first so what ran is
+  // what stays.
+  if (syncFormDirty()) {
+    if (!confirm('Your sync settings have unsaved changes. Save them and sync?')) return;
+    if (!await saveSchedule()) return;
+  }
   if (btn) btn.disabled = true;
 
   const body = {
