@@ -8,6 +8,24 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.8.3] — 2026-09-20
+
+### Fixed
+
+- **Ticked keep-local keys ignored after an upgrade (stale cached JS).**
+  `/static` is served without `Cache-Control`, and the asset URLs never
+  changed between releases, so browsers kept running the previous release's
+  `dashboard.js` without revalidating. Seen in production on the MNAve site:
+  "Upstream DNS servers" was ticked, yet every sync logged
+  `keep_local=dns.hosts` and `mnpihole2`'s upstreams were overwritten — the
+  settings page was loaded three times without `dashboard.js` being requested
+  once. A pre-2.8.0 copy of the script sends no `config_exclusions` at all,
+  and the server (correctly) falls back to the site's saved list. Every local
+  JS/CSS URL in the templates now carries `?v=<version>`, so each release
+  fetches fresh assets.
+
+---
+
 ## [2.8.2] — 2026-09-20
 
 ### Fixed

@@ -10,12 +10,12 @@
   <!-- Bootstrap Icons -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" integrity="sha384-XGjxtQfXaH2tnPFa9x+ruJTuLE3Aa6LhHSWRr1XeTyhezb4abCG4ccI5AkVDxqC+" crossorigin="anonymous">
   <!-- Custom -->
-  <link rel="stylesheet" href="/static/css/dashboard.css">
+  <link rel="stylesheet" href="/static/css/dashboard.css?v={{ app_version }}">
   <!-- Server data for boot.js — a JSON island is data, not code, so the
        strict script-src CSP never executes it. Must precede boot.js. -->
   <script id="mypi-ctx" type="application/json">{{ {"site_slug": site_slug|default("")}|tojson }}</script>
   <!-- Theme pre-paint + multi-site helpers; parser-blocking on purpose. -->
-  <script src="/static/js/boot.js"></script>
+  <script src="/static/js/boot.js?v={{ app_version }}"></script>
 </head>
 <body>
 
@@ -114,10 +114,10 @@
 <!-- Chart.js -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js" integrity="sha384-NrKB+u6Ts6AtkIhwPixiKTzgSKNblyhlk0Sohlgar9UHUBzai/sgnNNWWd291xqt" crossorigin="anonymous"></script>
 <!-- App JS -->
-<script src="/static/js/dashboard.js"></script>
+<script src="/static/js/dashboard.js?v={{ app_version }}"></script>
 {% block extra_js %}{% endblock %}
 
 <!-- Base-layout wiring: sidebar toggle, site picker, sync/version badges -->
-<script src="/static/js/base.js"></script>
+<script src="/static/js/base.js?v={{ app_version }}"></script>
 </body>
 </html>

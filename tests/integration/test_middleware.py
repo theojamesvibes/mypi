@@ -119,3 +119,23 @@ async def test_normal_body_passes_through(client):
         json={"username": "noone", "password": "x"},
     )
     assert resp.status_code == 401  # auth fail, not 413
+
+
+# ── Static asset cache-busting ───────────────────────────────────────────────
+
+
+async def test_local_assets_are_versioned(client):
+    """Local JS/CSS URLs carry ?v=<version>. /static sends no Cache-Control,
+    so without it browsers kept running the previous release's dashboard.js
+    after an upgrade — a pre-2.8.0 copy never sent the keep-local list, and
+    the ticked keys were silently dropped from every sync."""
+    import re
+
+    from app.main import APP_VERSION
+
+    resp = await client.get("/login")
+    assert resp.status_code == 200
+    urls = re.findall(r'(?:src|href)="(/static/(?:js|css)/[^"]+)"', resp.text)
+    assert urls
+    for url in urls:
+        assert url.endswith(f"?v={APP_VERSION}"), url
