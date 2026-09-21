@@ -10,7 +10,7 @@ starlette>=1.6.0
 uvicorn[standard]==0.52.4
 sqlalchemy[asyncio]==2.0.52
 asyncpg==0.31.0
-alembic==1.19.2
+alembic==1.20.0
 httpx==0.28.1
 pydantic==2.13.5
 pydantic-settings==2.15.0
