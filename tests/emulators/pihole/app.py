@@ -30,7 +30,7 @@ import time
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import Response
 
 PASSWORD = os.getenv("EMULATOR_PIHOLE_PASSWORD", "emulator-password")
 INSTANCE_NAME = os.getenv("EMULATOR_INSTANCE_NAME", "emu-pihole")
