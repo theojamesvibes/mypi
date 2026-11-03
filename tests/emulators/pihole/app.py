@@ -30,7 +30,7 @@ import time
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 PASSWORD = os.getenv("EMULATOR_PIHOLE_PASSWORD", "emulator-password")
 INSTANCE_NAME = os.getenv("EMULATOR_INSTANCE_NAME", "emu-pihole")
@@ -98,7 +98,7 @@ async def auth(request: Request):
 async def logout(x_ftl_sid: str | None = Header(default=None)):
     if x_ftl_sid:
         _sessions.pop(x_ftl_sid, None)
-    return JSONResponse(status_code=204, content=None)
+    return Response(status_code=204)
 
 
 @app.get("/api/info/version")
@@ -333,14 +333,14 @@ async def add_allow(request: Request, x_ftl_sid: str | None = Header(default=Non
 async def remove_deny(domain: str, x_ftl_sid: str | None = Header(default=None)):
     _check_sid(x_ftl_sid)
     _deny_list.pop(domain.lower(), None)
-    return JSONResponse(status_code=204, content=None)
+    return Response(status_code=204)
 
 
 @app.delete("/api/domains/allow/exact/{domain:path}")
 async def remove_allow(domain: str, x_ftl_sid: str | None = Header(default=None)):
     _check_sid(x_ftl_sid)
     _allow_list.pop(domain.lower(), None)
-    return JSONResponse(status_code=204, content=None)
+    return Response(status_code=204)
 
 
 # ── Reset hook (test convenience) ───────────────────────────────────────────

@@ -12,7 +12,7 @@ testcontainers==4.15.0
 # does not, and pulling in pg_config to build from source is brittle.
 # 3.2.10 was the first to ship cp314 wheels; 3.3.5 is the current
 # release.
-psycopg[binary]==3.3.5
+psycopg[binary]==3.3.6
 
 # Mocks httpx outbound calls so the Pi-hole client tests don't need a
 # real Pi-hole. Patches httpx.AsyncClient globally inside the
@@ -25,12 +25,12 @@ respx==0.23.1
 # ~84%. The remainder lives mostly in lifespan startup hooks and error
 # branches in pushover/pihole_client that aren't worth hand-rolling.
 pytest-cov==7.1.0
-coverage==7.16.0
+coverage==7.16.2
 
 # Lint + type check. CI runs `ruff check .` and `mypy` (config in
 # pyproject.toml) as a separate lint job; run both locally before pushing.
-ruff==0.16.7
-mypy==2.3.1
+ruff==0.16.10
+mypy==2.4.0
 
 # UI / browser tests — pytest-playwright drives a real Chromium against
 # the running FastAPI app. The browser binary itself is installed via

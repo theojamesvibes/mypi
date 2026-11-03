@@ -8,6 +8,49 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.8.6] — 2026-11-03
+
+### Security
+
+- **PyJWT 2.13.0 → 2.15.1** (#145). Clears all 14 open Dependabot alerts on
+  `main` (1 critical, 6 high, 7 moderate — GHSA-ffc3-869f-jxw9 asymmetric-PEM
+  detection bypass, empty-HMAC-key acceptance via JWK, JWKS redirect
+  following, BOM bypass, non-canonical signature segments, RecursionError
+  DoS, …). MyPi signs and verifies with a symmetric secret and never loads
+  JWKs, so none of the JWK/JWKS paths were reachable here, but the
+  `is_pem_format` ReDoS and the RecursionError on a deeply nested header sit
+  on the decode path every request takes.
+
+### Changed
+
+- **Batched Dependabot sweep** (14 PRs, #125–#146), no app code changed:
+  uvicorn 0.54.0
+  (#142), SQLAlchemy 2.0.52 → 2.1.1 (#139), alembic 1.20.0 (#132),
+  cryptography 50.0.2 (#141), starlette floor ≥1.7.0 (#136); dev: ruff
+  0.16.10 (#144), mypy 2.4.0 (#140), coverage 7.16.2 (#143), psycopg 3.3.6
+  (#137); actions: docker/login-action 4.7.0 (#146), setup-buildx-action
+  4.4.1 (#129), build-push-action 7.4.0 (#128), setup-qemu-action 4.4.0
+  (#125). **Not taken: `python:3.15-slim` (#147)** — asyncpg and
+  pydantic-core have no cp315 wheels yet, and the slim image has no
+  compiler, so the image build fails (`gcc` / `cc` not found). Revisit once
+  those wheels are published.
+
+### Fixed
+
+- **`ui-tests` workflow green again.** It had failed on every branch since
+  2026-10-05 (last green on `main` was 2.8.4 on 2026-09-20) with
+  `test_block_domain_via_query_modal` seeing *"Operation failed on all
+  instances"*: the Pi-hole emulator answered its `DELETE` routes (and
+  `DELETE /api/auth`) with `JSONResponse(status_code=204, content=None)`,
+  which renders a 4-byte `null` body on a 204. Starlette now raises
+  *"Response content longer than Content-Length"* for that, the emulator's
+  connection died mid-response, and the app's next request on the kept-alive
+  socket failed with an empty error. The emulator now returns a bare
+  `Response(status_code=204)`. Test infrastructure only; no app code
+  changed.
+
+---
+
 ## [2.8.5] — 2026-11-03
 
 ### Fixed
