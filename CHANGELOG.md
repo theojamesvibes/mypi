@@ -23,8 +23,7 @@ All notable changes to MyPi are documented here.
 
 ### Changed
 
-- **Batched Dependabot sweep** (14 PRs, #125–#146), no app code changed:
-  uvicorn 0.54.0
+- **Batched Dependabot sweep** (14 PRs, #125–#146): uvicorn 0.54.0
   (#142), SQLAlchemy 2.0.52 → 2.1.1 (#139), alembic 1.20.0 (#132),
   cryptography 50.0.2 (#141), starlette floor ≥1.7.0 (#136); dev: ruff
   0.16.10 (#144), mypy 2.4.0 (#140), coverage 7.16.2 (#143), psycopg 3.3.6
@@ -33,7 +32,10 @@ All notable changes to MyPi are documented here.
   (#125). **Not taken: `python:3.15-slim` (#147)** — asyncpg and
   pydantic-core have no cp315 wheels yet, and the slim image has no
   compiler, so the image build fails (`gcc` / `cc` not found). Revisit once
-  those wheels are published.
+  those wheels are published. One app-code touch: SQLAlchemy 2.1 types a
+  selected nullable column as `str | None`, so the collector's
+  already-stored-query lookup now skips NULL ids explicitly (mypy; no
+  behaviour change — a NULL id could never match).
 
 ### Fixed
 
