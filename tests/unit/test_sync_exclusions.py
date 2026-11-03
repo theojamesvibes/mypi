@@ -8,6 +8,12 @@ or an HTTP mock.
 """
 from __future__ import annotations
 
+import io
+import tomllib
+import zipfile
+
+import pytest
+
 from app.services.sync_service import (
     MAX_CONFIG_EXCLUSIONS,
     _merge_into,
@@ -15,6 +21,7 @@ from app.services.sync_service import (
     _pluck,
     build_preserve_payload,
     normalise_exclusions,
+    strip_keys_from_teleporter,
 )
 
 # ── normalise_exclusions ─────────────────────────────────────────────────────
@@ -141,3 +148,135 @@ def test_build_payload_is_independent_of_the_source_config():
     assert found == ["dhcp", "dhcp.active"]
     payload["dhcp"]["start"] = "mutated"
     assert source["dhcp"]["start"] == "10.0.0.100"
+
+
+# ── strip_keys_from_teleporter ───────────────────────────────────────────────
+#
+# The shape FTL actually writes: comments, indented tables, multi-line
+# arrays with "### CHANGED" trailers, nested tables, and a webserver.port
+# that FTL treats as host-only on import.
+
+_FTL_TOML = """# This is Pi-hole's main configuration file.
+# Last updated by FTL v6.7.1
+
+[dns]
+  upstreams = [
+    "127.0.0.1#5335"
+  ] ### CHANGED, default = []
+  CNAMEdeep = true
+  interface = "eth0" ### CHANGED, default = ""
+  hosts = [
+    "192.168.1.5 nas.lan",
+    "192.168.1.6 \\"quoted\\".lan"
+  ] ### CHANGED, default = []
+  listeningMode = "LOCAL"
+  port = 53
+  cnameRecords = []
+
+  [dns.rateLimit]
+    count = 1000
+    interval = 60
+
+[dhcp]
+  active = false
+  start = ""
+  leaseTime = "24h"
+
+[webserver]
+  domain = "pi.hole"
+  port = "8080o,8443os,[::]:8080o,[::]:8443os" ### CHANGED, default = "80o,443os,[::]:80o,[::]:443os"
+  threads = 50
+
+  [webserver.api]
+    max_sessions = 16
+    app_sudo = true
+
+[misc]
+  nice = -10
+"""
+
+_GRAVITY_BYTES = b"SQLite format 3\0" + b"\0" * 3000
+
+
+def _archive(toml: str | bytes = _FTL_TOML, member: str = "etc/pihole/pihole.toml") -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(member, toml)
+        zf.writestr("etc/pihole/gravity.db", _GRAVITY_BYTES)
+        zf.writestr("etc/pihole/dhcp.leases", b"")
+        zf.comment = b"Pi-hole Teleporter archive"
+    return buf.getvalue()
+
+
+def _toml_in(archive: bytes) -> dict:
+    with zipfile.ZipFile(io.BytesIO(archive)) as zf:
+        return tomllib.loads(zf.read("etc/pihole/pihole.toml").decode("utf-8"))
+
+
+def test_strip_removes_only_the_pinned_keys():
+    out, stripped = strip_keys_from_teleporter(
+        _archive(), ["dns.upstreams", "webserver.port", "dns.rateLimit.count"]
+    )
+    assert stripped == ["dns.upstreams", "webserver.port", "dns.rateLimit.count"]
+    tree = _toml_in(out)
+    assert "upstreams" not in tree["dns"]
+    assert "port" not in tree["webserver"]
+    assert "count" not in tree["dns"]["rateLimit"]
+    # Siblings at every level survive, with their values intact.
+    assert tree["dns"]["port"] == 53
+    assert tree["dns"]["interface"] == "eth0"
+    assert tree["dns"]["hosts"] == ["192.168.1.5 nas.lan", '192.168.1.6 "quoted".lan']
+    assert tree["dns"]["rateLimit"]["interval"] == 60
+    assert tree["webserver"]["domain"] == "pi.hole"
+    assert tree["webserver"]["api"] == {"max_sessions": 16, "app_sudo": True}
+    assert tree["dhcp"] == {"active": False, "start": "", "leaseTime": "24h"}
+    assert tree["misc"]["nice"] == -10
+
+
+def test_strip_removes_a_whole_section():
+    out, stripped = strip_keys_from_teleporter(_archive(), ["dhcp"])
+    assert stripped == ["dhcp"]
+    tree = _toml_in(out)
+    assert "dhcp" not in tree
+    assert tree["dns"]["upstreams"] == ["127.0.0.1#5335"]
+
+
+def test_strip_reports_only_keys_the_archive_carries():
+    """A pinned key this master doesn't have is nothing to cut — and not an
+    error, exactly as build_preserve_payload treats it on the replica."""
+    out, stripped = strip_keys_from_teleporter(_archive(), ["nope.key", "dns.interface", "dns.nope"])
+    assert stripped == ["dns.interface"]
+    assert "interface" not in _toml_in(out)["dns"]
+
+
+def test_strip_returns_the_original_bytes_when_nothing_matches():
+    data = _archive()
+    out, stripped = strip_keys_from_teleporter(data, ["nope.key"])
+    assert stripped == []
+    assert out is data
+
+
+def test_strip_copies_every_other_member_through_unchanged():
+    out, _ = strip_keys_from_teleporter(_archive(), ["dns.hosts"])
+    with zipfile.ZipFile(io.BytesIO(out)) as zf:
+        assert zf.testzip() is None
+        assert zf.namelist() == [
+            "etc/pihole/pihole.toml", "etc/pihole/gravity.db", "etc/pihole/dhcp.leases",
+        ]
+        assert zf.read("etc/pihole/gravity.db") == _GRAVITY_BYTES
+        assert zf.read("etc/pihole/dhcp.leases") == b""
+        assert zf.getinfo("etc/pihole/gravity.db").compress_type == zipfile.ZIP_DEFLATED
+        assert zf.comment == b"Pi-hole Teleporter archive"
+
+
+def test_strip_raises_when_the_archive_has_no_pihole_toml():
+    """The caller falls back to sending the archive as exported — so this
+    must raise rather than quietly return an archive that still carries the
+    pinned keys while claiming it does not."""
+    with pytest.raises(RuntimeError, match="etc/pihole/pihole.toml"):
+        strip_keys_from_teleporter(_archive(member="pihole.toml"), ["dns.hosts"])
+
+
+def test_strip_raises_on_toml_it_cannot_parse():
+    with pytest.raises(tomllib.TOMLDecodeError):
+        strip_keys_from_teleporter(_archive(toml="not = toml = at all"), ["dns.hosts"])

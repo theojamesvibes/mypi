@@ -17,6 +17,7 @@ import json
 import logging
 import re
 import ssl
+import tomllib
 import uuid
 import zipfile
 from dataclasses import dataclass, field
@@ -24,6 +25,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 import httpx
+import tomli_w
 from sqlalchemy import select
 
 from app.database import AsyncSessionLocal
@@ -104,6 +106,10 @@ _CONFIG_RESTORE_RETRY_DELAYS: tuple[float, ...] = (5, 10, 15, 30)
 # verified, so a restore that fails outright is finished by the next sync
 # instead of that sync snapshotting the master's values as the replica's own.
 _PENDING_RESTORE_KEY = "sync_pending_restore:{}"
+
+# Where FTL keeps the config file inside a teleporter archive. FTL matches
+# members by exact name on import; everything else in the ZIP is skipped.
+_TELEPORTER_TOML_MEMBER = "etc/pihole/pihole.toml"
 
 
 def normalise_exclusions(raw: object) -> list[str]:
@@ -188,6 +194,64 @@ def build_preserve_payload(cfg: dict, paths: list[str]) -> tuple[dict, list[str]
         _merge_into(payload, _nest(path, copy.deepcopy(value)))
         found.append(path)
     return payload, found
+
+
+def _drop_path(tree: dict, path: str) -> bool:
+    """Remove dotted `path` from `tree` in place. True if it was there."""
+    parts = path.split(".")
+    node: object = tree
+    for part in parts[:-1]:
+        node = node.get(part) if isinstance(node, dict) else None
+    if not isinstance(node, dict) or parts[-1] not in node:
+        return False
+    del node[parts[-1]]
+    return True
+
+
+def strip_keys_from_teleporter(zip_data: bytes, paths: list[str]) -> tuple[bytes, list[str]]:
+    """Rewrite the master's archive so its `pihole.toml` no longer carries `paths`.
+
+    FTL imports an archive's pihole.toml *over a copy of the replica's live
+    config*, item by item, and leaves every item the archive does not
+    mention exactly as it was. A key that is simply absent from the archive
+    is therefore kept by the replica at the moment of import: there is no
+    window in which the master's value is live, and FTL has nothing to
+    complain about. The complaint is the reason this exists: for the keys
+    FTL treats as host-only (`webserver.port`, anything forced through an
+    `FTLCONF_` variable) it refuses the archive's value and files a
+    "contained a value for X, which was not applied" message on the
+    replica's dashboard — on every sync, even though MyPi's write-back had
+    already kept the replica's own value.
+
+    The PATCH-back bracket around the import stays as the safety net, and
+    is the only net when this rewrite is not possible (it raises on an
+    archive it cannot read; the caller then sends the original bytes).
+
+    Returns the rewritten archive and the paths that were actually present
+    and removed. Every other member is copied through byte for byte.
+    """
+    with zipfile.ZipFile(io.BytesIO(zip_data)) as src:
+        try:
+            toml_info = src.getinfo(_TELEPORTER_TOML_MEMBER)
+        except KeyError:
+            raise RuntimeError(
+                f"teleporter archive has no {_TELEPORTER_TOML_MEMBER} member"
+            ) from None
+        tree = tomllib.loads(src.read(toml_info).decode("utf-8"))
+        stripped = [path for path in paths if _drop_path(tree, path)]
+        if not stripped:
+            return zip_data, []
+        new_toml = tomli_w.dumps(tree).encode("utf-8")
+
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w") as dst:
+            dst.comment = src.comment
+            for member in src.infolist():
+                if member.filename == toml_info.filename:
+                    dst.writestr(member, new_toml)
+                else:
+                    dst.writestr(member, src.read(member))
+    return out.getvalue(), stripped
 
 
 def recover_pending_restore(
@@ -774,6 +838,25 @@ async def run_sync(
 
             _validate_teleporter_zip(zip_data)
             logger.info("Teleporter ZIP from master %s passed validation", master.name)
+
+            # Cut the keep-local keys out of the archive itself, so a replica
+            # never takes the master's value for them even for a moment (and
+            # FTL never sees a host-only key it has to refuse). The snapshot /
+            # write-back bracket in _sync_replica still runs on top of this.
+            if exclusions:
+                try:
+                    zip_data, stripped = strip_keys_from_teleporter(zip_data, exclusions)
+                except Exception as exc:
+                    logger.warning(
+                        "Could not remove the keep-local keys from the teleporter "
+                        "archive (%s) — importing it as exported; the write-back "
+                        "after the import still restores them.", exc,
+                    )
+                else:
+                    logger.info(
+                        "Removed %d keep-local key(s) from the archive before import: %s",
+                        len(stripped), ", ".join(stripped) or "none present",
+                    )
 
             # Step 3: Push to each replica concurrently, then run gravity on each.
             # Handles one replica: tries the import; if it fails with a transient

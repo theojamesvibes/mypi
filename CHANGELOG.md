@@ -8,6 +8,33 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.8.5] — 2026-11-03
+
+### Fixed
+
+- **Keep-local keys are now cut out of the teleporter archive before it is
+  sent to the replicas, instead of only being written back afterwards.**
+  Seen on MNAve after an emergency Pi-hole with a custom `webserver.port`
+  was added: the port was pinned under *Keep each replica's own copy of*,
+  MyPi's snapshot → import → write-back kept the replica's value and
+  verified it, yet every sync left *"The imported Teleporter archive
+  contained a value for webserver.port, which was not applied"* on the
+  replica's dashboard. FTL treats `webserver.port` (and anything forced via
+  `FTLCONF_`) as host-only: it refuses the archive's value and files that
+  message whenever an imported `pihole.toml` carries a different one — and
+  the archive still carried the master's. FTL imports an archive's
+  `pihole.toml` over a copy of the replica's live config item by item,
+  leaving unmentioned items alone, so MyPi now removes the pinned keys from
+  the archive's `pihole.toml` (every other member is copied through
+  byte for byte). The replica keeps those keys *at import time*: no window
+  where the master's value is live, nothing for FTL to refuse. The
+  snapshot / write-back / read-back bracket still runs as the safety net
+  and is the only net when the archive cannot be rewritten (missing or
+  unparseable `pihole.toml` — logged, archive sent as exported). New
+  dependency `tomli-w` (the stdlib reads TOML but cannot write it).
+
+---
+
 ## [2.8.4] — 2026-09-20
 
 ### Changed

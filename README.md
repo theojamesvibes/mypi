@@ -2,7 +2,7 @@
 [![build](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/docker-publish.yml?style=flat-square)](https://github.com/theojamesvibes/mypi/actions)
 [![tests](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/test.yml?style=flat-square&label=tests)](https://github.com/theojamesvibes/mypi/actions/workflows/test.yml)
 [![ui-tests](https://img.shields.io/github/actions/workflow/status/theojamesvibes/mypi/ui-tests.yml?style=flat-square&label=ui-tests)](https://github.com/theojamesvibes/mypi/actions/workflows/ui-tests.yml)
-[![version](https://img.shields.io/badge/version-2.8.4-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
+[![version](https://img.shields.io/badge/version-2.8.5-blue?style=flat-square)](https://github.com/theojamesvibes/mypi)
 [![platform](https://img.shields.io/badge/platform-linux%2Famd64%20|%20linux%2Farm64-teal?style=flat-square)](https://github.com/theojamesvibes/mypi/pkgs/container/mypi)
 
 > **⚠️ Vibe Code Disclosure**
@@ -364,9 +364,10 @@ Any other dotted key can be added in the free-text field (comma-separated); a wh
 
 Ticks are stored only when you press **Save sync settings** (beside *Sync Now*); the card shows "Unsaved changes" until then, and *Sync Now* offers to save first. A pinned key keeps whatever value is **on the replica when the sync starts** — if an earlier sync already replaced it, put the replica's own value back in Pi-hole before syncing.
 
-Pi-hole's teleporter API is all-or-nothing on config, so MyPi brackets the import rather than filtering the archive: it snapshots the pinned keys off each replica with `GET /api/config`, imports, writes them back with `PATCH /api/config` (which touches only the keys it is given), then reads back to verify they stuck. Consequences worth knowing:
+Pi-hole's teleporter API has no partial-config import, so MyPi does two things. First it **rewrites the master's archive** for the replicas: the pinned keys are cut out of its `pihole.toml`. FTL applies an imported `pihole.toml` over the replica's live config item by item and leaves every item the archive does not mention alone, so a key the archive no longer carries keeps the replica's own value at the moment of import. Second, as a safety net, it **brackets the import**: it snapshots the pinned keys off each replica with `GET /api/config`, imports, writes them back with `PATCH /api/config` (which touches only the keys it is given), then reads back to verify they stuck. Consequences worth knowing:
 
-- Those keys are the master's for the few seconds between the import and the write-back, and FTL restarts once more to apply it.
+- Cutting the keys out of the archive is what keeps a **host-only key quiet** — `webserver.port`, or anything forced with an `FTLCONF_` variable. FTL refuses the archive's value for those and files a *"The imported Teleporter archive contained a value for webserver.port, which was not applied"* message on the replica for every import that carries one; once the key is pinned the archive no longer carries it (since 2.8.5).
+- If the archive cannot be rewritten (no `etc/pihole/pihole.toml` member, TOML that does not parse) MyPi logs a warning and sends it as exported. The write-back then does the whole job, and the pinned keys are the master's for the few seconds between the import and the write-back, with one more FTL restart to apply it.
 - If a replica's config can't be read beforehand, **that replica's import is skipped** — the import is the point of no return, and a key MyPi failed to capture would be gone for good. The replica is reported as an error; the others still sync.
 - If the replica is unreachable when the write-back fires — FTL still restarting from the import — MyPi retries for about a minute before giving up.
 - The snapshot is saved to the database **before** the import and cleared only once the read-back verifies. If a write-back fails outright, the next sync restores the saved values wherever the replica is still serving the master's copy (a key you have since edited by hand is left alone), instead of mistaking the master's values for the replica's own.

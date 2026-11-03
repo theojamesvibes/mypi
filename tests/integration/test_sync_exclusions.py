@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import contextlib
 import io
+import tomllib
 import zipfile
 
 import httpx
 import pytest
+import tomli_w
 
 MASTER_URL = "http://master.test"
 REPLICA_URL = "http://replica.test"
@@ -40,10 +42,37 @@ MASTER_CONFIG = {
 
 
 def _valid_teleporter_zip() -> bytes:
+    """Passes the size/CRC validator but carries no parseable config, so the
+    archive is forwarded exactly as exported."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr("pihole.toml", b"x" * 2048)
     return buf.getvalue()
+
+
+def _teleporter_zip_with_config(cfg: dict) -> bytes:
+    """An archive laid out as FTL writes one: the config under
+    etc/pihole/pihole.toml, padded past the validator's size floor."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("etc/pihole/pihole.toml", tomli_w.dumps(cfg))
+        zf.writestr("etc/pihole/gravity.db", b"SQLite format 3\0" + b"\0" * 2048)
+    return buf.getvalue()
+
+
+def _config_in_upload(request) -> dict | None:
+    """The config tree inside the archive a replica was sent, or None if the
+    upload carries no parseable pihole.toml (the placeholder archive)."""
+    if request is None:
+        return None
+    body = request.read()
+    try:
+        start = body.index(b"\r\n\r\n", body.index(b'name="file"')) + 4
+        end = body.index(b"\r\n--", start)
+        with zipfile.ZipFile(io.BytesIO(body[start:end])) as zf:
+            return tomllib.loads(zf.read("etc/pihole/pihole.toml").decode("utf-8"))
+    except (ValueError, KeyError, zipfile.BadZipFile, tomllib.TOMLDecodeError):
+        return None
 
 
 @pytest.fixture(autouse=True)
@@ -162,11 +191,21 @@ class _FakeReplicaConfig:
         import copy
         self.tree = copy.deepcopy(REPLICA_CONFIG)
         self.patches: list[dict] = []
+        self.imported: list[dict | None] = []
 
     def import_master(self, request=None):
-        """What FTL does on a config import: the master's pihole.toml wins."""
+        """What FTL does on a config import: every item the archive's
+        pihole.toml carries takes the archive's value, and every item it
+        does not mention keeps the replica's own. The placeholder archive
+        most tests use has no parseable config, and then the master's copy
+        simply wins wholesale."""
         import copy
-        self.tree = copy.deepcopy(MASTER_CONFIG)
+        archived = _config_in_upload(request)
+        self.imported.append(archived)
+        if archived is None:
+            self.tree = copy.deepcopy(MASTER_CONFIG)
+        else:
+            self._merge(self.tree, copy.deepcopy(archived))
         return httpx.Response(200)
 
     def get(self, request):
@@ -234,6 +273,66 @@ async def test_pinned_keys_survive_the_import(cluster, respx_mock, replica_confi
     assert replica_config.patches == [
         {"dns": {"hosts": REPLICA_CONFIG["dns"]["hosts"],
                  "upstreams": REPLICA_CONFIG["dns"]["upstreams"]}}
+    ]
+
+
+async def test_pinned_keys_are_cut_from_the_archive_itself(cluster, respx_mock, replica_config):
+    """The archive a replica receives no longer mentions the pinned keys, so
+    the replica keeps them *at import time* — FTL applies an archive over a
+    copy of the live config and leaves unmentioned items alone — and never
+    files a "contained a value for X, which was not applied" message for a
+    host-only key such as webserver.port. The write-back still runs as the
+    safety net."""
+    from app.services.sync_service import run_sync
+
+    master, _ = cluster
+    respx_mock.post(f"{MASTER_URL}/api/auth").respond(
+        200, json={"session": {"sid": "master-sid"}}
+    )
+    respx_mock.post(f"{MASTER_URL}/api/action/gravity").respond(200)
+    respx_mock.get(f"{MASTER_URL}/api/teleporter").respond(
+        200, content=_teleporter_zip_with_config(
+            MASTER_CONFIG | {"webserver": {"port": "80o,443os", "domain": "pi.hole"}}
+        ),
+    )
+    respx_mock.post(f"{REPLICA_URL}/api/auth").respond(
+        200, json={"session": {"sid": "replica-sid"}}
+    )
+    replica_config.tree["webserver"] = {"port": "8080o,8443os", "domain": "old.hole"}
+
+    state = await run_sync(
+        site_id=master.site_id,
+        import_gravity=False,
+        config_exclusions=["dns.hosts", "webserver.port"],
+    )
+
+    assert state.status == "success"
+    assert state.results[0].preserved_keys == ["dns.hosts", "webserver.port"]
+
+    # What the replica was actually sent: the pinned keys are gone, the
+    # rest of the master's config is intact.
+    archived = replica_config.imported[0]
+    assert archived is not None
+    assert "hosts" not in archived["dns"]
+    assert "port" not in archived["webserver"]
+    assert archived["dns"]["cnameRecords"] == MASTER_CONFIG["dns"]["cnameRecords"]
+    assert archived["dns"]["upstreams"] == MASTER_CONFIG["dns"]["upstreams"]
+    assert archived["webserver"]["domain"] == "pi.hole"
+    assert archived["dhcp"] == MASTER_CONFIG["dhcp"]
+
+    # The replica kept its own values through the import itself...
+    assert replica_config.tree["dns"]["hosts"] == REPLICA_CONFIG["dns"]["hosts"]
+    assert replica_config.tree["webserver"]["port"] == "8080o,8443os"
+    # ...and took the master's for everything unpinned.
+    assert replica_config.tree["dns"]["upstreams"] == MASTER_CONFIG["dns"]["upstreams"]
+    assert replica_config.tree["webserver"]["domain"] == "pi.hole"
+    assert replica_config.tree["dhcp"] == MASTER_CONFIG["dhcp"]
+
+    # The write-back still ran — a no-op against values the replica already
+    # holds, but it is the net under an archive that could not be rewritten.
+    assert replica_config.patches == [
+        {"dns": {"hosts": REPLICA_CONFIG["dns"]["hosts"]},
+         "webserver": {"port": "8080o,8443os"}}
     ]
 
 

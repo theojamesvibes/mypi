@@ -26,3 +26,7 @@ jinja2==3.1.6
 apscheduler==3.11.3
 cryptography==50.0.1
 slowapi==0.1.10
+# Writes the rewritten pihole.toml back into the teleporter archive when
+# keep-local keys are cut out of it (2.8.5). Reading is stdlib tomllib;
+# the stdlib has no TOML writer.
+tomli-w==1.2.0
