@@ -52,7 +52,7 @@ async def _store_queries(instance: PiholeInstance, queries: list) -> int:
                     QueryLog.pihole_query_id.in_(pihole_ids),
                 )
             )
-            existing_ids = {row[0] for row in result.fetchall()}
+            existing_ids = {row[0] for row in result.fetchall() if row[0] is not None}
 
         new_logs = [
             QueryLog(
