@@ -1,4 +1,4 @@
-FROM python:3.14-slim
+FROM python:3.15-slim
 
 # Non-root runtime user. Create up front so later COPY --chown works.
 RUN groupadd --system --gid 1000 app \
