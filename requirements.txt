@@ -1,4 +1,4 @@
-fastapi==0.141.1
+fastapi==0.162.0
 # starlette is a transitive dep of fastapi (which only constrains it to
 # >=0.46.0 with no ceiling). Pin an explicit security floor so a resolve
 # can't land on a version exposed to CVE-2026-54283 (urlencoded form-size
@@ -6,14 +6,14 @@ fastapi==0.141.1
 # Range DoS issues (CVE-2025-54121 / -62727). Floor raised to 1.6.0 to also
 # pick up the 1.5.1 FileResponse Range hardening (inverted single-byte
 # ranges rejected, 100-range cap).
-starlette>=1.7.0
+starlette>=1.10.0
 uvicorn[standard]==0.54.0
 sqlalchemy[asyncio]==2.1.1
 asyncpg==0.31.0
-alembic==1.20.0
+alembic==1.20.1
 httpx==0.28.1
-pydantic==2.13.5
-pydantic-settings==2.15.0
+pydantic==2.14.3
+pydantic-settings==2.16.2
 pyyaml==6.0.3
 # PyJWT replaced python-jose in 2.5.1 — we only ever use HMAC-family
 # encode/decode, and PyJWT is the actively-maintained standard for that.

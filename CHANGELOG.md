@@ -8,6 +8,22 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.8.7] — 2026-11-12
+
+### Changed
+
+- **Batched Dependabot sweep** (10 PRs, #148–#157): FastAPI 0.141.1 →
+  0.162.0 (#155), pydantic 2.13.5 → 2.14.3 (#157), pydantic-settings 2.15.0
+  → 2.16.2 (#154), starlette floor ≥1.7.0 → ≥1.10.0 (#152), alembic 1.20.1
+  (#149); dev: ruff 0.17.4 (#150), mypy 2.4.1 (#151), psycopg 3.3.8 (#156),
+  pytest-playwright 0.10.0 (#153); actions: docker/login-action 4.8.0
+  (#148). No app code changed. **Still not taken: `python:3.15-slim`
+  (#147)** — the pinned asyncpg 0.31.0 has no cp315 wheel (0.32.0 does), so
+  the base-image move needs an asyncpg bump alongside it and is being
+  validated separately.
+
+---
+
 ## [2.8.6] — 2026-11-03
 
 ### Security
