@@ -24,7 +24,7 @@ ignore = [
 "tests/**" = ["B017"]
 
 [tool.mypy]
-python_version = "3.14"
+python_version = "3.15"
 files = ["app"]
 # Lenient baseline: catch real type errors without demanding annotations
 # everywhere. Tighten incrementally (per-module strict) as coverage grows.

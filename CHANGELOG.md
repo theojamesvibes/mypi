@@ -8,6 +8,22 @@ All notable changes to MyPi are documented here.
 
 ---
 
+## [2.8.8] — 2026-11-12
+
+### Changed
+
+- **Runtime moved to Python 3.15** (`python:3.14-slim` → `python:3.15-slim`,
+  #147), with **asyncpg 0.31.0 → 0.32.0** alongside it. This was held back
+  in 2.8.6 and 2.8.7 because asyncpg and pydantic-core had no cp315 wheels
+  and the slim image has no compiler. asyncpg 0.32.0 and pydantic-core
+  2.50.4 (pulled in by pydantic 2.14.3 since 2.8.7) now ship them. PyYAML
+  6.0.3 still has no cp315 wheel and installs from its sdist as the
+  pure-Python build, which is all `yaml.safe_load` of
+  `pihole_instances.yml` needs. CI (`tests`, `ui-tests`) and mypy's
+  `python_version` now target 3.15 as well. No app code changed.
+
+---
+
 ## [2.8.7] — 2026-11-12
 
 ### Changed
