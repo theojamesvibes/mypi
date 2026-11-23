@@ -8,7 +8,7 @@ fastapi==0.162.0
 # ranges rejected, 100-range cap).
 starlette>=1.10.0
 uvicorn[standard]==0.54.0
-sqlalchemy[asyncio]==2.1.1
+sqlalchemy[asyncio]==2.1.9
 asyncpg==0.32.0
 alembic==1.20.1
 httpx==0.28.1
